@@ -4,6 +4,7 @@
 #   workspace install         links `workspace` into ~/.local/bin
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
 #   workspace restart [perfil] kill the tmux server and start again (Claude resumes with --continue)
+#   workspace fit [perfil]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
 #   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace stop [perfil]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|sessions|diff|github> · resume
@@ -257,6 +258,23 @@ panels() { # $1=perfil (padrão: claude)
   return 0
 }
 
+# Re-applies only the pane sizes of one window (cheap; used by ensure_window and the tmux hooks).
+fit_window() { # $1=window
+  local W="$1" P larg id
+  P="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1; exit}')"
+  [ -n "$P" ] || return 0
+  larg="$(tmux display -p -t "$W" '#{window_width}')"
+  role_pane() { tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$1" '$2==r{print $1; exit}'; }
+  id="$(role_pane repos)";    [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w left "$larg")"
+  id="$(role_pane direita)";  [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w right "$larg")"
+  id="$(role_pane terminal)"; [ -n "$id" ] && tmux resize-pane -t "$id" -y "$(( $(term_h "$P") - 1 ))"
+  id="$(role_pane ttabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
+  id="$(role_pane tabs)";     [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane dtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane rtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
+}
+
 # Confere uma janela já aberta e cria o que falta (tira de abas, repos, lateral, terminal), sem
 # mexer no que existe. Mudança estrutural nova entra aqui, e o `reload` resolve sem restart.
 ensure_window() { # $1=janela $2=caminho do repo
@@ -294,17 +312,16 @@ ensure_window() { # $1=janela $2=caminho do repo
   [ -n "$K2" ] && { has ktabs || tmux set -p -t "$(tmux split-window -d -v -b -l 1 -t "$K2" -c "$path" -P -F '#{pane_id}' "$(laco tabs tasks)")" @papel ktabs; }
   local D; D="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1; exit}')"
   [ -n "$D" ] && { has dtabs || tmux set -p -t "$(tmux split-window -d -v -b -l 2 -t "$D" -c "$path" -P -F '#{pane_id}' "$(laco tabs side)")" @papel dtabs; }
-  # Re-apply the sizes on every call, so `workspace reload` picks up changes to col_w/term_h.
-  local id
-  role_pane() { tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$1" '$2==r{print $1; exit}'; }
-  id="$(role_pane repos)";    [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w left "$larg")"
-  id="$(role_pane direita)";  [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w right "$larg")"
-  id="$(role_pane terminal)"; [ -n "$id" ] && tmux resize-pane -t "$id" -y "$(( $(term_h "$P") - 1 ))"
-  id="$(role_pane ttabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
-  id="$(role_pane tabs)";     [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
-  id="$(role_pane dtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
-  id="$(role_pane rtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
-  id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
+  fit_window "$W"
+}
+
+# Light subcommand: re-applies the pane sizes in every window of the profile (no panel restart).
+fit() {
+  local perfil="${1:-claude}" sock="ws-${1:-claude}" W
+  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || return 0
+  export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
+  export WS_PERFIL="$perfil"
+  while read -r W; do fit_window "$W"; done < <(tmux list-windows -t "$perfil:" -F '#{window_id}')
 }
 
 # Aplica config/tmux.conf novo e a tira de abas nas janelas já abertas, sem derrubar o servidor.
@@ -383,6 +400,7 @@ case "${1:-}" in
   stop) tmux -L "ws-${2:-claude}" kill-server ;;
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;
+  fit) shift; fit "$@" ;;
   ""|-*) iniciar claude ;;
   *) iniciar "$1" ;;
 esac
