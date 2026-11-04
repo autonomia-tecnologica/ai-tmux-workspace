@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "cc": "claude"
+  },
+  "groups": {
+    "Example": [
+      "~/Codes/some-repo"
+    ]
+  }
+}

@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# workspace — tmux estilo Orca para os repos de settings.json (~/.config/at-ai-workspace/).
+#   workspace [perfil]        abre (ou reanexa) o workspace; perfil em settings.json (padrão: cc)
+#   workspace install         downloads resurrect+continuum and links `workspace` into ~/.local/bin
+#   workspace install-hooks   registers the Claude Code hooks that light the dots
+#   workspace restart [perfil] save, kill the tmux server and start again (agents resume)
+#   workspace stop [perfil]   kill the profile's tmux server
+# Internal (called from inside tmux): open <repo> · side <tree|sessions|diff|github> · resume · repair
+set -u
+AQUI="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DADOS="$HOME/.local/share/workspace"
+export WS_DIR="$AQUI"
+
+perfil_cmd() { python3 -c "import sys;sys.path.insert(0,'$AQUI');import lib;print(lib.ler_config().get('profiles',{}).get(sys.argv[1],''))" "$1"; }
+env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
+laco() { # $1 = repos | tree | sessions | diff | github
+  printf 'while :; do python3 %q; sleep 1; done' "$AQUI/panel_$1.py"
+}
+
+# Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   2 : 7 : 3
+construir() { # $1=caminho  $2=-d (não selecionar)
+  local path="$1" d="${2:-}" S nome W P larg L Rw Rr term repos cmd
+  S="$(env_global WS_PERFIL)"; cmd="$(env_global WS_CMD)"
+  nome="$(basename "$path")"
+  W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
+  P="$(tmux display -p -t "$W" '#{pane_id}')"
+  tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_perfil "$S"
+  tmux set -p -t "$P" @papel claude
+  larg="$(tmux display -p -t "$W" '#{window_width}')"
+  L=$(( larg * 2 / 12 )); Rw=$(( larg * 3 / 12 ))
+  term="$(tmux split-window -v -l 17% -t "$P" -c "$path" -P -F '#{pane_id}')"
+  tmux set -p -t "$term" @papel terminal
+  repos="$(tmux split-window -h -b -f -l "$L" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco repos)")"
+  tmux set -p -t "$repos" @papel repos
+  Rr="$(tmux split-window -h -f -l "$Rw" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tree)")"
+  tmux set -p -t "$Rr" @papel direita
+  # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
+  tmux send-keys -t "$P" "$cmd --continue || $cmd" Enter
+  tmux resize-pane -t "$repos" -x "$L"; tmux resize-pane -t "$Rr" -x "$Rw"
+  tmux select-pane -t "$P"
+}
+
+open_repo() {
+  local path S ja
+  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PERFIL)"
+  [ -d "$path" ] || { echo "não existe: $path" >&2; exit 1; }
+  ja="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
+  if [ -n "$ja" ]; then tmux select-window -t "$ja"; return; fi
+  construir "$path"
+  # a janela de partida ("boot") some quando já há repo aberto
+  tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' '$2=="boot"{print $1}' |
+    while read -r w; do tmux kill-window -t "$w"; done
+}
+
+side() { # $1=modo $2=janela
+  local pane
+  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1}')"
+  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+}
+
+resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando essa sessão
+  local pane cmd path
+  cmd="$(env_global WS_CMD)"
+  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  path="$(tmux display -p -t "$2" '#{@ws_repo}')"
+  [ -n "$pane" ] || return 1
+  tmux respawn-pane -k -t "$pane" -c "$path"
+  tmux send-keys -t "$pane" "$cmd --resume $1" Enter
+  tmux select-pane -t "$pane"
+}
+
+# Depois do resurrect: refaz cada janela de repo com o layout certo (e `claude --continue`).
+repair() {
+  local S ativo id nome ja path
+  S="$(env_global WS_PERFIL)"
+  ativo="$(tmux list-windows -t "$S:" -F '#{window_active}|#{window_name}' | awk -F'|' '$1=="1"{print $2}')"
+  while IFS='|' read -r id nome ja; do
+    [ -n "$ja" ] && continue
+    path="$(python3 -c "import sys;sys.path.insert(0,'$AQUI');import lib;print(next((p for g,r in lib.ler_repos() for n,p in r if n==sys.argv[1]),''))" "$nome")"
+    [ -z "$path" ] && continue
+    construir "$path" -d
+    tmux kill-window -t "$id"
+  done < <(tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}|#{@ws_repo}')
+  tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}|#{@ws_repo}' | awk -F'|' '$2=="boot"{print $1}' |
+    while read -r w; do tmux kill-window -t "$w" 2>/dev/null; done
+  [ -n "$ativo" ] && tmux select-window -t "$S:$ativo" 2>/dev/null
+}
+
+# Salva, derruba o servidor e sobe de novo restaurando (agentes voltam com `claude --continue`).
+# Serve para os hooks/config novos valerem: detach não basta, o Claude só lê os hooks ao abrir.
+restart() {
+  local perfil="${1:-cc}" sock="ws-${1:-cc}"
+  if env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then
+    env -u TMUX tmux -L "$sock" run-shell "$DADOS/plugins/tmux-resurrect/scripts/save.sh"
+    sleep 1
+    env -u TMUX tmux -L "$sock" kill-server
+    sleep 1
+  fi
+  iniciar "$perfil"
+}
+
+iniciar() {
+  local perfil="${1:-cc}" cmd sock primeiro
+  cmd="$(perfil_cmd "$perfil")"
+  [ -n "$cmd" ] || { echo "unknown profile: $perfil (see "profiles" in settings.json)" >&2; exit 2; }
+  sock="ws-$perfil"
+  if ! env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then
+    export WS_PERFIL="$perfil"
+    env -u TMUX tmux -L "$sock" -f "$AQUI/tmux.conf" new-session -d -s "$perfil" -n boot \
+      -x "${WS_COLS:-$(tput cols 2>/dev/null || echo 200)}" -y "${WS_LINES:-$(tput lines 2>/dev/null || echo 50)}"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_PERFIL "$perfil"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_CMD "$cmd"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$AQUI"
+    if [ -f "$DADOS/resurrect-$perfil/last" ] && [ -x "$DADOS/plugins/tmux-resurrect/scripts/restore.sh" ]; then
+      env -u TMUX tmux -L "$sock" run-shell "$DADOS/plugins/tmux-resurrect/scripts/restore.sh"
+    fi
+    if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$perfil:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
+      primeiro="$(python3 -c "import sys;sys.path.insert(0,'$AQUI');import lib;print(lib.ler_repos()[0][1][0][1])")"
+      env -u TMUX tmux -L "$sock" run-shell "$AQUI/workspace open '$primeiro'"
+    fi
+  fi
+  [ -n "${WS_SEM_ANEXAR:-}" ] && return 0
+  exec env -u TMUX tmux -L "$sock" attach -t "$perfil"
+}
+
+install() {
+  mkdir -p "$DADOS/plugins" "$HOME/.local/bin"
+  for p in tmux-resurrect tmux-continuum; do
+    [ -d "$DADOS/plugins/$p" ] || git clone --depth 1 "https://github.com/tmux-plugins/$p" "$DADOS/plugins/$p"
+  done
+  ln -sf "$AQUI/workspace" "$HOME/.local/bin/workspace"
+  echo "ok: plugins em $DADOS/plugins, comando em ~/.local/bin/workspace"
+}
+
+install_hooks() {
+  python3 - "$AQUI/hook.py" <<'PY'
+import json, shutil, sys
+from pathlib import Path
+hook = sys.argv[1]
+f = Path.home() / ".claude" / "settings.json"
+cfg = json.loads(f.read_text())
+shutil.copy(f, f.with_suffix(".json.bak-workspace"))
+novo = 0
+for ev in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+           "PermissionRequest", "Notification", "Stop", "SessionEnd"):
+    grupos = cfg.setdefault("hooks", {}).setdefault(ev, [])
+    if any(hook in h.get("command", "") for g in grupos for h in g.get("hooks", [])):
+        continue
+    grupos.append({"hooks": [{"type": "command", "command": f"python3 {hook}", "timeout": 5}]})
+    novo += 1
+f.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+print(f"hooks registrados em {novo} evento(s); backup em settings.json.bak-workspace. Sessões abertas precisam reiniciar.")
+PY
+}
+
+case "${1:-}" in
+  open) shift; open_repo "$@" ;;
+  side) shift; side "$@" ;;
+  resume) shift; resume "$@" ;;
+  repair) repair ;;
+  install) install ;;
+  install-hooks) install_hooks ;;
+  stop) tmux -L "ws-${2:-cc}" kill-server ;;
+  restart) shift; restart "$@" ;;
+  ""|-*) iniciar cc ;;
+  *) iniciar "$1" ;;
+esac
