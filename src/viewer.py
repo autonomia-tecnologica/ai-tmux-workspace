@@ -155,6 +155,7 @@ class Viewer:
         self.chave = self.corpo[self.idx].chave
         h = max(1, (self._tam or (80, 24))[1] - len(self.cab))
         self._visivel(h)
+        self.recoletar.set()    # painéis que reagem à seleção (ex.: tarefas) redesenham já
 
     def _rolar(self, d):
         h = max(1, (self._tam or (80, 24))[1] - len(self.cab))
@@ -191,6 +192,7 @@ class Viewer:
             i = self.top + (y - 1 - len(self.cab))
             if 0 <= i < len(self.corpo) and self.corpo[i].chave is not None:
                 self.idx, self.chave = i, self.corpo[i].chave
+                self.recoletar.set()
                 self.ao_enter(self, self.chave, "click")
 
     def _processar(self, dados):

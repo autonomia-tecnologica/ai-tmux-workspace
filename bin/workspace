@@ -17,7 +17,7 @@ export WS_DIR="$AQUI"
 
 perfil_cmd() { python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_config().get('profiles',{}).get(sys.argv[1],''))" "$1"; }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
-laco() { # $1 = repos | tree | sessions | diff | github | tabs
+laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs
   printf 'while :; do python3 %q; sleep 1; done' "$SRC/panel_$1.py"
 }
 
@@ -34,11 +34,12 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   strip="$(tmux split-window -v -b -l 2 -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tabs)")"
   tmux set -p -t "$strip" @papel tabs
   larg="$(tmux display -p -t "$W" '#{window_width}')"
-  L=$(( larg * 2 / 12 )); Rw=$(( larg * 3 / 12 ))
+  L=$(( larg * 3 / 12 )); Rw=$(( larg * 2 / 12 ))
   term="$(tmux split-window -v -l 17% -t "$P" -c "$path" -P -F '#{pane_id}')"
   tmux set -p -t "$term" @papel terminal
   repos="$(tmux split-window -h -b -f -l "$L" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco repos)")"
   tmux set -p -t "$repos" @papel repos
+  tmux set -p -t "$(tmux split-window -v -l 50% -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")" @papel tasks
   Rr="$(tmux split-window -h -f -l "$Rw" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tree)")"
   tmux set -p -t "$Rr" @papel direita
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
@@ -144,6 +145,18 @@ side() { # $1=modo $2=janela
   [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(laco "$1")"
 }
 
+# Opens the repo window and submits a message in its active Claude tab.
+send_prompt() { # $1=repo path $2=message
+  local path W pane S
+  open_repo "$1"
+  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PERFIL)"
+  W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
+  [ -n "$W" ] || return 1
+  pane="$(tmux show -wqv -t "$W" @ws_ativo)"
+  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  tmux send-keys -t "$pane" -l "$2" && tmux send-keys -t "$pane" Enter
+}
+
 resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando essa sessão
   local pane cmd path
   cmd="$(perfil_cmd "$(env_global WS_PERFIL)")"
@@ -193,7 +206,7 @@ panels() { # $1=perfil (padrão: claude)
   tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { echo "no running workspace for $perfil" >&2; exit 1; }
   while read -r pid; do
     pkill -TERM -P "$pid" -f 'python3 .*/panel_' 2>/dev/null
-  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="direita"||$2=="tabs"{print $1}')
+  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="direita"||$2=="tabs"{print $1}')
   return 0
 }
 
@@ -215,8 +228,12 @@ ensure_window() { # $1=janela $2=caminho do repo
     tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
   has tabs || mk tabs -v -b -l 2 "$(laco tabs)" >/dev/null
   has terminal || mk terminal -v -l 17% >/dev/null
-  has repos || tmux resize-pane -x $(( larg * 2 / 12 )) -t "$(mk repos -h -b -f -l $(( larg * 2 / 12 )) "$(laco repos)")"
-  has direita || tmux resize-pane -x $(( larg * 3 / 12 )) -t "$(mk direita -h -f -l $(( larg * 3 / 12 )) "$(laco tree)")"
+  has repos || tmux resize-pane -x $(( larg * 3 / 12 )) -t "$(mk repos -h -b -f -l $(( larg * 3 / 12 )) "$(laco repos)")"
+  has tasks || {
+    local rp; rp="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1; exit}')"
+    [ -n "$rp" ] && tmux set -p -t "$(tmux split-window -d -v -l 50% -t "$rp" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")" @papel tasks
+  }
+  has direita || tmux resize-pane -x $(( larg * 2 / 12 )) -t "$(mk direita -h -f -l $(( larg * 2 / 12 )) "$(laco tree)")"
 }
 
 # Aplica config/tmux.conf novo e a tira de abas nas janelas já abertas, sem derrubar o servidor.
@@ -289,6 +306,7 @@ PY
 case "${1:-}" in
   open) shift; open_repo "$@" ;;
   side) shift; side "$@" ;;
+  send) send_prompt "$2" "$3" ;;
   resume) shift; resume "$@" ;;
   repair) repair ;;
   tab-new) tab_new "$2" ;;
