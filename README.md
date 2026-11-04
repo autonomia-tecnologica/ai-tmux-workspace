@@ -32,7 +32,7 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 - abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
   temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,
   ela some e o foco volta ao principal. Abas temporárias não são restauradas no `restart`.
-- `alt+setas` pulam entre painéis.
+- `shift+setas` pulam entre painéis.
 
 ## Comandos
 `workspace [perfil]` · `restart [perfil]` (derruba e sobe de novo; use depois de mudar hooks/config) · `stop [perfil]` · `install` · `install-hooks`.
