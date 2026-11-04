@@ -248,14 +248,3 @@ class Viewer:
             sys.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
             termios.tcsetattr(fd, termios.TCSADRAIN, antigo)
-
-
-ABAS = [("e", "arquivos"), ("s", "sessões"), ("c", "diff"), ("g", "github")]
-
-
-def abas(ativa):
-    """Linha de abas do lado direito; a ativa vem em destaque. Troca: ctrl+b + letra."""
-    partes = []
-    for k, nome in ABAS:
-        partes.append(f"{B}{AZUL}[{nome}]{R}" if nome == ativa else f"{CINZA}{nome}{R}{DIM}:{k}{R}")
-    return Linha(" " + "  ".join(partes))

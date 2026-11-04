@@ -48,9 +48,8 @@ CURRENT = lib.repo_atual()
 
 def collect(v):
     file = os.path.join(CURRENT, "BACKLOG.md")
-    name = os.path.basename(CURRENT.rstrip("/"))
     items = backlog.parse(file) if os.path.exists(file) else None
-    head = [Linha(f" {B}{t('title')}{R} {AZUL}{name}{R}"), Linha(f"{DIM} {'─' * 60}{R}")]
+    head = []   # title is in the top bar; the repo name is already in the repos list and the status line
     body = []
     if not os.path.exists(file):
         body.append(Linha(f" {DIM}{t('none')}{R}"))

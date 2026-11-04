@@ -50,7 +50,7 @@ def colapsados():
 def coletar(v):
     grupos, est, col = lib.ler_repos(), None, colapsados()
     est = lib.estados_por_repo(grupos)
-    cab = [Linha(f" {B}REPOS{R}"), Linha(f"{DIM} {'─' * 60}{R}")]
+    cab = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
     corpo = []
     for nome, repos in grupos:
         seta = "▸" if nome in col else "▾"

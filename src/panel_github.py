@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime, timezone
 
 import lib
-from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer, abas
+from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
 REPO = lib.repo_atual()
 
@@ -37,7 +37,7 @@ def titulo(t):
 
 
 def coletar(v):
-    cab = [abas("github"), Linha(f"{DIM} {'─' * 60}{R}")]
+    cab = []
     try:
         info = gh("repo", "view", "--json",
                   "nameWithOwner,description,isPrivate,stargazerCount,forkCount,defaultBranchRef,pushedAt,url")

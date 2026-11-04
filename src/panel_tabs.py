@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Tira de abas (1 linha, acima do painel do Claude ou do terminal; arg: claude|terminal):
-[claude] [claude (2)] [claude (3)] ... [+].
+"""Barra superior de cada painel (1 linha; arg: claude|terminal|repos|tasks|side):
+[CLAUDE] [CLAUDE (2)] [CLAUDE (3)] ... [+]. Em `repos` e `tasks` é só o título do painel (uma aba, sem +).
+No modo `side` as abas são fixas (ARQUIVOS, SESSÕES, DIFF, GITHUB) e escolhem o que o painel da direita mostra.
 
 Clique numa aba troca, clique no + abre uma sessão temporária. Com o painel focado, ←/→ movem o
-cursor (sublinhado) entre as abas e o +, e Enter ativa. Desenha e espera mouse/teclado;
+cursor (fundo mais claro) entre as abas e o +, e Enter ativa. Desenha e espera mouse/teclado;
 o `workspace` reinicia este painel (respawn-pane) a cada mudança de abas.
 """
 import os
@@ -23,12 +24,32 @@ def tm(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True).stdout.strip()
 
 
-KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] == "terminal" else "claude"
+KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("terminal", "side", "repos", "tasks") else "claude"
+NO_PLUS = ("side", "repos", "tasks")
+PAD = 1 if KIND in ("claude", "repos", "side") else 0   # top-row bars get a blank line above, off the status bar   # top-row bars get a blank line above, off the status bar
+STRINGS = {
+    "en-US": {"claude": "CLAUDE", "terminal": "TERMINAL", "repos": "REPOS", "tasks": "TASKS",
+              "tree": "FILES", "sessions": "SESSIONS", "diff": "DIFF", "github": "GITHUB"},
+    "pt-BR": {"claude": "CLAUDE", "terminal": "TERMINAL", "repos": "REPOS", "tasks": "TAREFAS",
+              "tree": "ARQUIVOS", "sessions": "SESSÕES", "diff": "DIFF", "github": "GITHUB"},
+}
+LOCALE = "pt-BR" if os.environ.get("LC_ALL", os.environ.get("LANG", "")).startswith("pt") else "en-US"
+
+
+def t(key):
+    return STRINGS[LOCALE][key]
+
+
+SIDE_TABS = [(k, t(k)) for k in ("tree", "sessions", "diff", "github")]
 VARS = {"claude": ("@ws_tabs", "@ws_ativo"), "terminal": ("@ws_ttabs", "@ws_tativo")}
 
 
 def estado():
     win = tm("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{window_id}")
+    if KIND == "side":
+        return win, SIDE_TABS, tm("show", "-wqv", "-t", win, "@ws_side") or "tree"
+    if KIND in ("repos", "tasks"):
+        return win, [(KIND, t(KIND))], KIND
     v_tabs, v_ativo = VARS[KIND]
     ids = tm("show", "-wqv", "-t", win, v_tabs).split()
     ativo = tm("show", "-wqv", "-t", win, v_ativo)
@@ -36,14 +57,14 @@ def estado():
     for p in ids:
         if tm("display", "-p", "-t", p, "#{?pane_id,#{@papel},}"):
             # the main tab has no number; the others are numbered by creation order (2, 3, ...)
-            abas.append((p, KIND if not abas else f"{KIND} ({len(abas) + 1})"))
+            abas.append((p, t(KIND) if not abas else f"{t(KIND)} ({len(abas) + 1})"))
     return win, abas, ativo
 
 
 def desenhar(abas, ativo, cursor=None):
     """Devolve (texto, [(inicio, fim, id)]) com colunas 0-based."""
     out, mapa, x = "", [], 0
-    for p, nome in abas + [("new", "+")]:
+    for p, nome in abas + ([] if KIND in NO_PLUS else [("new", "+")]):
         rot = f" {nome} "
         if p == ativo:
             cor = "\x1b[48;5;75;38;5;16;1m"
@@ -51,8 +72,8 @@ def desenhar(abas, ativo, cursor=None):
             cor = "\x1b[38;5;75;1m"
         else:
             cor = "\x1b[48;5;238;38;5;250m"
-        if p == cursor:
-            cor += "\x1b[4m"
+        if p == cursor and p != ativo:   # keyboard cursor: lighter background (no underline)
+            cor = "\x1b[48;5;250;38;5;16m"
         out += f"{cor}{rot}\x1b[0m "
         mapa.append((x, x + len(rot) - 1, p))
         x += len(rot) + 1
@@ -61,17 +82,22 @@ def desenhar(abas, ativo, cursor=None):
 
 def main():
     win, abas, ativo = estado()
-    itens = [p for p, _ in abas] + ["new"]
+    itens = [p for p, _ in abas] + ([] if KIND in NO_PLUS else ["new"])
     cur = itens.index(ativo) if ativo in itens else 0
     texto, mapa = desenhar(abas, ativo, itens[cur])
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setcbreak(fd)
-    sys.stdout.write("\x1b[?25l\x1b[2J\x1b[H" + texto + "\x1b[?1000h\x1b[?1006h")
+    sys.stdout.write("\x1b[?25l\x1b[2J" + f"\x1b[{PAD + 1};1H" + texto + "\x1b[?1000h\x1b[?1006h")
     sys.stdout.flush()
 
     def abrir(p):
-        cmd = [WS, "tab-new", win, KIND] if p == "new" else [WS, "tab-show", win, p]
+        if KIND in ("repos", "tasks"):
+            return
+        if KIND == "side":
+            cmd = [WS, "side", p, win]
+        else:
+            cmd = [WS, "tab-new", win, KIND] if p == "new" else [WS, "tab-show", win, p]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     try:
@@ -98,7 +124,7 @@ def main():
                     abrir(itens[cur])
                     continue
                 cur = max(0, min(len(itens) - 1, cur + passo))
-                sys.stdout.write("\x1b[H" + desenhar(abas, ativo, itens[cur])[0])
+                sys.stdout.write(f"\x1b[{PAD + 1};1H" + desenhar(abas, ativo, itens[cur])[0])
                 sys.stdout.flush()
             buf = b"" if len(buf) < 64 else buf[-8:]
     finally:

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 import lib
-from viewer import abas, AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
+from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
 REPO = lib.repo_atual()
 IGNORA = {".git", "node_modules", "__pycache__", ".venv", "target", ".mypy_cache", ".pytest_cache"}
@@ -39,7 +39,7 @@ def coletar(v):
         while p.startswith(REPO) and p != REPO:
             p = os.path.dirname(p)
             sujos.add(p)
-    cab = [abas("arquivos"), Linha(f"{DIM} {'─' * 60}{R}")]
+    cab = []
     corpo = []
 
     def descer(pasta, nivel):

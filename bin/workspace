@@ -20,9 +20,19 @@ laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|t
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
 }
 
-# Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   2 : 7 : 3
+# Side column widths: a share of the window, clamped so they stay usable on small and ultrawide screens.
+col_w() { # $1=left|right  $2=window width
+  local pct min max w
+  case "$1" in left) pct=22 min=28 max=44;; *) pct=19 min=24 max=44;; esac
+  w=$(( $2 * pct / 100 )); [ "$w" -lt "$min" ] && w=$min; [ "$w" -gt "$max" ] && w=$max
+  echo "$w"
+}
+# Terminal height: 17% of the Claude pane plus the 1 line the terminal tab strip takes back.
+term_h() { echo $(( ($(tmux display -p -t "$1" '#{window_height}') - 2) * 17 / 100 + 1 )); }
+
+# Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   ~22% : rest : ~19% (clamped)
 construir() { # $1=caminho  $2=-d (não selecionar)
-  local path="$1" d="${2:-}" S nome W P larg L Rw Rr term repos cmd strip
+  local path="$1" d="${2:-}" S nome W P larg L Rw Rr term repos tasks cmd strip
   S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S")"
   nome="$(basename "$path")"
   W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
@@ -33,17 +43,23 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   strip="$(tmux split-window -v -b -l 2 -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tabs claude)")"
   tmux set -p -t "$strip" @papel tabs
   larg="$(tmux display -p -t "$W" '#{window_width}')"
-  L=$(( larg * 3 / 12 )); Rw=$(( larg * 2 / 12 ))
-  term="$(tmux split-window -v -l 17% -t "$P" -c "$path" -P -F '#{pane_id}')"
+  L="$(col_w left "$larg")"; Rw="$(col_w right "$larg")"
+  term="$(tmux split-window -v -l "$(term_h "$P")" -t "$P" -c "$path" -P -F '#{pane_id}')"
   tmux set -p -t "$term" @papel terminal
   tmux set -w -t "$W" @ws_ttabs "$term"; tmux set -w -t "$W" @ws_tativo "$term"; tmux set -w -t "$W" @ws_tnext 2
   strip="$(tmux split-window -v -b -l 1 -t "$term" -c "$path" -P -F '#{pane_id}' "$(laco tabs terminal)")"
   tmux set -p -t "$strip" @papel ttabs
   repos="$(tmux split-window -h -b -f -l "$L" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco repos)")"
   tmux set -p -t "$repos" @papel repos
-  tmux set -p -t "$(tmux split-window -v -l 50% -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")" @papel tasks
+  tasks="$(tmux split-window -v -l 50% -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")"
+  tmux set -p -t "$tasks" @papel tasks
+  # every panel gets a 1-line top bar (panel_tabs.py): REPOS and TASKS are title-only
+  tmux set -p -t "$(tmux split-window -v -b -l 2 -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tabs repos)")" @papel rtabs
+  tmux set -p -t "$(tmux split-window -v -b -l 1 -t "$tasks" -c "$path" -P -F '#{pane_id}' "$(laco tabs tasks)")" @papel ktabs
   Rr="$(tmux split-window -h -f -l "$Rw" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tree)")"
   tmux set -p -t "$Rr" @papel direita
+  strip="$(tmux split-window -v -b -l 2 -t "$Rr" -c "$path" -P -F '#{pane_id}' "$(laco tabs side)")"
+  tmux set -p -t "$strip" @papel dtabs
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
   tmux send-keys -t "$P" "$cmd --continue || $cmd" Enter
   tmux resize-pane -t "$repos" -x "$L"; tmux resize-pane -t "$Rr" -x "$Rw"
@@ -171,9 +187,14 @@ open_repo() {
 }
 
 side() { # $1=modo $2=janela
-  local pane
+  local pane strip
   pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1}')"
-  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+  [ -n "$pane" ] || return 0
+  tmux set -w -t "$2" @ws_side "$1"
+  tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+  # restart the strip so it redraws with the new active tab
+  strip="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="dtabs"{print $1}')"
+  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs side)"
 }
 
 # Opens the repo window and submits a message in its active Claude tab.
@@ -232,7 +253,7 @@ panels() { # $1=perfil (padrão: claude)
   tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { echo "no running workspace for $perfil" >&2; exit 1; }
   while read -r pid; do
     pkill -TERM -P "$pid" -f 'python3 .*/panel_' 2>/dev/null
-  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="direita"||$2=="tabs"||$2=="ttabs"{print $1}')
+  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="direita"||$2=="tabs"||$2=="ttabs"||$2=="dtabs"||$2=="rtabs"||$2=="ktabs"{print $1}')
   return 0
 }
 
@@ -253,19 +274,37 @@ ensure_window() { # $1=janela $2=caminho do repo
   [ -n "$(tmux show -wqv -t "$W" @ws_tabs)" ] || {
     tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
   has tabs || mk tabs -v -b -l 2 "$(laco tabs claude)" >/dev/null
-  has terminal || mk terminal -v -l 17% >/dev/null
+  has terminal || mk terminal -v -l "$(term_h "$P")" >/dev/null
   local T; T="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="terminal"{print $1; exit}')"
   [ -n "$T" ] && {
     [ -n "$(tmux show -wqv -t "$W" @ws_ttabs)" ] || {
       tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2; }
     has ttabs || tmux set -p -t "$(tmux split-window -d -v -b -l 1 -t "$T" -c "$path" -P -F '#{pane_id}' "$(laco tabs terminal)")" @papel ttabs
   }
-  has repos || tmux resize-pane -x $(( larg * 3 / 12 )) -t "$(mk repos -h -b -f -l $(( larg * 3 / 12 )) "$(laco repos)")"
+  has repos || tmux resize-pane -x "$(col_w left "$larg")" -t "$(mk repos -h -b -f -l "$(col_w left "$larg")" "$(laco repos)")"
   has tasks || {
     local rp; rp="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1; exit}')"
     [ -n "$rp" ] && tmux set -p -t "$(tmux split-window -d -v -l 50% -t "$rp" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")" @papel tasks
   }
-  has direita || tmux resize-pane -x $(( larg * 2 / 12 )) -t "$(mk direita -h -f -l $(( larg * 2 / 12 )) "$(laco tree)")"
+  has direita || tmux resize-pane -x "$(col_w right "$larg")" -t "$(mk direita -h -f -l "$(col_w right "$larg")" "$(laco tree)")"
+  local R2 K2
+  R2="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1; exit}')"
+  K2="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="tasks"{print $1; exit}')"
+  [ -n "$R2" ] && { has rtabs || tmux set -p -t "$(tmux split-window -d -v -b -l 2 -t "$R2" -c "$path" -P -F '#{pane_id}' "$(laco tabs repos)")" @papel rtabs; }
+  [ -n "$K2" ] && { has ktabs || tmux set -p -t "$(tmux split-window -d -v -b -l 1 -t "$K2" -c "$path" -P -F '#{pane_id}' "$(laco tabs tasks)")" @papel ktabs; }
+  local D; D="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1; exit}')"
+  [ -n "$D" ] && { has dtabs || tmux set -p -t "$(tmux split-window -d -v -b -l 2 -t "$D" -c "$path" -P -F '#{pane_id}' "$(laco tabs side)")" @papel dtabs; }
+  # Re-apply the sizes on every call, so `workspace reload` picks up changes to col_w/term_h.
+  local id
+  role_pane() { tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$1" '$2==r{print $1; exit}'; }
+  id="$(role_pane repos)";    [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w left "$larg")"
+  id="$(role_pane direita)";  [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w right "$larg")"
+  id="$(role_pane terminal)"; [ -n "$id" ] && tmux resize-pane -t "$id" -y "$(( $(term_h "$P") - 1 ))"
+  id="$(role_pane ttabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
+  id="$(role_pane tabs)";     [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane dtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane rtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
+  id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
 }
 
 # Aplica config/tmux.conf novo e a tira de abas nas janelas já abertas, sem derrubar o servidor.

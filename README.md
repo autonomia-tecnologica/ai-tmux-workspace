@@ -9,7 +9,7 @@ tmux no estilo do Orca para os repos de `groups` do settings.json. Comando: `wor
 servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
-    │ repos       │                        │ [arquivos] sessões diff   │
+    │ repos       │                        │ ARQUIVOS SESSÕES DIFF ... │
     │ ● grupos    │ claude (5/6)           │ github                    │
     │             │                        │ (aba escolhida)           │
     │             ├────────────────────────┤                           │
@@ -26,8 +26,8 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
-- lado direito (prefixo `ctrl+b`): `e` arquivos (padrão) · `s` sessões salvas (Enter retoma) ·
-  `c` diff atual (Enter abre o diff) · `g` resumo do GitHub via `gh` (repo, PR da branch com checks, PRs, issues, CI, release). Arquivos abrem no nvim.
+- lado direito: a barra do topo troca entre ARQUIVOS (padrão) · SESSÕES salvas (Enter retoma) · DIFF atual (Enter abre o diff) ·
+  GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos abrem no nvim.
 - `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux.
 - abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
   temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,

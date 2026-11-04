@@ -9,7 +9,7 @@ import subprocess
 import time
 
 import lib
-from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer, abas
+from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
 REPO = lib.repo_atual()
 PASTA = lib.HOME / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", REPO)
@@ -72,8 +72,7 @@ def coletar(v):
         fs = sorted(PASTA.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         fs = []
-    cab = [abas("sessões"), Linha(f"{DIM} {'─' * 60}{R}"),
-           Linha(f" {B}SESSÕES{R} {CINZA}{len(fs)} salvas · Enter retoma{R}"), Linha("")]
+    cab = [Linha(f" {B}SESSÕES{R} {CINZA}{len(fs)} salvas · Enter retoma{R}"), Linha("")]
     corpo = []
     agora = time.time()
     for f in fs[:60]:

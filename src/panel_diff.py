@@ -6,7 +6,7 @@ import shlex
 import subprocess
 
 import lib
-from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer, abas
+from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
 REPO = lib.repo_atual()
 
@@ -14,7 +14,7 @@ REPO = lib.repo_atual()
 def coletar(v):
     rc, out = lib.git(REPO, "status", "--porcelain", "-uall", "-b")
     if rc != 0:
-        return [abas("diff")], [Linha(f" {DIM}não é um repositório git{R}")]
+        return [], [Linha(f" {DIM}não é um repositório git{R}")]
     linhas = out.splitlines()
     ramo = linhas[0][3:].split("...")[0] if linhas else "?"
     st = {}
@@ -29,8 +29,7 @@ def coletar(v):
     for a, d in nums.values():
         ta += int(a) if a.isdigit() else 0
         td += int(d) if d.isdigit() else 0
-    cab = [abas("diff"), Linha(f"{DIM} {'─' * 60}{R}"),
-           Linha(f" {AZUL}{B}{ramo}{R}   {VERDE}+{ta}{R} {VERMELHO}-{td}{R}"),
+    cab = [Linha(f" {AZUL}{B}{ramo}{R}   {VERDE}+{ta}{R} {VERMELHO}-{td}{R}"),
            Linha(f" {B}MUDANÇAS{R} {CINZA}{len(st)}{R}"), Linha("")]
     corpo = []
     for p in sorted(st, key=lambda p: (st[p] == "??", p)):
