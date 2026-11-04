@@ -3,12 +3,12 @@ import re
 from pathlib import Path
 
 ITEM = re.compile(r"^###\s+(\d+)\.\s*(.*?)\s*$")
-SECTIONS = {"refinadas": "ready", "a refinar": "refine"}
+SECTIONS = {"refinadas": "ready", "a refinar": "refine", "a validar": "validate"}
 
 
 def parse(path):
     """-> None if the file has no recognizable sections, else a list of
-    {"id", "title", "status": ready|refine|paused, "deps": [int], "accept": str, "blocked": bool, "cycle": bool,
+    {"id", "title", "status": ready|refine|validate|paused, "deps": [int], "accept": str, "blocked": bool, "cycle": bool,
     "typo": [int]}."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
@@ -26,13 +26,13 @@ def parse(path):
             title = m.group(2)
             paused = "(PAUSADA)" in title.upper()
             cur = {"id": int(m.group(1)), "title": re.sub(r"\s*\(PAUSADA\)\s*", " ", title, flags=re.I).strip(),
-                   "status": "paused" if paused else section, "deps": [], "accept": ""}
+                   "status": "paused" if paused and section != "validate" else section, "deps": [], "accept": ""}
             items.append(cur)
         elif cur is not None:
             d = re.match(r"^-\s*Depende de:\s*(.*)$", line)
             if d:
                 cur["deps"] = [int(n) for n in re.findall(r"\d+", d.group(1))]
-            a = re.match(r"^-\s*Aceite:\s*(.*)$", line)
+            a = re.match(r"^-\s*(?:Aceite|Conferir):\s*(.*)$", line)
             if a:
                 cur["accept"] = a.group(1).strip()
         nxt = re.match(r"^Próximo id:\s*(\d+)", line)
@@ -108,8 +108,8 @@ def ordered(items):
 def tree(items):
     """Display rows in dependency-tree order: -> [(item, parent_id|None, is_last, has_children)].
     The parent is the dependency that unblocks the item last; items without a usable parent
-    (no deps, cycle, or a dependency that comes later) are roots."""
-    out = ordered(items)
+    (no deps, cycle, or a dependency that comes later) are roots. Items to validate come first."""
+    out = sorted(ordered(items), key=lambda i: i["status"] != "validate")   # to validate first (stable)
     pos = {i["id"]: n for n, i in enumerate(out)}
     parent, kids = {}, {}
     for i in out:

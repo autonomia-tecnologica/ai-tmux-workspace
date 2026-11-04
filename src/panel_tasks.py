@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tasks panel: open BACKLOG.md items of the repo of this tmux window only.
 
-  ● green ready   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
-A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude.
+  ● green ready   ◆ yellow to validate (Enter asks "what do I need to validate?")   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
+A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
 import shutil
@@ -15,17 +15,19 @@ from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer
 
 STRINGS = {
     "en-US": {"title": "TASKS", "no_format": "no format", "none": "no backlog found",
-              "ready": "ready", "refine": "to refine", "blocked": "blocked",
+              "ready": "ready", "refine": "to refine", "validate": "to validate", "blocked": "blocked",
               "cycle": "dependency cycle: invalid until fixed",
               "typo": "id {ids} is >= next id (typo?)",
               "msg_ready": "Implement slice {id} of BACKLOG.md (use the implementador subagent).",
-              "msg_refine": "Let's refine item {id} of BACKLOG.md."},
+              "msg_refine": "Let's refine item {id} of BACKLOG.md.",
+              "msg_validate": "What do I need to validate?"},
     "pt-BR": {"title": "TAREFAS", "no_format": "sem formato", "none": "nenhum backlog encontrado",
-              "ready": "prontas", "refine": "a refinar", "blocked": "bloqueadas",
+              "ready": "prontas", "refine": "a refinar", "validate": "a validar", "blocked": "bloqueadas",
               "cycle": "ciclo de dependência: inválida até desfazer",
               "typo": "id {ids} >= próximo id (erro de digitação?)",
               "msg_ready": "Implemente a fatia {id} do BACKLOG.md (use o subagente implementador).",
-              "msg_refine": "Vamos refinar o item {id} do BACKLOG.md."},
+              "msg_refine": "Vamos refinar o item {id} do BACKLOG.md.",
+              "msg_validate": "O que preciso validar?"},
 }
 LOCALE = "pt-BR" if os.environ.get("LC_ALL", os.environ.get("LANG", "")).startswith("pt") else "en-US"
 
@@ -35,7 +37,7 @@ def t(key):
 
 
 MARK = {"ready": f"{VERDE}●{R}", "refine": f"{CINZA}○{R}", "paused": f"{DIM}◌{R}",
-        "blocked": f"{AMARELO}⊘{R}", "cycle": f"\x1b[31m✖{R}"}
+        "blocked": f"{AMARELO}⊘{R}", "validate": f"{AMARELO}◆{R}", "cycle": f"\x1b[31m✖{R}"}
 
 
 def effective(i):
@@ -44,6 +46,7 @@ def effective(i):
         return "cycle"
     return "blocked" if i["blocked"] and i["status"] == "ready" else i["status"]
 CURRENT = lib.repo_atual()
+OPEN = set()    # ids of items whose description is expanded (Right opens, Left closes)
 
 
 def collect(v):
@@ -58,13 +61,23 @@ def collect(v):
     else:
         eff = [effective(i) for i in items]
         ready, blocked = eff.count("ready"), sum(e in ("blocked", "cycle") for e in eff)
-        refine = len(items) - ready - blocked
-        counts = f" {VERDE}{ready}{R} {DIM}{t('ready')}{R}  {CINZA}{refine}{R} {DIM}{t('refine')}{R}"
-        if blocked:
-            counts += f"  {AMARELO}{blocked}{R} {DIM}{t('blocked')}{R}"
-        body.append(Linha(counts))
+        validate = eff.count("validate")
+        refine = len(items) - ready - blocked - validate
         cols = shutil.get_terminal_size((80, 24))[0]
-        sel = v.chave[2] if v is not None and v.chave and v.chave[0] == "i" else (items[0]["id"] if items else None)
+        parts = [(VERDE, ready, "ready"), (CINZA, refine, "refine"), (AMARELO, validate, "validate"),
+                 (AMARELO, blocked, "blocked")]
+        row, used = "", 0                                   # pack the counters, wrapping when they don't fit
+        for color, n, key in parts:
+            if key in ("validate", "blocked") and not n:
+                continue
+            plain = f"{n} {t(key)}"
+            if used and used + 2 + len(plain) + 1 > cols:
+                body.append(Linha(row))
+                row, used = "", 0
+            row += ("  " if used else " ") + f"{color}{n}{R} {DIM}{t(key)}{R}"
+            used += (2 if used else 1) + len(plain)
+        body.append(Linha(row))
+        body.append(Linha())                                # blank line between counters and tasks
         rail = {}                                           # id -> tree prefix for its children/lines
         for i, par, last, kids in backlog.tree(items):
             st = effective(i)
@@ -76,9 +89,10 @@ def collect(v):
             dep = f" ←{deps}" if len(i["deps"]) > 1 or (i["deps"] and par is None) else ""
             if i["typo"]:
                 dep += " ⚠"
-            pad = len(lead) + 3 + len(str(i["id"]))         # "<lead>● 12 "
-            first = f"{DIM}{lead}{R}{MARK[st]} {DIM}{i['id']}{R} "
-            if i["id"] != sel:
+            pad = len(lead) + 5 + len(str(i["id"]))         # "<lead>▸ ● 12 "
+            opened = i["id"] in OPEN
+            first = f"{DIM}{lead}{'▾' if opened else '▸'}{R} {MARK[st]} {DIM}{i['id']}{R} "
+            if not opened:
                 title = i["title"]
                 room = cols - pad - len(dep) - 1
                 if len(title) > room:
@@ -91,15 +105,15 @@ def collect(v):
             body.append(Linha(f"{first}{B}{lines[0]}{R}", key))
             ind = f"{DIM}{rail[i['id']]}{'│' if kids else ' '}{R}" + " " * (pad - len(rail[i["id"]]) - 1)
             for ln in lines[1:]:
-                body.append(Linha(f"{ind}{B}{ln}{R}"))
+                body.append(Linha(f"{ind}{B}{ln}{R}", cont=True))
             if i["deps"]:
-                body.append(Linha(f"{ind}{DIM}←{deps}{R}"))
+                body.append(Linha(f"{ind}{DIM}←{deps}{R}", cont=True))
             if i["cycle"]:
-                body.append(Linha(f"{ind}\x1b[31m✖ {t('cycle')}{R}"))
+                body.append(Linha(f"{ind}\x1b[31m✖ {t('cycle')}{R}", cont=True))
             if i["typo"]:
-                body.append(Linha(f"{ind}{AMARELO}⚠ {t('typo').format(ids=', '.join(map(str, i['typo'])))}{R}"))
+                body.append(Linha(f"{ind}{AMARELO}⚠ {t('typo').format(ids=', '.join(map(str, i['typo'])))}{R}", cont=True))
             for n, ln in enumerate(textwrap.wrap(i["accept"], width - 2) if i["accept"] else []):
-                body.append(Linha(f"{ind}{DIM}{'✓ ' if not n else '  '}{ln}{R}"))
+                body.append(Linha(f"{ind}{DIM}{'✓ ' if not n else '  '}{ln}{R}", cont=True))
     return head, body
 
 
@@ -107,11 +121,19 @@ def enter(v, key, k):
     path = key[1]
     if key[3] in ("blocked", "cycle"):      # never dispatched while a dependency is open
         return
-    # ready -> implement; anything else (to refine, paused) -> refine
-    msg = t("msg_ready" if key[3] == "ready" else "msg_refine").format(id=key[2])
+    # ready -> implement; to validate -> ask what to check; anything else (to refine, paused) -> refine
+    msg = t({"ready": "msg_ready", "validate": "msg_validate"}.get(key[3], "msg_refine")).format(id=key[2])
     subprocess.run([str(lib.BASE / "bin" / "workspace"), "send", path, msg], timeout=20,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def on_key(v, k):
+    """Right expands the item under the cursor, Left collapses it (like the files tree)."""
+    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] != "i":
+        return
+    (OPEN.add if k in ("\x1b[C", "\x1bOC") else OPEN.discard)(v.chave[2])
+    v.recoletar.set()
+
+
 if __name__ == "__main__":
-    Viewer(collect, intervalo=3.0, cursor=True, ao_enter=enter, chave_inicial=None).rodar()
+    Viewer(collect, intervalo=3.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=None).rodar()

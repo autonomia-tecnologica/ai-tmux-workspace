@@ -48,10 +48,11 @@ def cortar(s, w):
 
 
 class Linha:
-    __slots__ = ("texto", "chave")
+    __slots__ = ("texto", "chave", "cont")
 
-    def __init__(self, texto="", chave=None):
-        self.texto, self.chave = texto, chave
+    def __init__(self, texto="", chave=None, cont=False):
+        # cont: continuation of the previous keyed line; not navigable, but highlighted with it
+        self.texto, self.chave, self.cont = texto, chave, cont
 
 
 class Viewer:
@@ -117,6 +118,9 @@ class Viewer:
         self._localizar_cursor()
         h = max(0, lins - len(cab))
         self.top = max(0, min(self.top, max(0, len(corpo) - h)))
+        end = self.idx + 1
+        while self.cursor and end < len(corpo) and corpo[end].cont:
+            end += 1
         rows = []
         for l in cab[:lins]:
             rows.append(cortar(l.texto, cols)[0])
@@ -126,7 +130,7 @@ class Viewer:
                 rows.append("")
                 continue
             t, n = cortar(corpo[i].texto, cols)
-            if self.cursor and i == self.idx and corpo[i].chave is not None:
+            if self.cursor and self.idx <= i < end and (i == self.idx and corpo[i].chave is not None or corpo[i].cont):
                 t = BG + t.replace(R, R + BG) + " " * (cols - n) + R
             rows.append(t)
         while len(rows) < lins:
