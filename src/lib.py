@@ -135,7 +135,10 @@ def estado_git(repo):
             threading.Thread(target=_fetch_bg, args=(repo,), daemon=True).start()
         rc, out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", timeout=5)
         if rc != 0:
-            est = "local"           # sem remoto, sem upstream ou HEAD solto
+            # sem upstream: só é "local" se não houver remoto nenhum; com remoto (público ou
+            # privado) o ícone do GitHub fica normal mesmo sem a branch rastreando
+            rc2, remotes = git(repo, "remote", timeout=5)
+            est = "ok" if rc2 == 0 and remotes.strip() else "local"
         else:
             ahead, behind = (int(x) for x in out.split())
             est = "dessinc" if ahead or behind else "ok"
