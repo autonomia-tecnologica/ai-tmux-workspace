@@ -96,7 +96,7 @@ def coletar(v):
 
 def enter(v, sid, tecla):
     subprocess.run(["tmux", "confirm-before", "-p", "Retomar no painel do Claude? O agente atual fecha (y/n)",
-                    f"run-shell '{shlex.quote(str(lib.BASE / 'workspace'))} resume {sid} #{{window_id}}'"])
+                    f"run-shell '{shlex.quote(str(lib.BASE / 'bin' / 'workspace'))} resume {sid} #{{window_id}}'"])
 
 
 if __name__ == "__main__":

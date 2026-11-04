@@ -137,7 +137,7 @@ def main():
     nome = (os.path.basename(repo) or repo).replace("#", "##")
     sep = "#[fg=colour240] • "
     print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{modelo(repo)}"
-          f"{(' (' + perfil + ')') if perfil and perfil != 'cc' else ''}{sep}"
+          f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{sep}"
           f"#[fg=colour250]5h {fmt(h5)} tok · 7d {fmt(d7)}#[default]")
 
 

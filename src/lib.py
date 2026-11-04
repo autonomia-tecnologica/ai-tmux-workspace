@@ -5,7 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parent.parent   # raiz do repo
 HOME = Path.home()
 ESTADO = Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace"))
 SESSOES = ESTADO / "sessoes"
@@ -102,3 +102,41 @@ def git(repo, *args, timeout=15):
         return r.returncode, r.stdout
     except Exception as e:
         return 1, str(e)
+
+
+_GH_CACHE = {}        # repo -> (ts, estado)
+_FETCH_TS = {}        # repo -> ts do último fetch
+GH_TTL = 10           # s entre releituras locais
+FETCH_TTL = 300       # s entre fetches em segundo plano (só assim dá pra saber se está atrás)
+
+
+def _fetch_bg(repo):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    try:
+        subprocess.run(["git", "-C", repo, "fetch", "--quiet"], timeout=30, env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def estado_git(repo):
+    """None sem git · 'local' git criado mas não subiu · 'ok' subiu e em dia · 'dessinc' ahead/behind."""
+    agora = time.time()
+    c = _GH_CACHE.get(repo)
+    if c and agora - c[0] < GH_TTL:
+        return c[1]
+    if not os.path.exists(os.path.join(repo, ".git")):
+        est = None
+    else:
+        if agora - _FETCH_TS.get(repo, 0) > FETCH_TTL:
+            _FETCH_TS[repo] = agora
+            import threading
+            threading.Thread(target=_fetch_bg, args=(repo,), daemon=True).start()
+        rc, out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", timeout=5)
+        if rc != 0:
+            est = "local"           # sem remoto, sem upstream ou HEAD solto
+        else:
+            ahead, behind = (int(x) for x in out.split())
+            est = "dessinc" if ahead or behind else "ok"
+    _GH_CACHE[repo] = (agora, est)
+    return est

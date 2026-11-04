@@ -3,6 +3,9 @@
 
   ○ vazio    agente parado          ● verde   agente (ou subagente) trabalhando
   ● amarelo  esperando algo rodar   ● vermelho esperando você responder
+
+Ao lado do nome, o logo do GitHub:  (nada) sem git · apagado: git criado, não subiu ·
+normal: subiu e em dia · amarelo: subiu, mas ahead/behind do upstream (fetch a cada 5 min).
 """
 import json
 import subprocess
@@ -13,6 +16,8 @@ from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, VERMELHO, Linha, View
 
 BOLA = {"ocioso": f"{CINZA}○{R}", "trabalha": f"{VERDE}●{R}", "espera": f"{AMARELO}●{R}",
         "pergunta": f"{VERMELHO}●{R}"}
+GH = "\uf09b"   # nerd font: logo do GitHub
+ICONE_GIT = {None: " ", "local": f"\x1b[38;5;238m{GH}{R}", "ok": GH, "dessinc": f"{AMARELO}{GH}{R}"}
 COLAPSADOS = lib.ESTADO / "colapsados.json"
 ATUAL = lib.repo_atual()
 
@@ -39,7 +44,7 @@ def coletar(v):
             continue
         for rnome, p in repos:
             sel = f"{AZUL}{B}" if p == ATUAL else ""
-            corpo.append(Linha(f"   {BOLA[est.get(p, 'ocioso')]} {sel}{rnome}{R}", ("r", p)))
+            corpo.append(Linha(f"   {BOLA[est.get(p, 'ocioso')]} {sel}{rnome}{R} {ICONE_GIT[lib.estado_git(p)]}", ("r", p)))
     return cab, corpo
 
 
@@ -52,7 +57,7 @@ def enter(v, chave, tecla):
         COLAPSADOS.write_text(json.dumps(sorted(col)))
         v.recoletar.set()
     else:
-        subprocess.run([str(lib.BASE / "workspace"), "open", valor], timeout=20,
+        subprocess.run([str(lib.BASE / "bin" / "workspace"), "open", valor], timeout=20,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

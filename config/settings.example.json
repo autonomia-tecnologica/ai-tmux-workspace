@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "claude": "claude --resume",
+    "deepseek": "claude --settings ~/.claude/settings.deepseek.json"
+  },
+  "groups": {
+    "Example": [
+      "~/Codes/some-repo"
+    ]
+  }
+}
