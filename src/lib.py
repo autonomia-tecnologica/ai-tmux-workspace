@@ -120,7 +120,8 @@ def _fetch_bg(repo):
 
 
 def estado_git(repo):
-    """None sem git · 'local' git criado mas não subiu · 'ok' subiu e em dia · 'dessinc' ahead/behind."""
+    """(estado, sujo): estado = None sem git · 'local' git criado mas não subiu · 'ok' subiu e em dia ·
+    'dessinc' ahead/behind. sujo = há trabalho não commitado (modificado ou novo, fora do stash)."""
     agora = time.time()
     c = _GH_CACHE.get(repo)
     if c and agora - c[0] < GH_TTL:
@@ -138,5 +139,9 @@ def estado_git(repo):
         else:
             ahead, behind = (int(x) for x in out.split())
             est = "dessinc" if ahead or behind else "ok"
-    _GH_CACHE[repo] = (agora, est)
-    return est
+    sujo = False
+    if est is not None:
+        rc, out = git(repo, "status", "--porcelain", timeout=5)
+        sujo = rc == 0 and bool(out.strip())
+    _GH_CACHE[repo] = (agora, (est, sujo))
+    return est, sujo

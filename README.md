@@ -28,6 +28,10 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
 - lado direito (prefixo `ctrl+b`): `e` arquivos (padrão) · `s` sessões salvas (Enter retoma) ·
   `c` diff atual (Enter abre o diff) · `g` resumo do GitHub via `gh` (repo, PR da branch com checks, PRs, issues, CI, release). Arquivos abrem no nvim.
+- `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux.
+- abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
+  temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,
+  ela some e o foco volta ao principal. Abas temporárias não são restauradas no `restart`.
 - `alt+setas` pulam entre painéis.
 
 ## Comandos
@@ -38,5 +42,5 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 perfil sem servidor, o `workspace` restaura e refaz cada janela de repo com `claude --continue`.
 
 ## Arquivos
-`settings.example.json` (modelo da config) · `tmux.conf` · `workspace` (launcher) · `panel_*.py` ·
+`settings.example.json` (modelo da config) · `tmux.conf` · `workspace` (launcher) · `panel_*.py` (incl. `panel_tabs.py`, a tira de abas) ·
 `viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `hook.py` · `statusbar.py`.

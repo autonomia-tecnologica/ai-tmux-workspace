@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "claude": "claude --resume",
+    "claude": "claude",
     "deepseek": "claude --settings ~/.claude/settings.deepseek.json"
   },
   "groups": {

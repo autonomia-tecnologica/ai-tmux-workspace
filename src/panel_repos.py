@@ -4,8 +4,10 @@
   ○ vazio    agente parado          ● verde   agente (ou subagente) trabalhando
   ● amarelo  esperando algo rodar   ● vermelho esperando você responder
 
-Ao lado do nome, o logo do GitHub:  (nada) sem git · apagado: git criado, não subiu ·
-normal: subiu e em dia · amarelo: subiu, mas ahead/behind do upstream (fetch a cada 5 min).
+Ao lado do nome, dois ícones sempre presentes:
+  branch  = git local: esmaecido sem git · normal limpo · amarelo com trabalho não commitado
+  GitHub  = remoto:    esmaecido não está no remoto · normal em dia · amarelo ahead/behind do upstream
+                       (fetch a cada 5 min)
 """
 import json
 import subprocess
@@ -17,7 +19,23 @@ from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, VERMELHO, Linha, View
 BOLA = {"ocioso": f"{CINZA}○{R}", "trabalha": f"{VERDE}●{R}", "espera": f"{AMARELO}●{R}",
         "pergunta": f"{VERMELHO}●{R}"}
 GH = "\uf09b"   # nerd font: logo do GitHub
-ICONE_GIT = {None: " ", "local": f"\x1b[38;5;238m{GH}{R}", "ok": GH, "dessinc": f"{AMARELO}{GH}{R}"}
+BRANCH = "\ue725"   # nerd font: git branch
+ESMAECIDO = "\x1b[38;5;238m"
+
+
+def icone_git(repo):
+    """Dois ícones, sempre presentes: branch (git local) e logo do GitHub (remoto)."""
+    est, sujo = lib.estado_git(repo)
+    if est is None:                                   # sem git: os dois esmaecidos
+        return f"{ESMAECIDO}{BRANCH} {GH}{R}"
+    git = f"{AMARELO}{BRANCH}{R}" if sujo else BRANCH
+    if est == "local":
+        remoto = f"{ESMAECIDO}{GH}{R}"
+    else:
+        remoto = f"{AMARELO}{GH}{R}" if est == "dessinc" else GH
+    return f"{git} {remoto}"
+
+
 COLAPSADOS = lib.ESTADO / "colapsados.json"
 ATUAL = lib.repo_atual()
 
@@ -44,7 +62,7 @@ def coletar(v):
             continue
         for rnome, p in repos:
             sel = f"{AZUL}{B}" if p == ATUAL else ""
-            corpo.append(Linha(f"   {BOLA[est.get(p, 'ocioso')]} {sel}{rnome}{R} {ICONE_GIT[lib.estado_git(p)]}", ("r", p)))
+            corpo.append(Linha(f"   {BOLA[est.get(p, 'ocioso')]} {sel}{rnome}{R} {icone_git(p)}", ("r", p)))
     return cab, corpo
 
 
