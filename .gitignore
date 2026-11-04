@@ -1,2 +1,4 @@
 __pycache__/
-.claude/
+.claude/*
+!.claude/skills/
+/BACKLOG.md
