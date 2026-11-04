@@ -42,6 +42,13 @@ def main():
         e.update(estado="pergunta", ferramenta=None)
     elif ev == "UserPromptSubmit":
         e.update(estado="trabalha", ferramenta=None)
+    elif ev == "PreToolUse" and d.get("tool_name") in ("AskUserQuestion", "ExitPlanMode"):
+        e.update(estado="pergunta", ferramenta=None)    # poll/plan approval: waiting on the person
+    elif d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+        # subagent tools share the parent's session id: the session is waiting on an agent
+        # (green), not on a long-running command (yellow), and must not mask a pending question
+        if e.get("estado") != "pergunta":
+            e.update(estado="trabalha", ferramenta=None)
     elif ev == "PreToolUse":
         e.update(estado="trabalha", ferramenta=d.get("tool_name"), ferr_ts=agora)
     elif ev in ("PostToolUse", "PostToolUseFailure"):
