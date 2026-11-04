@@ -98,6 +98,56 @@ def uso():
     return h5, d7
 
 
+LIMITS = lib.ESTADO / "limits.json"
+
+
+def _pct_resets(w):
+    """-> (used %, resets_at epoch|None) of one window, or None if it has no percentage."""
+    if not isinstance(w, dict) or not isinstance(w.get("used_percentage"), (int, float)):
+        return None
+    r = w.get("resets_at")
+    if isinstance(r, str):
+        try:
+            r = datetime.fromisoformat(r.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            r = None
+    return w["used_percentage"], r if isinstance(r, (int, float)) else None
+
+
+DIAS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+
+
+def quando(ts):
+    """Reset time: HH:MM if today, 'amanhã HH:MM' if tomorrow, else 'dia-da-semana HH:MM'."""
+    d, hoje = datetime.fromtimestamp(ts), datetime.now()
+    dias = (d.date() - hoje.date()).days
+    hora = d.strftime("%H:%M")
+    if dias <= 0:
+        return hora
+    return f"amanhã {hora}" if dias == 1 else f"{DIAS[d.weekday()]} {hora}"
+
+
+def limites():
+    """Real 5h / 7d percentages saved by statusline.py -> (h5, d7) strings, or None."""
+    try:
+        rl = json.loads(LIMITS.read_text())["rate_limits"]
+    except Exception:
+        return None
+    out = []
+    for names in (("five_hour", "5h", "five"), ("seven_day", "7d", "seven")):
+        w = next((rl[k] for k in rl if any(n in k.lower() for n in names)), None)
+        v = _pct_resets(w)
+        if v is None:
+            out.append("—")
+            continue
+        pct, resets = v
+        if resets and resets < time.time():                  # window already reset
+            out.append("0%")
+        else:
+            out.append(f"{pct:.0f}%" + (f" ↻{quando(resets)}" if resets else ""))
+    return tuple(out)
+
+
 def fmt(n):
     if n >= 1e6:
         return f"{n / 1e6:.1f}M".replace(".", ",")
@@ -133,12 +183,14 @@ def main():
         return
     repo = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
-    h5, d7 = uso()
+    lim = limites()
+    h5, d7 = uso() if lim is None else (0, 0)
     nome = (os.path.basename(repo) or repo).replace("#", "##")
     sep = "#[fg=colour240] • "
+    uso_txt = f"5h {lim[0]} · 7d {lim[1]}" if lim else f"5h {fmt(h5)} tok · 7d {fmt(d7)}"
     print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{modelo(repo)}"
           f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{sep}"
-          f"#[fg=colour250]5h {fmt(h5)} tok · 7d {fmt(d7)}#[default]")
+          f"#[fg=colour250]{uso_txt}#[default]")
 
 
 if __name__ == "__main__":
