@@ -35,11 +35,11 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 - `alt+setas` pulam entre painéis.
 
 ## Comandos
-`workspace [perfil]` · `restart [perfil]` (salva, derruba e restaura; use depois de mudar hooks/config) · `stop [perfil]` · `install` · `install-hooks`.
+`workspace [perfil]` · `restart [perfil]` (derruba e sobe de novo; use depois de mudar hooks/config) · `stop [perfil]` · `install` · `install-hooks`.
 
 ## Persistência
-`workspace install` baixa tmux-resurrect e tmux-continuum (salvam a cada 5 min). Ao abrir um
-perfil sem servidor, o `workspace` restaura e refaz cada janela de repo com `claude --continue`.
+Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova) e o resto vem do
+`settings.json` e dos arquivos do repo.
 
 ## Arquivos
 `settings.example.json` (modelo da config) · `tmux.conf` · `workspace` (launcher) · `panel_*.py` (incl. `panel_tabs.py`, a tira de abas) ·
