@@ -1,6 +1,6 @@
-# at-ai-workspace
+# ai-tmux-workspace
 
-Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma abordagem específica (um repo por janela, agente Claude Code ao lado). Parte do ecossistema Autonomia Tecnológica; sem remoto por enquanto.
+Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma abordagem específica (um repo por janela, agente Claude Code ao lado).
 
 **Configuração:** um único `~/.config/at-ai-workspace/settings.json` (`profiles` e `groups`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
 
