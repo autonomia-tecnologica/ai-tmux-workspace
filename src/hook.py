@@ -24,9 +24,22 @@ def main():
         e = json.loads(arq.read_text())
     except Exception:
         e = {}
-    e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora)
-    if ev in ("SessionStart", "Stop"):
+    pane = os.environ.get("TMUX_PANE")
+    if ev == "SessionStart" and pane:
+        # /clear (and resume) starts a new session id in the same pane without reliably firing
+        # SessionEnd for the old one; drop the old files so their stale color does not linger.
+        for outro in SESSOES.glob("*.json"):
+            if outro != arq:
+                try:
+                    if json.loads(outro.read_text()).get("pane") == pane:
+                        outro.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora, pane=pane)
+    if ev == "SessionStart":
         e.update(estado="ocioso", ferramenta=None)
+    elif ev == "Stop":      # turn ended with text in the session: red until the next prompt
+        e.update(estado="pergunta", ferramenta=None)
     elif ev == "UserPromptSubmit":
         e.update(estado="trabalha", ferramenta=None)
     elif ev == "PreToolUse":
@@ -37,7 +50,7 @@ def main():
                                        in ("permission_prompt", "elicitation_dialog")):
         e.update(estado="pergunta")
     elif ev == "Notification":
-        e.update(estado="ocioso", ferramenta=None) if d.get("notification_type") == "idle_prompt" else None
+        return      # idle_prompt keeps whatever Stop set (red if the session has text)
     else:
         return
     SESSOES.mkdir(parents=True, exist_ok=True)

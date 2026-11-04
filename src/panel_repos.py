@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Painel de repos: grupos de settings.json, cada repo com a bolinha do estado do agente.
 
-  ○ vazio    agente parado          ● verde   agente (ou subagente) trabalhando
-  ● amarelo  esperando algo rodar   ● vermelho esperando você responder
+  ○ vazio    sessão sem texto           ● verde   agente (ou subagente) trabalhando
+  ● amarelo  parado, mas rodando algo         ● vermelho parado com texto / pergunta
 
 Ao lado do nome, dois ícones sempre presentes:
   branch  = git local: esmaecido sem git · normal limpo · amarelo com trabalho não commitado
@@ -79,5 +79,13 @@ def enter(v, chave, tecla):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def perde_foco(v):
+    """Leaving the pane (or window) puts the cursor back on this window's own repo."""
+    v.chave = ("r", ATUAL)
+    v.recoletar.set()
+    v._acordar()
+
+
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=1.0, cursor=True, ao_enter=enter, chave_inicial=("r", ATUAL)).rodar()
+    Viewer(coletar, intervalo=1.0, cursor=True, ao_enter=enter, chave_inicial=("r", ATUAL),
+           ao_perde_foco=perde_foco).rodar()

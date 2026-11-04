@@ -56,9 +56,9 @@ class Linha:
 
 class Viewer:
     def __init__(self, coletar, intervalo=2.0, cursor=False, ao_enter=None, chave_inicial=None,
-                 ao_tecla=None):
+                 ao_tecla=None, ao_perde_foco=None):
         self.coletar, self.intervalo, self.cursor = coletar, intervalo, cursor
-        self.ao_enter, self.ao_tecla = ao_enter, ao_tecla
+        self.ao_enter, self.ao_tecla, self.ao_perde_foco = ao_enter, ao_tecla, ao_perde_foco
         self.cab, self.corpo, self._sig = [], [], None
         self.top, self.chave, self.idx = 0, chave_inicial, 0
         self.recoletar = threading.Event()
@@ -180,6 +180,11 @@ class Viewer:
                 self.ao_enter(self, self.corpo[self.idx].chave, k)
         elif k == "r":
             self.recoletar.set()
+        elif k == "\x1b[O":     # focus lost (tmux focus-events)
+            if self.ao_perde_foco:
+                self.ao_perde_foco(self)
+        elif k == "\x1b[I":
+            pass
         elif self.ao_tecla:
             self.ao_tecla(self, k)
 
@@ -224,7 +229,7 @@ class Viewer:
         signal.signal(signal.SIGWINCH, lambda *_: self._acordar())
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "parar", True) or self._acordar())
         tty.setcbreak(fd)
-        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h")
+        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?1004h")
         sys.stdout.flush()
         threading.Thread(target=self._coletor, daemon=True).start()
         try:
@@ -240,7 +245,7 @@ class Viewer:
                     self._processar(d)
         finally:
             self.parar = True
-            sys.stdout.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
+            sys.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
             termios.tcsetattr(fd, termios.TCSADRAIN, antigo)
 
