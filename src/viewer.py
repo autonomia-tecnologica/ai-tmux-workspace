@@ -218,6 +218,7 @@ class Viewer:
                     self._tecla(m.group().decode("latin1"))
                     i = m.end()
                     continue
+                self._tecla("esc")      # lone Esc key
                 i += 1
                 continue
             j = i + 1
