@@ -5,8 +5,10 @@ import shlex
 import shutil
 import subprocess
 
+import clipboard
 import icons
 import lib
+from i18n import t
 import opener
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
@@ -140,8 +142,22 @@ def enter(v, chave, tecla):
                        timeout=None)
 
 
+def copy_selected(v):
+    """`y`: puts the selected file on the clipboard as a file, to paste into Slack and the like."""
+    if not v.chave or v.chave[0] != "f":
+        msg = t("tree.copy_pick_file")
+    elif clipboard.copy_file(v.chave[1]):
+        msg = t("tree.copied", name=os.path.basename(v.chave[1]))
+    else:
+        msg = t("tree.copy_failed")
+    subprocess.run(["tmux", "display-message", msg], check=False)
+
+
 def on_key(v, k):
-    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
+    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder). `y` copies the file."""
+    if k == "y":
+        copy_selected(v)
+        return
     if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave:
         return
     tipo, caminho = v.chave
