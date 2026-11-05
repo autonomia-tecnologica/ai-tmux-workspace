@@ -143,7 +143,7 @@ def enter(v, chave, tecla):
 
 
 def copy_selected(v):
-    """`y`: puts the selected file on the clipboard as a file, to paste into Slack and the like."""
+    """`y`: puts the selected file on the clipboard as a file, to paste elsewhere."""
     if not v.chave or v.chave[0] != "f":
         msg = t("tree.copy_pick_file")
     elif clipboard.copy_file(v.chave[1]):

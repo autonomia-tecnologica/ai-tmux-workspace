@@ -1,4 +1,4 @@
-"""Puts a file on the OS clipboard as a file (not as text), so Ctrl+V/Cmd+V in Slack, mail,
+"""Puts a file on the OS clipboard as a file (not as text), so Ctrl+V/Cmd+V in a chat, mail,
 a browser upload, etc. attaches it without going through the file manager.
 
 macOS: osascript `set the clipboard to POSIX file`. Linux: wl-copy (Wayland) or xclip (X11) with
