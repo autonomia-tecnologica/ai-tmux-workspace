@@ -7,7 +7,69 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "sessoes"
+
+
+def _one_line(text, n=100):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _notifications_enabled():
+    try:
+        cfg = Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-workspace" / "settings.json"))
+        return json.loads(cfg.read_text()).get("notifications", True) is not False
+    except Exception:
+        return True
+
+
+def _last_assistant_text(d):
+    """End of the last assistant message: payload field, else the tail of the transcript."""
+    if d.get("last_assistant_message"):
+        return str(d["last_assistant_message"])
+    try:
+        with open(d["transcript_path"], "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 262144))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(lines):
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if m.get("type") != "assistant":
+                continue
+            content = (m.get("message") or {}).get("content")
+            if isinstance(content, str):
+                return content
+            texts = [c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+            if any(t.strip() for t in texts):
+                return "\n".join(texts)
+    except Exception:
+        pass
+    return ""
+
+
+def _snippet(d, ev):
+    try:
+        if ev == "Notification":
+            return _one_line(d.get("message"))
+        if ev == "Stop":
+            return _one_line(_last_assistant_text(d)[-300:])
+        ti = d.get("tool_input") or {}
+        detail = ti.get("command") or ti.get("file_path") or ti.get("question") or ""
+        return _one_line(f"{d.get('tool_name') or ''} {detail}".strip())
+    except Exception:
+        return ""
+
+
+def _notify(d, ev):
+    if not _notifications_enabled():
+        return
+    from notify import notify
+    notify(os.path.basename((d.get("cwd") or "").rstrip("/\\")) or "Claude Code", _snippet(d, ev))
 
 
 def main():
@@ -35,6 +97,7 @@ def main():
                         outro.unlink(missing_ok=True)
                 except Exception:
                     pass
+    prev = e.get("estado")
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora, pane=pane)
     if ev == "SessionStart":
         e.update(estado="ocioso", ferramenta=None)
@@ -60,6 +123,8 @@ def main():
         return      # idle_prompt keeps whatever Stop set (red if the session has text)
     else:
         return
+    if e.get("estado") == "pergunta" and prev != "pergunta":
+        _notify(d, ev)      # only the transition into red: PermissionRequest + Notification fire once
     SESSOES.mkdir(parents=True, exist_ok=True)
     tmp = arq.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(e))

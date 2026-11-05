@@ -24,6 +24,13 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 🔴 esperando você (permissão/pergunta). Vêm dos hooks do Claude Code: rode uma vez
 `workspace install-hooks` (faz backup do `settings.json`; reinicie as sessões abertas).
 
+## Notificações
+Quando uma sessão do Claude passa a 🔴 (precisa de você), o hook dispara uma notificação do sistema:
+título = nome do repo, corpo = trecho curto (pergunta, comando pedido ou fim da última resposta). Só na
+transição para vermelho, então um pedido de permissão não notifica duas vezes. Desligue com
+`"notifications": false` no `settings.json` (padrão: ligado). Plataformas: Linux (`notify-send`), macOS
+(`osascript`), Windows nativo e WSL (toast via `powershell`, nada a instalar). Se o comando não existir, ignora.
+
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
 - lado direito: a barra do topo troca entre ARQUIVOS (padrão) · SESSÕES salvas (Enter retoma) · DIFF atual (Enter abre o diff) ·
