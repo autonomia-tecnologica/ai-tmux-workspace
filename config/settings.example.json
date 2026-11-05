@@ -1,5 +1,6 @@
 {
   "notifications": true,
+  "extra_usage": false,
   "profiles": {
     "claude": "claude",
     "deepseek": "claude --settings ~/.claude/settings.deepseek.json"

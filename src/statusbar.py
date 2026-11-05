@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import extra_usage
 import lib
 
 PROJ = lib.HOME / ".claude" / "projects"
@@ -148,6 +149,44 @@ def limites():
     return tuple(out)
 
 
+def extra_usage_txt():
+    """Extra usage from extra_usage.json -> '$used / $limit', '$used', or None."""
+    try:
+        if not extra_usage.enabled():
+            return None
+        c = json.loads(extra_usage.CACHE.read_text())
+    except Exception:
+        return None
+    if c.get("disabled"):
+        return None
+    used, limit = extra_usage.to_dollars(c.get("used")), extra_usage.to_dollars(c.get("limit"))
+    if used is None:
+        return None
+    money = lambda v: f"${v:.2f}"
+    return f"{money(used)} / ${limit:g}" if limit is not None else money(used)
+
+
+def poll_extra_usage():
+    """If enabled and the last fetch/attempt is older than 5 min, spawn extra_usage.py detached."""
+    try:
+        if not extra_usage.enabled():
+            return
+        last = 0
+        for f in (extra_usage.CACHE, extra_usage.ATTEMPT):
+            try:
+                last = max(last, f.stat().st_mtime)
+            except OSError:
+                pass
+        if time.time() - last < extra_usage.POLL_S:
+            return
+        lib.ESTADO.mkdir(parents=True, exist_ok=True)
+        extra_usage.ATTEMPT.touch()          # failed attempts also wait 5 minutes
+        subprocess.Popen([sys.executable, str(Path(extra_usage.__file__))], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:
+        pass
+
+
 def fmt(n):
     if n >= 1e6:
         return f"{n / 1e6:.1f}M".replace(".", ",")
@@ -184,10 +223,16 @@ def main():
     repo = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
     lim = limites()
-    h5, d7 = uso() if lim is None else (0, 0)
+    poll_extra_usage()
+    usd = extra_usage_txt()
+    h5, d7 = uso() if lim is None and usd is None else (0, 0)
     nome = (os.path.basename(repo) or repo).replace("#", "##")
     sep = "#[fg=colour240] • "
-    uso_txt = f"5h {lim[0]} · 7d {lim[1]}" if lim else f"5h {fmt(h5)} tok · 7d {fmt(d7)}"
+    if lim or usd:
+        partes = ([f"5h {lim[0]} · 7d {lim[1]}"] if lim else []) + ([usd] if usd else [])
+        uso_txt = " · ".join(partes)
+    else:
+        uso_txt = f"5h {fmt(h5)} tok · 7d {fmt(d7)}"
     print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{modelo(repo)}"
           f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{sep}"
           f"#[fg=colour250]{uso_txt}#[default]")
