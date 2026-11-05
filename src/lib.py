@@ -70,6 +70,16 @@ def _cor(d, agora):
     return est
 
 
+def _live_panes():
+    """Set of tmux pane ids alive right now, or None when tmux cannot be queried."""
+    try:
+        r = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+                           capture_output=True, text=True, timeout=3)
+        return set(r.stdout.split()) if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def estados_por_repo(repos, agora=None):
     """{caminho_do_repo: 'ocioso'|'trabalha'|'espera'|'pergunta'} — vale a pior sessão do repo."""
     agora = agora or time.time()
@@ -79,11 +89,15 @@ def estados_por_repo(repos, agora=None):
         arquivos = list(SESSOES.glob("*.json"))
     except OSError:
         return res
+    vivos = _live_panes()
     for f in arquivos:
         try:
             d = json.loads(f.read_text())
             cwd = expandir(d["cwd"])
         except Exception:
+            continue
+        # Orphan: pane-less legacy file, or its pane is gone (session died without SessionEnd).
+        if vivos is not None and d.get("pane") not in vivos:
             continue
         melhor = None
         for p in caminhos:
