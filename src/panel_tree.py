@@ -28,6 +28,21 @@ def status_git():
     return res
 
 
+def ignored_names(pasta, itens):
+    """Names among `itens` that git ignores (one `git check-ignore` call per folder)."""
+    if not itens:
+        return set()
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", LC_ALL="C.UTF-8")
+    try:
+        r = subprocess.run(["git", "-C", REPO, "check-ignore", "-z", "--stdin"], capture_output=True,
+                           input="\0".join(e.path for e in itens) + "\0", text=True, timeout=5, env=env)
+    except Exception:
+        return set()
+    if r.returncode not in (0, 1):
+        return set()
+    return {os.path.basename(x.rstrip("/")) for x in r.stdout.split("\0") if x}
+
+
 def listar(pasta):
     try:
         itens = [e for e in os.scandir(pasta) if e.name not in IGNORA]
@@ -94,20 +109,23 @@ def coletar(v):
     cab = []
     corpo = []
 
-    def descer(pasta, nivel):
-        for e in listar(pasta):
+    def descer(pasta, nivel, ignorada=False):
+        itens = listar(pasta)
+        ign = {e.name for e in itens} if ignorada else ignored_names(pasta, itens)
+        for e in itens:
             ind = "  " * nivel
             if e.is_dir(follow_symlinks=False):
                 aberta = e.path in ABERTAS
                 mark = f" {AMARELO}•{R}" if e.path in sujos else ""
                 ic = icons.dir_icon(aberta) if USE_ICONS else ""
-                corpo.append(Linha(f" {ind}{CINZA}{'▾' if aberta else '▸'}{R} {ic}{AZUL}{e.name}/{R}{mark}",
+                nome = f"{DIM}{e.name}/{R}" if e.name in ign else f"{AZUL}{e.name}/{R}"
+                corpo.append(Linha(f" {ind}{CINZA}{'▾' if aberta else '▸'}{R} {ic}{nome}{mark}",
                                    ("d", e.path)))
                 if aberta:
-                    descer(e.path, nivel + 1)
+                    descer(e.path, nivel + 1, e.name in ign)
             else:
                 s = st.get(e.path)
-                cor = "" if not s else (VERDE if s.strip() in ("??", "A") else AMARELO)
+                cor = DIM if e.name in ign else "" if not s else (VERDE if s.strip() in ("??", "A") else AMARELO)
                 ic = icons.file_icon(e.name) if USE_ICONS else ""
                 corpo.append(Linha(f" {ind}  {ic}{cor}{e.name}{R}", ("f", e.path)))
 
