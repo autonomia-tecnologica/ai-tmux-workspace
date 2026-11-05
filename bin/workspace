@@ -293,8 +293,9 @@ ensure_window() { # $1=janela $2=caminho do repo
   [ -n "$(tmux show -wqv -t "$W" @ws_tabs)" ] || {
     tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
   has tabs || mk tabs -v -b -l 2 "$(laco tabs claude)" >/dev/null
-  has terminal || mk terminal -v -l "$(term_h "$P")" >/dev/null
-  local T; T="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="terminal"{print $1; exit}')"
+  # the visible terminal can be a temporary tab ("ttmp N", the main one swapped out to the hidden window)
+  has terminal || grep -qE '^ttmp ' <<<"$roles" || mk terminal -v -l "$(term_h "$P")" >/dev/null
+  local T; T="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="terminal" || $2 ~ /^ttmp /{print $1; exit}')"
   [ -n "$T" ] && {
     [ -n "$(tmux show -wqv -t "$W" @ws_ttabs)" ] || {
       tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2; }
