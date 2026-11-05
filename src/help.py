@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Read-only help viewer: renders HELP.md with colors, boxed tables and wrapped text.
+"""Read-only help viewer: renders i18n/HELP.<locale>.md with colors, boxed tables and wrapped text.
 
 Used by `ctrl+b h` (tmux popup). Scroll with arrows/j/k/PgUp/PgDn/g/G/mouse; Esc or q closes.
-Supports the Markdown subset HELP.md uses: headings, paragraphs, `-` lists, tables, indented code
+Supports the Markdown subset the help file uses: headings, paragraphs, `-` lists, tables, indented code
 blocks, `inline code` and **bold**.
 """
 import os
 import re
 import sys
 
+import i18n
 import lib
 from viewer import ANSI, AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer, _larg, cortar
 
-HELP = lib.BASE / "HELP.md"
+HELP = lib.BASE / "i18n" / f"HELP.{i18n.LOCALE}.md"
 CODE = "\x1b[38;5;215m"            # inline code: soft orange
 ORANGE = "\x1b[38;5;208m"
 MAX_W = 100                        # text column never gets wider than this
@@ -183,10 +184,10 @@ def collect(v):
     try:
         stamp = (HELP.stat().st_mtime, cols)
     except OSError:
-        return [], [Linha(f" {VERMELHO}HELP.md not found{R}")]
+        return [], [Linha(f" {VERMELHO}{i18n.t('help.not_found', path=HELP.name)}{R}")]
     if _cache.get("stamp") != stamp:
         _cache["stamp"], _cache["body"] = stamp, render(HELP.read_text(), cols)
-    bar = f"{B}{ORANGE} AJUDA {R}{DIM} ↑↓ rolar · PgUp/PgDn · g/G início/fim · Esc fecha{R}"
+    bar = f"{B}{ORANGE} {i18n.t('help.bar')} {R}{DIM} {i18n.t('help.keys')}{R}"
     return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")], [Linha()] + _cache["body"]
 
 

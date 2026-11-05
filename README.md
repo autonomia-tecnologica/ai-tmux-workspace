@@ -9,14 +9,14 @@ tmux no estilo do Orca para os repos de `groups` do settings.json. Comando: `wor
 servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
-    │ repos       │                        │ ARQUIVOS SESSÕES DIFF ... │
-    │ ● grupos    │ claude (5/6)           │ github                    │
-    │             │                        │ (aba escolhida)           │
-    │             ├────────────────────────┤                           │
-    │             │ terminal (1/6)         │                           │
+    │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS SESSÕES DIFF ... │
+    │ ● grupos    │                        │ GITHUB                    │
+    ├─────────────┤                        │ (aba escolhida)           │
+    │ TAREFAS     ├────────────────────────┤                           │
+    │ (BACKLOG)   │ TERMINAL (abas)        │                           │
     └─ 2 ─────────┴──────── 7 ─────────────┴──────────── 3 ───────────┘
 
-Proporção 2:7:3. A coluna esquerda é só a lista de repos; branch e commits ficam na aba diff.
+Proporção 2:7:3. A coluna esquerda tem os repos (metade de cima) e as tarefas do `BACKLOG.md` do repo da janela (metade de baixo); branch e commits ficam na aba diff.
 Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Bolinhas
@@ -31,9 +31,9 @@ transição para vermelho, então um pedido de permissão não notifica duas vez
 `"notifications": false` no `settings.json` (padrão: ligado). Plataformas: Linux (`notify-send`), macOS
 (`osascript`), Windows nativo e WSL (toast via `powershell`, nada a instalar). Se o comando não existir, ignora.
 
-## Extra usage in the status bar (opt-in, off by default)
-Shows the account's monthly extra usage spend next to the 5h/7d percentages, e.g. `12.30/50`
-(`1,234/5,000` from 100 up; separators follow the system locale; only `12.30` if there is no monthly limit; omitted if extra usage is off or there is no data).
+## Extra usage na barra de status (opt-in, desligado por padrão)
+Shows the account's monthly extra usage spend next to the 5h/7d percentages, e.g. `$12.30/$50`
+(`$1,234/$5,000` from 100 up; separators follow the system locale; only `$12.30` if there is no monthly limit; omitted if extra usage is off or there is no data).
 Enable with `"extra_usage": true` in `settings.json`. When off, nothing is read and no request is made.
 
 When on, at most every 5 minutes `src/extra_usage.py` runs detached and does one GET to
@@ -48,20 +48,25 @@ an expired token just fails silently. Amounts come in minor units and are divide
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
 - lado direito: a barra do topo troca entre ARQUIVOS (padrão) · SESSÕES salvas (Enter retoma) · DIFF atual (Enter abre o diff) ·
-  GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos abrem no nvim.
-- `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux.
+  GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema.
+- `ctrl+b h` abre a ajuda · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
+- painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para o Claude (implementar, refinar ou "o que preciso validar?").
 - abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
   temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,
   ela some e o foco volta ao principal. Abas temporárias não são restauradas no `restart`.
 - `shift+setas` pulam entre painéis.
 
 ## Comandos
-`workspace [perfil]` · `restart [perfil]` (derruba e sobe de novo; use depois de mudar hooks/config) · `stop [perfil]` · `install` · `install-hooks`.
+`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks`.
 
 ## Persistência
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova) e o resto vem do
 `settings.json` e dos arquivos do repo.
 
 ## Arquivos
-`settings.example.json` (modelo da config) · `tmux.conf` · `workspace` (launcher) · `panel_*.py` (incl. `panel_tabs.py`, a tira de abas) ·
-`viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `hook.py` · `statusbar.py`.
+`config/settings.example.json` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
+`src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
+`src/help.py` (popup da ajuda) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py`.
+
+## Textos (i18n)
+Todo texto exibido e todo prompt enviado ao Claude mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.

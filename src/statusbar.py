@@ -16,6 +16,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import i18n
+
 import extra_usage
 import lib
 
@@ -116,7 +118,6 @@ def _pct_resets(w):
     return w["used_percentage"], r if isinstance(r, (int, float)) else None
 
 
-DIAS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 
 
 def quando(ts):
@@ -126,7 +127,7 @@ def quando(ts):
     hora = d.strftime("%H:%M")
     if dias <= 0:
         return hora
-    return f"amanhã {hora}" if dias == 1 else f"{DIAS[d.weekday()]} {hora}"
+    return i18n.t("status.tomorrow", time=hora) if dias == 1 else f"{i18n.t(f'day.{d.weekday()}')} {hora}"
 
 
 def limites():
@@ -241,10 +242,10 @@ def main():
     nome = (os.path.basename(repo) or repo).replace("#", "##")
     sep = "#[fg=colour240] • "
     if lim or usd:
-        partes = ([f"5h {lim[0]} · 7d {lim[1]}"] if lim else []) + ([usd] if usd else [])
+        partes = ([i18n.t("status.usage", h5=lim[0], d7=lim[1])] if lim else []) + ([usd] if usd else [])
         uso_txt = " · ".join(partes)
     else:
-        uso_txt = f"5h {fmt(h5)} tok · 7d {fmt(d7)}"
+        uso_txt = i18n.t("status.usage_tokens", h5=fmt(h5), d7=fmt(d7))
     print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{modelo(repo)}"
           f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{sep}"
           f"#[fg=colour250]{uso_txt}#[default]")

@@ -15,6 +15,8 @@ import sys
 import termios
 import tty
 
+import i18n
+
 WS = os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                   "bin", "workspace")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
@@ -27,17 +29,10 @@ def tm(*args):
 KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("terminal", "side", "repos", "tasks") else "claude"
 NO_PLUS = ("side", "repos", "tasks")
 PAD = 1 if KIND in ("claude", "repos", "side") else 0   # top-row bars get a blank line above, off the status bar   # top-row bars get a blank line above, off the status bar
-STRINGS = {
-    "en-US": {"claude": "CLAUDE", "terminal": "TERMINAL", "repos": "REPOS", "tasks": "TASKS",
-              "tree": "FILES", "sessions": "SESSIONS", "diff": "DIFF", "github": "GITHUB"},
-    "pt-BR": {"claude": "CLAUDE", "terminal": "TERMINAL", "repos": "REPOS", "tasks": "TAREFAS",
-              "tree": "ARQUIVOS", "sessions": "SESSÕES", "diff": "DIFF", "github": "GITHUB"},
-}
-LOCALE = "pt-BR" if os.environ.get("LC_ALL", os.environ.get("LANG", "")).startswith("pt") else "en-US"
 
 
 def t(key):
-    return STRINGS[LOCALE][key]
+    return i18n.t(f"tabs.{key}")
 
 
 SIDE_TABS = [(k, t(k)) for k in ("tree", "sessions", "diff", "github")]

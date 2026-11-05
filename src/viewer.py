@@ -15,6 +15,8 @@ import threading
 import tty
 import unicodedata
 
+import i18n
+
 ANSI = re.compile(r"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 BG = "\x1b[48;5;237m"
@@ -75,7 +77,7 @@ class Viewer:
             try:
                 cab, corpo = self.coletar(self)
             except Exception as e:      # um erro de coleta não derruba o painel
-                cab, corpo = [], [Linha(f" erro: {e}")]
+                cab, corpo = [], [Linha(" " + i18n.t("viewer.error", e=e))]
             sig = (tuple((l.texto, l.chave) for l in cab), tuple((l.texto, l.chave) for l in corpo))
             with self._lock:
                 if sig != self._sig:

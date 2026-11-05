@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import time
 
+import i18n
 import lib
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
@@ -56,15 +57,15 @@ def ler(f):
             if d.get("type") == "user" and t and not t.startswith("<"):
                 primeira = t
                 break
-    return {"titulo": titulo or primeira or "(sem título)", "ultima": " ".join(ultima.split()),
+    return {"titulo": titulo or primeira or i18n.t("sessions.untitled"), "ultima": " ".join(ultima.split()),
             "n": n, "modelo": modelo.removeprefix("claude-")}
 
 
 def ha(seg):
-    for lim, un in ((86400, "d"), (3600, "h"), (60, "min")):
+    for lim, key in ((86400, "ago_d"), (3600, "ago_h"), (60, "ago_min")):
         if seg >= lim:
-            return f"{int(seg // lim)}{un} atrás"
-    return "agora"
+            return i18n.t(f"sessions.{key}", n=int(seg // lim))
+    return i18n.t("sessions.now")
 
 
 def coletar(v):
@@ -72,7 +73,7 @@ def coletar(v):
         fs = sorted(PASTA.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         fs = []
-    cab = [Linha(f" {B}SESSÕES{R} {CINZA}{len(fs)} salvas · Enter retoma{R}"), Linha("")]
+    cab = [Linha(f" {B}{i18n.t('sessions.title')}{R} {CINZA}{i18n.t('sessions.header', n=len(fs))}{R}"), Linha("")]
     corpo = []
     agora = time.time()
     for f in fs[:60]:
@@ -86,15 +87,15 @@ def coletar(v):
         d = CACHE[chave]
         vivo = agora - st.st_mtime < 60
         corpo.append(Linha(f" {B}{d['titulo']}{R}", f.stem))
-        corpo.append(Linha(f"  {CINZA}Agent:{R} {DIM}{d['ultima']}{R}"))
-        corpo.append(Linha(f"  {VERDE if vivo else CINZA}●{R} {CINZA}{d['n']} msgs · {ha(agora - st.st_mtime)}"
+        corpo.append(Linha(f"  {CINZA}{i18n.t('sessions.agent')}{R} {DIM}{d['ultima']}{R}"))
+        corpo.append(Linha(f"  {VERDE if vivo else CINZA}●{R} {CINZA}{i18n.t('sessions.msgs', n=d['n'])} · {ha(agora - st.st_mtime)}"
                            f" · {d['modelo']}{R}"))
         corpo.append(Linha(""))
     return cab, corpo
 
 
 def enter(v, sid, tecla):
-    subprocess.run(["tmux", "confirm-before", "-p", "Retomar no painel do Claude? O agente atual fecha (y/n)",
+    subprocess.run(["tmux", "confirm-before", "-p", i18n.t("sessions.confirm"),
                     f"run-shell '{shlex.quote(str(lib.BASE / 'bin' / 'workspace'))} resume {sid} #{{window_id}}'"])
 
 

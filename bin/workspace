@@ -15,6 +15,7 @@ AQUI="$(dirname "$BIN")"        # raiz do repo
 SRC="$AQUI/src"
 export WS_DIR="$AQUI"
 
+msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
 perfil_cmd() { python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_config().get('profiles',{}).get(sys.argv[1],''))" "$1"; }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
 laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
@@ -171,7 +172,7 @@ tab_exit() { # $1=painel que acabou: devolve o foco ao principal e tira a aba da
 open_repo() {
   local path S ja
   path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PERFIL)"
-  [ -d "$path" ] || { echo "não existe: $path" >&2; exit 1; }
+  [ -d "$path" ] || { msg cli.not_exists path="$path" >&2; exit 1; }
   ja="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   if [ -n "$ja" ]; then
     tmux select-window -t "$ja"
@@ -251,7 +252,7 @@ restart() {
 # e o laço `while :` o sobe de novo em ~1s. Não mexe no Claude nem no terminal.
 panels() { # $1=perfil (padrão: claude)
   local perfil="${1:-claude}" sock="ws-${1:-claude}" pid
-  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { echo "no running workspace for $perfil" >&2; exit 1; }
+  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { msg cli.no_workspace profile="$perfil" >&2; exit 1; }
   while read -r pid; do
     pkill -TERM -P "$pid" -f 'python3 .*/panel_' 2>/dev/null
   done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="direita"||$2=="tabs"||$2=="ttabs"||$2=="dtabs"||$2=="rtabs"||$2=="ktabs"{print $1}')
@@ -327,7 +328,7 @@ fit() {
 # Aplica config/tmux.conf novo e a tira de abas nas janelas já abertas, sem derrubar o servidor.
 reload() {
   local perfil="${1:-claude}" sock="ws-${1:-claude}" W P path strip
-  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { echo "no running workspace for $perfil" >&2; exit 1; }
+  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { msg cli.no_workspace profile="$perfil" >&2; exit 1; }
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PERFIL="$perfil"
   tmux source-file "$AQUI/config/tmux.conf"
@@ -336,13 +337,13 @@ reload() {
     [ -n "$path" ] && ensure_window "$W" "$path"
   done < <(tmux list-windows -t "$perfil:" -F '#{window_id}|#{@ws_repo}')
   panels "$perfil"
-  tmux refresh-client -S 2>/dev/null; echo "reloaded $perfil"
+  tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$perfil"
 }
 
 iniciar() {
   local perfil="${1:-claude}" cmd sock primeiro
   cmd="$(perfil_cmd "$perfil")"
-  [ -n "$cmd" ] || { echo "unknown profile: $perfil (see "profiles" in settings.json)" >&2; exit 2; }
+  [ -n "$cmd" ] || { msg cli.unknown_profile profile="$perfil" >&2; exit 2; }
   sock="ws-$perfil"
   if ! env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then
     export WS_PERFIL="$perfil"
@@ -362,7 +363,7 @@ iniciar() {
 install() {
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BIN/workspace" "$HOME/.local/bin/workspace"
-  echo "ok: comando em ~/.local/bin/workspace"
+  msg cli.installed
 }
 
 install_hooks() {

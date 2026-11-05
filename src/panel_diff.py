@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 
+import i18n
 import lib
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
@@ -14,7 +15,7 @@ REPO = lib.repo_atual()
 def coletar(v):
     rc, out = lib.git(REPO, "status", "--porcelain", "-uall", "-b")
     if rc != 0:
-        return [], [Linha(f" {DIM}não é um repositório git{R}")]
+        return [], [Linha(f" {DIM}{i18n.t('diff.not_repo')}{R}")]
     linhas = out.splitlines()
     ramo = linhas[0][3:].split("...")[0] if linhas else "?"
     st = {}
@@ -30,7 +31,7 @@ def coletar(v):
         ta += int(a) if a.isdigit() else 0
         td += int(d) if d.isdigit() else 0
     cab = [Linha(f" {AZUL}{B}{ramo}{R}   {VERDE}+{ta}{R} {VERMELHO}-{td}{R}"),
-           Linha(f" {B}MUDANÇAS{R} {CINZA}{len(st)}{R}"), Linha("")]
+           Linha(f" {B}{i18n.t('diff.changes')}{R} {CINZA}{len(st)}{R}"), Linha("")]
     corpo = []
     for p in sorted(st, key=lambda p: (st[p] == "??", p)):
         s = st[p].strip()
@@ -42,7 +43,7 @@ def coletar(v):
         pasta = os.path.dirname(p)
         corpo.append(Linha(f" {cor}{letra}{R} {os.path.basename(p)} {CINZA}{pasta}{R}{cont}", (letra, p)))
     if not st:
-        corpo.append(Linha(f" {DIM}árvore limpa{R}"))
+        corpo.append(Linha(f" {DIM}{i18n.t('diff.clean')}{R}"))
     return cab, corpo
 
 

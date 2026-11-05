@@ -37,7 +37,7 @@ Nos painéis de lista: `j/k` ou setas, PgUp/PgDn, `g/G`, mouse. Enter abre/ativa
 
 - **repo**: repo da janela atual.
 - **modelo**: modelo da última resposta do Claude nesse repo.
-- **consumo**: `5h X% · 7d Y%` do plano; com `extra_usage` ligado, mostra também o gasto extra do mês (`usado/limite`).
+- **consumo**: `5h X% · 7d Y%` do plano; com `extra_usage` ligado, mostra também o gasto extra do mês (`$usado/$limite`).
 
 ## REPOS
 
@@ -86,7 +86,7 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; árvore mostra depend
 
 Clique na aba, ou foque a barra (`ctrl+b ↑`) e use ←→ + Enter.
 
-- **ARQUIVOS**: árvore do repo. Enter abre/fecha pasta ou abre o arquivo no nvim. Segue o `cd` do terminal ativo. Amarelo = modificado, verde = novo.
+- **ARQUIVOS**: árvore do repo. Enter abre/fecha pasta ou abre o arquivo no nvim (mídia e documentos abrem no programa padrão do sistema). Segue o `cd` do terminal ativo. Amarelo = modificado, verde = novo.
 - **SESSÕES**: sessões salvas do Claude neste repo (título, última fala, mensagens, quando, modelo). Enter retoma.
 - **DIFF**: branch, `+/-` totais e arquivos mudados (`U` novo verde, `M` modificado amarelo, `D` apagado vermelho). Enter abre o diff (ou o arquivo novo) num popup; `q` fecha.
 - **GITHUB**: via `gh`: repo, PR da branch com checks, PRs, issues, CI, release. Enter abre no navegador.
