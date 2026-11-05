@@ -32,8 +32,8 @@ transição para vermelho, então um pedido de permissão não notifica duas vez
 (`osascript`), Windows nativo e WSL (toast via `powershell`, nada a instalar). Se o comando não existir, ignora.
 
 ## Extra usage in the status bar (opt-in, off by default)
-Shows the account's monthly extra usage spend next to the 5h/7d percentages, e.g. `$12.30 / $50`
-(only `$12.30` if there is no monthly limit; omitted if extra usage is off or there is no data).
+Shows the account's monthly extra usage spend next to the 5h/7d percentages, e.g. `12.30/50`
+(`1,234/5,000` from 100 up; separators follow the system locale; only `12.30` if there is no monthly limit; omitted if extra usage is off or there is no data).
 Enable with `"extra_usage": true` in `settings.json`. When off, nothing is read and no request is made.
 
 When on, at most every 5 minutes `src/extra_usage.py` runs detached and does one GET to
@@ -42,8 +42,8 @@ When on, at most every 5 minutes `src/extra_usage.py` runs detached and does one
 are cached (`extra_usage.json` next to `limits.json`). Risks: the token is an account key; the endpoint
 is unofficial and may change or break without notice. Mitigations: fixed host, GET only, 5s timeout,
 no redirects, proxies ignored, TLS verified, token never refreshed, logged, printed or written to disk;
-an expired token just fails silently. The dollar unit (dollars vs cents) is still to be confirmed
-against a real response (`EXTRA_USAGE_UNIT_DIVISOR` in `src/extra_usage.py`).
+an expired token just fails silently. Amounts come in minor units and are divided by
+`10 ** decimal_places` from the response.
 
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.

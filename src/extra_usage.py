@@ -27,18 +27,6 @@ POLL_S = 300
 CACHE = lib.ESTADO / "extra_usage.json"
 ATTEMPT = lib.ESTADO / "extra_usage.attempt"
 
-# UNCONFIRMED: whether `used_credits` / `monthly_limit` are dollars or cents. Must be confirmed
-# against a real response. The raw values are kept in the cache, so only this constant changes.
-EXTRA_USAGE_UNIT_DIVISOR = 100   # 100 = values are cents; 1 = values are already dollars
-
-
-def to_dollars(raw):
-    """Convert a raw endpoint amount to dollars (see EXTRA_USAGE_UNIT_DIVISOR), or None."""
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        return None
-    return raw / EXTRA_USAGE_UNIT_DIVISOR
-
-
 def enabled():
     return lib.ler_config().get("extra_usage") is True
 
@@ -85,12 +73,22 @@ def read_token():
 
 
 def parse(data):
-    """-> dict with raw numbers, or None if the account has no usable extra usage."""
+    """-> dict with amounts in major currency units, or None if extra usage is off/absent.
+
+    Real format: extra_usage.{is_enabled, used_credits, monthly_limit, decimal_places}, amounts in
+    minor units (value / 10**decimal_places). Off only if is_enabled is False or used_credits is absent.
+    """
     eu = data.get("extra_usage") if isinstance(data, dict) else None
-    if not isinstance(eu, dict) or eu.get("is_enabled", eu.get("enabled")) is not True:
+    if not isinstance(eu, dict) or eu.get("is_enabled") is False:
         return None
     num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-    return {"used": num(eu.get("used_credits")), "limit": num(eu.get("monthly_limit")),
+    places = eu.get("decimal_places")
+    places = places if isinstance(places, int) and not isinstance(places, bool) and 0 <= places <= 6 else 2
+    div = 10 ** places
+    used, limit = num(eu.get("used_credits")), num(eu.get("monthly_limit"))
+    if used is None:
+        return None
+    return {"used": used / div, "limit": None if limit is None else limit / div,
             "utilization": num(eu.get("utilization"))}
 
 
@@ -108,7 +106,8 @@ def run(opener=None, token_reader=None):
     if not token:
         return
     req = urllib.request.Request(URL, method="GET", headers={
-        "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"})
+        "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "claude-code/2.1"})
     with (opener or build_opener()).open(req, timeout=TIMEOUT_S) as resp:
         if resp.status != 200:
             return

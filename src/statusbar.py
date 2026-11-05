@@ -7,6 +7,7 @@ por um processo em segundo plano — a barra só lê o cache, então nunca trava
 """
 import fcntl
 import json
+import locale
 import os
 import re
 import subprocess
@@ -149,8 +150,17 @@ def limites():
     return tuple(out)
 
 
+def _fmt_amount(v, cents):
+    """Locale-aware number: 2 decimals when `cents` (small amounts), else whole with grouping."""
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+    return locale.format_string("%.2f" if cents else "%.0f", v, grouping=True)
+
+
 def extra_usage_txt():
-    """Extra usage from extra_usage.json -> '$used / $limit', '$used', or None."""
+    """Extra usage from extra_usage.json -> 'used/limit' (12.30/50 below 100, 1,234/5,000 above), or None."""
     try:
         if not extra_usage.enabled():
             return None
@@ -159,11 +169,13 @@ def extra_usage_txt():
         return None
     if c.get("disabled"):
         return None
-    used, limit = extra_usage.to_dollars(c.get("used")), extra_usage.to_dollars(c.get("limit"))
-    if used is None:
+    used, limit = c.get("used"), c.get("limit")
+    if not isinstance(used, (int, float)):
         return None
-    money = lambda v: f"${v:.2f}"
-    return f"{money(used)} / ${limit:g}" if limit is not None else money(used)
+    txt = _fmt_amount(used, used < 100)
+    if isinstance(limit, (int, float)):
+        txt += "/" + _fmt_amount(limit, limit < 100 and limit != int(limit))
+    return txt
 
 
 def poll_extra_usage():
