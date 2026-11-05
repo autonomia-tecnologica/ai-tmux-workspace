@@ -7,6 +7,7 @@ import subprocess
 
 import icons
 import lib
+import opener
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
 REPO = lib.repo_atual()
@@ -124,6 +125,8 @@ def enter(v, chave, tecla):
     if tipo == "d":
         ABERTAS.symmetric_difference_update({caminho})
         v.recoletar.set()
+    elif opener.use_system(caminho) and opener.open_system(caminho):
+        return
     else:
         subprocess.run(["tmux", "display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO,
                         f"{editor()} {shlex.quote(caminho)}"],
