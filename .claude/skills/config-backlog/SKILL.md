@@ -22,7 +22,7 @@ applies it. Arguments (optional): repo names or paths to restrict the run; none 
 
 ## Steps
 
-1. **Audit** (read-only): `python3 -I ~/Codes/ai-workspace/.claude/skills/config-backlog/audit.py [repo ...]`.
+1. **Audit** (read-only): `python3 -I ~/Codes/ai-tmux-workspace/.claude/skills/config-backlog/audit.py [repo ...]`.
    It prints one JSON line per repo: `ok`, `ignored_as_root_rule`, `tracked`, `legacy_files`,
    `panel_parses`, `problems`, `cycles`, `typo_deps`. Summarize it as a table (repo → what is wrong).
 2. **Plan**: list the exact changes per repo and ask for confirmation before touching any repo. Group
