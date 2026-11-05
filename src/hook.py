@@ -19,7 +19,7 @@ def _one_line(text, n=100):
 
 def _notifications_enabled():
     try:
-        cfg = Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-workspace" / "settings.json"))
+        cfg = Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-tmux-workspace" / "settings.json"))
         return json.loads(cfg.read_text()).get("notifications", True) is not False
     except Exception:
         return True

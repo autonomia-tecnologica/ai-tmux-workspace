@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 TARGET_DIR="${PREFIX_BIN:-$HOME/.local/bin}"
-CONFIG="${AT_WS_CONFIG:-$HOME/.config/at-ai-workspace/settings.json}"
+CONFIG="${AT_WS_CONFIG:-$HOME/.config/ai-tmux-workspace/settings.json}"
 
 missing=()
 for dep in tmux python3 git; do command -v "$dep" >/dev/null || missing+=("$dep"); done

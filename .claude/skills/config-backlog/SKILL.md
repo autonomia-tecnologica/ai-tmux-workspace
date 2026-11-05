@@ -1,11 +1,11 @@
 ---
 name: config-backlog
-description: Applies the general BACKLOG.md rule to the repos configured in at-ai-workspace (settings.json groups) so the tasks panel can show their tasks. Audits each repo, then fixes .gitignore, migrates legacy TODO/ROADMAP files and normalizes the format. Use when the user runs /config-backlog or asks to standardize, migrate or check the backlog of the workspace repos.
+description: Applies the general BACKLOG.md rule to the repos configured in ai-tmux-workspace (settings.json groups) so the tasks panel can show their tasks. Audits each repo, then fixes .gitignore, migrates legacy TODO/ROADMAP files and normalizes the format. Use when the user runs /config-backlog or asks to standardize, migrate or check the backlog of the workspace repos.
 ---
 
 # /config-backlog
 
-Brings every repo listed in `~/.config/at-ai-workspace/settings.json` (`groups`) to the general
+Brings every repo listed in `~/.config/ai-tmux-workspace/settings.json` (`groups`) to the general
 backlog rule, so `src/panel_tasks.py` (via `src/backlog.py`) can read it. The rule is defined in
 `~/.claude/CLAUDE.md`, section Backlog. Read it first; it is the source of truth. This skill only
 applies it. Arguments (optional): repo names or paths to restrict the run; none = all repos.
@@ -22,7 +22,7 @@ applies it. Arguments (optional): repo names or paths to restrict the run; none 
 
 ## Steps
 
-1. **Audit** (read-only): `python3 -I ~/Codes/at-ai-workspace/.claude/skills/config-backlog/audit.py [repo ...]`.
+1. **Audit** (read-only): `python3 -I ~/Codes/ai-workspace/.claude/skills/config-backlog/audit.py [repo ...]`.
    It prints one JSON line per repo: `ok`, `ignored_as_root_rule`, `tracked`, `legacy_files`,
    `panel_parses`, `problems`, `cycles`, `typo_deps`. Summarize it as a table (repo → what is wrong).
 2. **Plan**: list the exact changes per repo and ask for confirmation before touching any repo. Group

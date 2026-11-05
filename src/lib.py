@@ -19,7 +19,7 @@ def expandir(p):
 
 def config_path():
     """settings.json único; mora fora do repo (o repo só guarda a estrutura)."""
-    return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "at-ai-workspace" / "settings.json"))
+    return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "settings.json"))
 
 
 def ler_config():
