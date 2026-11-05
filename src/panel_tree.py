@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 
+import icons
 import lib
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
@@ -12,6 +13,7 @@ REPO = lib.repo_atual()
 IGNORA = {".git", "node_modules", "__pycache__", ".venv", "target", ".mypy_cache", ".pytest_cache"}
 ABERTAS = {REPO}
 LIMITE = 400
+USE_ICONS = icons.enabled()
 
 
 def status_git():
@@ -32,7 +34,54 @@ def listar(pasta):
     return itens[:LIMITE]
 
 
+_last_cwd = [None]
+
+
+def _tmux(*args):
+    try:
+        r = subprocess.run(["tmux", *args], capture_output=True, text=True, timeout=3)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def follow_terminal(v):
+    """When the shell in the active terminal tab changes directory, expand that folder (only it,
+    not its children) and move the selection there. Only reacts to a change, so manual navigation
+    in the tree is not overridden."""
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+    win = _tmux("display", "-p", "-t", pane, "#{window_id}")
+    target = _tmux("show", "-wqv", "-t", win, "@ws_tativo")
+    if not target:
+        target = _tmux("list-panes", "-t", win, "-F", "#{pane_id}|#{@papel}")
+        target = next((l.split("|")[0] for l in target.splitlines() if l.endswith("|terminal")), "")
+    if not target:
+        return
+    cwd = os.path.realpath(_tmux("display", "-p", "-t", target, "#{pane_current_path}") or REPO)
+    if cwd == _last_cwd[0]:
+        return
+    _last_cwd[0] = cwd
+    repo = os.path.realpath(REPO)
+    if cwd == repo:                 # the root is not a row: select the first entry and scroll to the top
+        first = next(iter(listar(REPO)), None)
+        if first:
+            v.chave = ("d" if first.is_dir(follow_symlinks=False) else "f", first.path)
+            v.top = 0
+            v._acordar()
+        return
+    if not cwd.startswith(repo + "/"):
+        return
+    rel = os.path.relpath(cwd, repo).split(os.sep)
+    for i in range(len(rel)):       # open the ancestors and the folder itself (its subfolders stay closed)
+        ABERTAS.add(os.path.join(REPO, *rel[:i + 1]))
+    v.chave = ("d", os.path.join(REPO, *rel))
+    v._acordar()
+
+
 def coletar(v):
+    follow_terminal(v)
     st = status_git()
     sujos = {os.path.dirname(p) for p in st}
     for p in list(sujos):
@@ -48,14 +97,16 @@ def coletar(v):
             if e.is_dir(follow_symlinks=False):
                 aberta = e.path in ABERTAS
                 mark = f" {AMARELO}•{R}" if e.path in sujos else ""
-                corpo.append(Linha(f" {ind}{CINZA}{'▾' if aberta else '▸'}{R} {AZUL}{e.name}/{R}{mark}",
+                ic = icons.dir_icon(aberta) if USE_ICONS else ""
+                corpo.append(Linha(f" {ind}{CINZA}{'▾' if aberta else '▸'}{R} {ic}{AZUL}{e.name}/{R}{mark}",
                                    ("d", e.path)))
                 if aberta:
                     descer(e.path, nivel + 1)
             else:
                 s = st.get(e.path)
                 cor = "" if not s else (VERDE if s.strip() in ("??", "A") else AMARELO)
-                corpo.append(Linha(f" {ind}  {cor}{e.name}{R}", ("f", e.path)))
+                ic = icons.file_icon(e.name) if USE_ICONS else ""
+                corpo.append(Linha(f" {ind}  {ic}{cor}{e.name}{R}", ("f", e.path)))
 
     descer(REPO, 0)
     return cab, corpo
@@ -79,5 +130,22 @@ def enter(v, chave, tecla):
                        timeout=None)
 
 
+def on_key(v, k):
+    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
+    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave:
+        return
+    tipo, caminho = v.chave
+    if k in ("\x1b[C", "\x1bOC"):
+        if tipo == "d":
+            ABERTAS.add(caminho)
+    elif tipo == "d" and caminho in ABERTAS:
+        ABERTAS.discard(caminho)
+    else:
+        parent = os.path.dirname(caminho)
+        if parent != REPO and parent.startswith(REPO + "/"):
+            v.chave = ("d", parent)
+    v.recoletar.set()
+
+
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, chave_inicial=("d", REPO)).rodar()
+    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO)).rodar()

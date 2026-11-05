@@ -66,6 +66,20 @@ def coletar(v):
     return cab, corpo
 
 
+def on_key(v, k):
+    """Right expands the group under the cursor, Left collapses it (like the files tree)."""
+    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] != "g":
+        return
+    col = colapsados()
+    right = k in ("\x1b[C", "\x1bOC")
+    if (v.chave[1] in col) != right:
+        return
+    col ^= {v.chave[1]}
+    lib.ESTADO.mkdir(parents=True, exist_ok=True)
+    COLAPSADOS.write_text(json.dumps(sorted(col)))
+    v.recoletar.set()
+
+
 def enter(v, chave, tecla):
     tipo, valor = chave
     if tipo == "g":
@@ -87,5 +101,5 @@ def perde_foco(v):
 
 
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=1.0, cursor=True, ao_enter=enter, chave_inicial=("r", ATUAL),
+    Viewer(coletar, intervalo=1.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("r", ATUAL),
            ao_perde_foco=perde_foco).rodar()

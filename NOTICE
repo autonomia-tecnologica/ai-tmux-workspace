@@ -1,0 +1,8 @@
+Third-party credits
+
+src/icons.py: the mapping of file types to Nerd Font glyphs and colors follows the one from
+nvim-web-devicons (https://github.com/nvim-tree/nvim-web-devicons, MIT). The table is written by
+hand (not a verbatim copy) and is embedded in the repo on purpose, to avoid runtime third-party
+dependencies and their supply-chain risk.
+
+If code or data is copied verbatim from it, add its original license text here.

@@ -5,6 +5,7 @@
 A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
+import shlex
 import shutil
 import subprocess
 import textwrap
@@ -20,14 +21,16 @@ STRINGS = {
               "typo": "id {ids} is >= next id (typo?)",
               "msg_ready": "Implement slice {id} of BACKLOG.md (use the implementador subagent).",
               "msg_refine": "Let's refine item {id} of BACKLOG.md.",
-              "msg_validate": "What do I need to validate?"},
+              "msg_validate": "What do I need to validate?",
+              "confirm": "Send to the terminal: \"{msg}\" (y/n)"},
     "pt-BR": {"title": "TAREFAS", "no_format": "sem formato", "none": "nenhum backlog encontrado",
               "ready": "prontas", "refine": "a refinar", "validate": "a validar", "blocked": "bloqueadas",
               "cycle": "ciclo de dependência: inválida até desfazer",
               "typo": "id {ids} >= próximo id (erro de digitação?)",
               "msg_ready": "Implemente a fatia {id} do BACKLOG.md (use o subagente implementador).",
               "msg_refine": "Vamos refinar o item {id} do BACKLOG.md.",
-              "msg_validate": "O que preciso validar?"},
+              "msg_validate": "O que preciso validar?",
+              "confirm": "Mandar pro terminal: \"{msg}\" (y/n)"},
 }
 LOCALE = "pt-BR" if os.environ.get("LC_ALL", os.environ.get("LANG", "")).startswith("pt") else "en-US"
 
@@ -123,7 +126,11 @@ def enter(v, key, k):
         return
     # ready -> implement; to validate -> ask what to check; anything else (to refine, paused) -> refine
     msg = t({"ready": "msg_ready", "validate": "msg_validate"}.get(key[3], "msg_refine")).format(id=key[2])
-    subprocess.run([str(lib.BASE / "bin" / "workspace"), "send", path, msg], timeout=20,
+    send = " ".join(shlex.quote(a) for a in (str(lib.BASE / "bin" / "workspace"), "send", path, msg))
+    # tmux command string: double quotes, with \\ " $ escaped and # doubled (format expansion)
+    tq = '"' + send.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##") + '"'
+    prompt = t("confirm").format(msg=msg).replace("#", "##")
+    subprocess.run(["tmux", "confirm-before", "-p", prompt, f"run-shell -b {tq}"], timeout=20,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
