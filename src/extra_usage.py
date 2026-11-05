@@ -16,7 +16,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 import lib
@@ -31,12 +30,15 @@ def enabled():
     return lib.ler_config().get("extra_usage") is True
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None   # 3xx surfaces as an HTTPError, i.e. a failure
-
-
 def build_opener():
+    # urllib is imported here, not at module top: statusbar.py imports this module on every
+    # refresh and only needs enabled()/CACHE, and urllib alone costs ~20 ms of import time.
+    import urllib.request
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None   # 3xx surfaces as an HTTPError, i.e. a failure
+
     # ProxyHandler({}) ignores *_PROXY env vars; the default HTTPS handler verifies TLS.
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
@@ -105,6 +107,7 @@ def run(opener=None, token_reader=None):
     token = (token_reader or read_token)()
     if not token:
         return
+    import urllib.request
     req = urllib.request.Request(URL, method="GET", headers={
         "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20",
         "User-Agent": "claude-code/2.1"})

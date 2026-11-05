@@ -1,4 +1,6 @@
 """Base comum dos painéis do workspace: lista de repos, estado dos agentes, repo da janela."""
+import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -105,9 +107,10 @@ def git(repo, *args, timeout=15):
 
 
 _GH_CACHE = {}        # repo -> (ts, estado)
-_FETCH_TS = {}        # repo -> ts do último fetch
+_FETCH_TS = {}        # repo -> ts do último fetch, só quando não dá para marcar em disco
 GH_TTL = 10           # s entre releituras locais
 FETCH_TTL = 300       # s entre fetches em segundo plano (só assim dá pra saber se está atrás)
+_FETCH_DIR = ESTADO / "fetch"   # um marcador por repo: compartilhado entre as janelas (processos)
 
 
 def _fetch_bg(repo):
@@ -117,6 +120,58 @@ def _fetch_bg(repo):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
+
+
+def _fetch_head(repo):
+    """FETCH_HEAD do repo. Em worktree (ou submodulo) '.git' é arquivo com 'gitdir: <caminho>'."""
+    g = os.path.join(repo, ".git")
+    if os.path.isfile(g):
+        try:
+            with open(g, encoding="utf-8") as fh:
+                linha = fh.read().strip()
+        except OSError:
+            return None
+        if not linha.startswith("gitdir:"):
+            return None
+        d = linha[len("gitdir:"):].strip()
+        g = d if os.path.isabs(d) else os.path.join(repo, d)
+    return os.path.join(g, "FETCH_HEAD")
+
+
+def _mtime(p):
+    try:
+        return os.path.getmtime(p) if p else 0
+    except OSError:
+        return 0
+
+
+def _fetch_devido(repo, agora):
+    """True se nenhuma janela buscou esse repo nos últimos FETCH_TTL s; None se não dá para marcar.
+
+    Último fetch = o mais recente entre o FETCH_HEAD do git e um marcador em ESTADO/fetch (o marcador
+    cobre fetch que falhou, que não reescreve FETCH_HEAD). O marcador fica travado enquanto checa e
+    grava, então duas janelas no mesmo instante não disparam dois fetches.
+    """
+    marca = _FETCH_DIR / hashlib.sha1(repo.encode("utf-8")).hexdigest()
+    try:
+        _FETCH_DIR.mkdir(parents=True, exist_ok=True)
+        with open(marca, "a+", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.seek(0)
+            try:
+                marcado = float(f.read() or 0)
+            except ValueError:
+                marcado = 0
+            ultimo = max(marcado, _mtime(_fetch_head(repo)))
+            if agora - ultimo < FETCH_TTL:
+                return False
+            f.seek(0)
+            f.truncate()
+            f.write(repr(agora))
+            f.flush()
+            return True
+    except OSError:
+        return None
 
 
 def estado_git(repo):
@@ -129,8 +184,12 @@ def estado_git(repo):
     if not os.path.exists(os.path.join(repo, ".git")):
         est = None
     else:
-        if agora - _FETCH_TS.get(repo, 0) > FETCH_TTL:
-            _FETCH_TS[repo] = agora
+        due = _fetch_devido(repo, agora)
+        if due is None:    # sem como marcar em disco: volta ao temporizador desta janela
+            due = agora - _FETCH_TS.get(repo, 0) > FETCH_TTL
+            if due:
+                _FETCH_TS[repo] = agora
+        if due:
             import threading
             threading.Thread(target=_fetch_bg, args=(repo,), daemon=True).start()
         rc, out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", timeout=5)
