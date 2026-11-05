@@ -160,7 +160,7 @@ def _fmt_amount(v, cents):
 
 
 def extra_usage_txt():
-    """Extra usage from extra_usage.json -> 'used/limit' (12.30/50 below 100, 1,234/5,000 above), or None."""
+    """Extra usage from extra_usage.json -> '$used/$limit' ($12.30/$50 below 100, $1,234/$5,000 above), or None."""
     try:
         if not extra_usage.enabled():
             return None
@@ -172,9 +172,9 @@ def extra_usage_txt():
     used, limit = c.get("used"), c.get("limit")
     if not isinstance(used, (int, float)):
         return None
-    txt = _fmt_amount(used, used < 100)
+    txt = "$" + _fmt_amount(used, used < 100)
     if isinstance(limit, (int, float)):
-        txt += "/" + _fmt_amount(limit, limit < 100 and limit != int(limit))
+        txt += "/$" + _fmt_amount(limit, limit < 100 and limit != int(limit))
     return txt
 
 
