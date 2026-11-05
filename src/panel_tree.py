@@ -113,6 +113,13 @@ def coletar(v):
     return cab, corpo
 
 
+def footer(v):
+    """Full name of the selected entry (the row itself is cut at the pane width)."""
+    if not v.chave or v.chave[1] == REPO:
+        return ""
+    return os.path.relpath(v.chave[1], REPO) + ("/" if v.chave[0] == "d" else "")
+
+
 def editor():
     for c in ("nvim", "vim", "vi"):
         if c and shutil.which(c.split()[0]):
@@ -151,4 +158,4 @@ def on_key(v, k):
 
 
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO)).rodar()
+    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO), rodape=footer).rodar()

@@ -20,6 +20,7 @@ import i18n
 ANSI = re.compile(r"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 BG = "\x1b[48;5;237m"
+FOOTER_ROWS = 3
 R, B, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
 VERDE, AMARELO, VERMELHO, AZUL, CINZA = ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[38;5;75m",
                                           "\x1b[38;5;244m")
@@ -59,9 +60,10 @@ class Linha:
 
 class Viewer:
     def __init__(self, coletar, intervalo=2.0, cursor=False, ao_enter=None, chave_inicial=None,
-                 ao_tecla=None, ao_perde_foco=None):
+                 ao_tecla=None, ao_perde_foco=None, rodape=None):
         self.coletar, self.intervalo, self.cursor = coletar, intervalo, cursor
         self.ao_enter, self.ao_tecla, self.ao_perde_foco = ao_enter, ao_tecla, ao_perde_foco
+        self.rodape = rodape    # footer(viewer) -> full text of the selection, wrapped on a fixed footer
         self.cab, self.corpo, self._sig = [], [], None
         self.top, self.chave, self.idx = 0, chave_inicial, 0
         self.recoletar = threading.Event()
@@ -118,7 +120,7 @@ class Viewer:
         with self._lock:
             cab, corpo = self.cab, self.corpo
         self._localizar_cursor()
-        h = max(0, lins - len(cab))
+        h = max(0, lins - len(cab) - self._rod_h())
         self.top = max(0, min(self.top, max(0, len(corpo) - h)))
         end = self.idx + 1
         while self.cursor and end < len(corpo) and corpo[end].cont:
@@ -135,6 +137,8 @@ class Viewer:
             if self.cursor and self.idx <= i < end and (i == self.idx and corpo[i].chave is not None or corpo[i].cont):
                 t = BG + t.replace(R, R + BG) + " " * (cols - n) + R
             rows.append(t)
+        if self.rodape and lins >= len(rows) + FOOTER_ROWS:
+            rows = self._com_rodape(rows, cols, lins)
         while len(rows) < lins:
             rows.append("")
         if forcar or self._frame is None or self._tam != (cols, lins):
@@ -148,6 +152,34 @@ class Viewer:
             sys.stdout.write("\x1b[?2026h" + "".join(buf) + "\x1b[?2026l")
             sys.stdout.flush()
 
+    def _rod_h(self):
+        return FOOTER_ROWS if self.rodape else 0
+
+    def _com_rodape(self, rows, cols, lins):
+        """Pads the body up to the footer area, then draws a separator and the selection wrapped in
+        the last FOOTER_ROWS - 1 rows (the tail is cut with an ellipsis when it still does not fit)."""
+        rows = rows[:lins - FOOTER_ROWS]
+        while len(rows) < lins - FOOTER_ROWS:
+            rows.append("")
+        try:
+            texto = self.rodape(self) or ""
+        except Exception:
+            texto = ""
+        linhas, w = [], max(1, cols - 1)
+        while texto and len(linhas) < FOOTER_ROWS - 1:
+            parte, n = cortar(texto, w)
+            if len(parte) >= len(texto):
+                linhas.append(parte)
+                break
+            linhas.append(parte)
+            texto = texto[len(parte):]
+        else:
+            if texto:
+                linhas[-1] = cortar(linhas[-1], max(1, w - 1))[0] + "…"
+        rows.append(f"{CINZA}{'─' * cols}{R}")
+        rows += [f"{DIM}{l}{R}" for l in linhas]
+        return rows
+
     # ---- entrada ---------------------------------------------------------------------
     def _mover(self, d):
         sel = [i for i, l in enumerate(self.corpo) if l.chave is not None]
@@ -159,16 +191,16 @@ class Viewer:
             pos = min(range(len(sel)), key=lambda k: abs(sel[k] - self.idx))
             self.idx = sel[max(0, min(len(sel) - 1, pos + d))]
         self.chave = self.corpo[self.idx].chave
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab))
+        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
         self._visivel(h)
         self.recoletar.set()    # painéis que reagem à seleção (ex.: tarefas) redesenham já
 
     def _rolar(self, d):
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab))
+        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
         self.top = max(0, min(self.top + d, max(0, len(self.corpo) - h)))
 
     def _tecla(self, k):
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab))
+        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
         if k in ("j", "\x1b[B", "\x1bOB"):
             self._mover(1) if self.cursor else self._rolar(1)
         elif k in ("k", "\x1b[A", "\x1bOA"):
@@ -201,7 +233,7 @@ class Viewer:
             self._rolar(3)
         elif b == 0 and press and self.cursor and self.ao_enter:
             i = self.top + (y - 1 - len(self.cab))
-            if 0 <= i < len(self.corpo) and self.corpo[i].chave is not None:
+            if y - 1 - len(self.cab) < max(0, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h()) and 0 <= i < len(self.corpo) and self.corpo[i].chave is not None:
                 self.idx, self.chave = i, self.corpo[i].chave
                 self.recoletar.set()
                 self.ao_enter(self, self.chave, "click")
