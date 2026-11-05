@@ -142,15 +142,23 @@ def enter(v, chave, tecla):
                        timeout=None)
 
 
+def _copied(path):
+    try:
+        return clipboard.copy_file(path)
+    except Exception:
+        return None
+
+
 def copy_selected(v):
     """`y`: puts the selected file on the clipboard as a file, to paste elsewhere."""
     if not v.chave or v.chave[0] != "f":
         msg = t("tree.copy_pick_file")
-    elif clipboard.copy_file(v.chave[1]):
+    elif _copied(v.chave[1]):
         msg = t("tree.copied", name=os.path.basename(v.chave[1]))
     else:
         msg = t("tree.copy_failed")
-    subprocess.run(["tmux", "display-message", msg], check=False)
+    subprocess.run(["tmux", "display-message", "-d", "2000", msg], check=False, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def on_key(v, k):
