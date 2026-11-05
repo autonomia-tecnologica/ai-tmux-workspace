@@ -50,11 +50,11 @@ def enabled():
         return True
 
 
-def file_icon(name):
+def file_icon(name, dim=False):
     low = name.lower()
     g, c = BY_NAME.get(low) or BY_EXT.get(low.rsplit(".", 1)[-1] if "." in low else "") or FILE
-    return f"\x1b[38;5;{c}m{g}\x1b[0m "
+    return f"\x1b[{'2;' if dim else ''}38;5;{c}m{g}\x1b[0m "
 
 
-def dir_icon(is_open):
-    return f"\x1b[38;5;75m{DIR_OPEN if is_open else DIR_CLOSED}\x1b[0m "
+def dir_icon(is_open, dim=False):
+    return f"\x1b[{'2;' if dim else ''}38;5;75m{DIR_OPEN if is_open else DIR_CLOSED}\x1b[0m "
