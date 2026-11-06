@@ -321,6 +321,10 @@ fit_window() { # $1=window
 # Plugin windows: the plugins listed in settings.json ("plugins" por perfil), one window "plugin:<id>" each.
 # Nothing is discovered (see src/lib.py). lib.py checks plugin.json and prints only the valid ones, so a
 # broken plugin shows its error here and the other windows are still built.
+# Mode bar on top of every plugin window (full width, above the plugin's own layout): the rtabs strip
+# of panel_tabs.py, which lists REPOS and the plugins. The plugin owns its layout, so the bar is added here.
+BARRA_PLUGIN='rtabs|claude|vb|2|tabs:repos'
+
 plugin_abrir() { # $1=perfil $2=id $3=pasta $4=rótulo $5=árvore (ver REPO_TREE)
   local S="$1" nome="plugin:$2" W
   W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' -v n="$nome" '$2==n{print $1; exit}')"
@@ -328,7 +332,8 @@ plugin_abrir() { # $1=perfil $2=id $3=pasta $4=rótulo $5=árvore (ver REPO_TREE
     W="$(tmux new-window -d -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$3")"
     tmux set -p -t "$(tmux display -p -t "$W" '#{pane_id}')" @papel claude
   fi
-  ensure_window "$W" "$3" "$5"
+  # the bar comes first, so it takes the top row; ensure_window creates it only when missing
+  ensure_window "$W" "$3" "$BARRA_PLUGIN"$'\n'"$5"
   msg plugin.opened label="$4" id="$2"
 }
 

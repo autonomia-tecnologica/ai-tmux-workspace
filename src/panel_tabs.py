@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Barra superior de cada painel (1 linha; arg: claude|terminal|repos|tasks|side):
-[CLAUDE] [CLAUDE (2)] [CLAUDE (3)] ... [+]. Em `repos` e `tasks` é só o título do painel (uma aba, sem +).
+[CLAUDE] [CLAUDE (2)] [CLAUDE (3)] ... [+]. Em `repos` são REPOS e os plugins listados (sem +); em `tasks` é só o título do painel (uma aba, sem +).
 No modo `side` as abas são fixas (ARQUIVOS, SESSÕES, DIFF, GITHUB) e escolhem o que o painel da direita mostra.
 
 Clique numa aba troca, clique no + abre uma sessão temporária. Com o painel focado, ←/→ movem o
@@ -17,8 +17,9 @@ import termios
 import tty
 
 import i18n
+import lib
 
-WS = os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+WS =os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                   "bin", "workspace")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 
@@ -40,11 +41,55 @@ SIDE_TABS = [(k, t(k)) for k in ("tree", "sessions", "diff", "github")]
 VARS = {"claude": ("@ws_tabs", "@ws_ativo"), "terminal": ("@ws_ttabs", "@ws_tativo")}
 
 
+def sessao():
+    return tm("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{session_name}")
+
+
+def abas_plugins(perfil):
+    """[(\"plugin:<id>\", rótulo)] for each valid plugin listed in settings.json (broken ones have no window)."""
+    abas = []
+    for entrada in lib.plugins_listados(perfil):
+        try:
+            id_, _, rotulo, _ = lib.carregar_plugin(entrada)
+        except lib.ErroPlugin:
+            continue
+        abas.append((f"plugin:{id_}", rotulo))
+    return abas
+
+
+def janela_plugin(chave):
+    """Window id of the plugin window named like the tab key (plugin windows are named plugin:<id>)."""
+    for linha in tm("list-windows", "-t", sessao(), "-F", "#{window_id}|#{window_name}").splitlines():
+        wid, _, nome = linha.partition("|")
+        if nome == chave:
+            return wid
+    return ""
+
+
+def janela_repo():
+    """Window to go back to from a plugin window: the previous window (tmux's own history) when it is a
+    repo, else the first repo window of the session. Empty when the session has no repo window."""
+    sess = sessao()
+    anterior = tm("display", "-p", "-t", f"{sess}:{{last}}", "#{window_id}")
+    if anterior and tm("show", "-wqv", "-t", anterior, "@ws_repo"):
+        return anterior
+    for linha in tm("list-windows", "-t", sess, "-F", "#{window_id}|#{@ws_repo}").splitlines():
+        wid, _, repo = linha.partition("|")
+        if repo:
+            return wid
+    return ""
+
+
 def estado():
-    win = tm("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{window_id}")
+    win =tm("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{window_id}")
     if KIND == "side":
         return win, SIDE_TABS, tm("show", "-wqv", "-t", win, "@ws_side") or "tree"
-    if KIND in ("repos", "tasks"):
+    if KIND == "repos":
+        # REPOS plus the listed plugins; the active one is the window the panel runs in
+        nome = tm("display", "-p", "-t", win, "#{window_name}")
+        ativo = nome if nome.startswith("plugin:") else "repos"
+        return win, [("repos", t("repos"))] + abas_plugins(sessao()), ativo
+    if KIND == "tasks":
         return win, [(KIND, t(KIND))], KIND
     v_tabs, v_ativo = VARS[KIND]
     ids = tm("show", "-wqv", "-t", win, v_tabs).split()
@@ -88,6 +133,16 @@ def main():
     sys.stdout.flush()
 
     def abrir(p):
+        if KIND == "repos" and p.startswith("plugin:"):
+            wid = janela_plugin(p)
+            if wid:
+                tm("select-window", "-t", wid)
+            return
+        if KIND == "repos" and p == "repos" and tm("display", "-p", "-t", win, "#{window_name}").startswith("plugin:"):
+            wid = janela_repo()
+            if wid:
+                tm("select-window", "-t", wid)
+            return
         if KIND in ("repos", "tasks"):
             return
         if KIND == "side":
