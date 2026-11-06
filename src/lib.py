@@ -262,6 +262,8 @@ def _layout_plugin(id_, texto):
         if len(campos) != 5:
             raise falha("plugin.err.layout_fields")
         papel, pai, divisao, tamanho, comando = campos
+        if papel == "rtabs":
+            raise falha("plugin.err.layout_reserved")
         if not PLUGIN_ROLE.fullmatch(papel) or papel in papeis:
             raise falha("plugin.err.layout_role")
         if pai not in papeis:

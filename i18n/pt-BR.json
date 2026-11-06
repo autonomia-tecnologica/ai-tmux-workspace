@@ -96,6 +96,7 @@
   "plugin.err.layout": "plugin {id}, layout linha {line}: {detail}",
   "plugin.err.layout_fields": "são esperados 5 campos separados por |",
   "plugin.err.layout_role": "papel vazio, repetido ou reservado (claude)",
+  "plugin.err.layout_reserved": "papel rtabs é reservado à barra de modos do workspace",
   "plugin.err.layout_parent": "pai desconhecido (use claude ou um papel de cima)",
   "plugin.err.layout_split": "divisão inválida (v ou h, com b e f opcionais)",
   "plugin.err.layout_size": "tamanho inválido (linhas, N%, TERM, LEFT ou RIGHT)",
