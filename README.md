@@ -19,7 +19,7 @@ servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
     └─ 2 ─────────┴──────── 7 ─────────────┴──────────── 3 ───────────┘
 
 Proporção 2:7:3. A coluna esquerda tem os repos (metade de cima) e as tarefas do `BACKLOG.md` do repo da janela (metade de baixo); branch e commits ficam na aba diff.
-O repo principal (`main` no settings.json) fica fora dos grupos, sempre no topo da lista e em azul.
+O repo principal (`main` no settings.json) fica fora dos grupos, sempre no topo da lista, em laranja (azul quando é o repo da janela).
 Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Bolinhas
