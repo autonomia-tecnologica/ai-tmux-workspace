@@ -21,7 +21,6 @@ BOLA = {"ocioso": f"{CINZA}○{R}", "trabalha": f"{VERDE}●{R}", "espera": f"{A
 GH = "\uf09b"   # nerd font: logo do GitHub
 BRANCH = "\ue725"   # nerd font: git branch
 ESMAECIDO = "\x1b[38;5;238m"
-LARANJA = "\x1b[38;5;208m"
 
 
 def icone_git(repo):
@@ -54,9 +53,9 @@ def coletar(v):
     est = lib.estados_por_repo(grupos + ([("", [principal])] if principal else []))
     cab = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
     corpo = []
-    if principal:   # main repo: outside the groups, always on top, orange (blue when it is this window's repo)
+    if principal:   # main repo: outside the groups, always on top, green (blue when it is this window's repo)
         rnome, p = principal
-        cor = AZUL if p == ATUAL else LARANJA
+        cor = AZUL if p == ATUAL else VERDE
         corpo.append(Linha(f" {BOLA[est.get(p, 'ocioso')]} {cor}{B}{rnome}{R} {icone_git(p)}", ("r", p)))
     for nome, repos in grupos:
         seta = "▸" if nome in col else "▾"
