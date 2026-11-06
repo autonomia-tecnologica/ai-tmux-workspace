@@ -100,9 +100,11 @@ def main():
     prev = e.get("estado")
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora, pane=pane)
     agents = [a for a in e.get("agents") or [] if a != d.get("agent_id")] if ev == "SubagentStop" else list(e.get("agents") or [])
+    types = {k: v for k, v in (e.get("agent_types") or {}).items() if k in agents}
     if ev == "SubagentStart" and d.get("agent_id"):
         agents.append(d["agent_id"])
-    e["agents"] = agents
+        types[d["agent_id"]] = d.get("agent_type") or "agent"
+    e["agents"], e["agent_types"] = agents, types
     if ev in ("SubagentStart", "SubagentStop"):
         e["ts"] = agora     # running subagents are tracked in e["agents"]; the color is derived from it
         SESSOES.mkdir(parents=True, exist_ok=True)
@@ -111,7 +113,7 @@ def main():
         os.replace(tmp, arq)
         return
     if ev in ("SessionStart", "UserPromptSubmit"):
-        e["agents"] = []    # a new prompt/session starts clean: a lost SubagentStop cannot stick
+        e["agents"], e["agent_types"] = [], {}    # a new prompt/session starts clean: a lost SubagentStop cannot stick
     if ev == "SessionStart":
         e.update(estado="ocioso", ferramenta=None)
     elif ev == "Stop":      # turn ended with text in the session: red until the next prompt

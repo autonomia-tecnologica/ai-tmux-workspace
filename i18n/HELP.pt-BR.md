@@ -6,7 +6,7 @@ Abrir de novo: `ctrl+b h`.
 ## Layout
 
     ┌ status: repo • modelo • consumo ────────────────────────────┐
-    │ REPOS       │ CLAUDE (abas)      │ ARQUIVOS SESSÕES DIFF    │
+    │ REPOS       │ CLAUDE (abas)      │ ARQUIVOS DIFF GITHUB     │
     │             │                    │ GITHUB (aba escolhida)   │
     ├─────────────┤                    │                          │
     │ TAREFAS     ├────────────────────┤                          │
@@ -39,6 +39,10 @@ Nos painéis de lista: `j/k` ou setas, PgUp/PgDn, `g/G`, mouse. Enter abre/ativa
 - **repo**: repo da janela atual.
 - **modelo**: modelo da última resposta do Claude nesse repo.
 - **consumo**: `5h X% · 7d Y%` do plano; com `extra_usage` ligado, mostra também o gasto extra do mês (`$usado/$limite`).
+
+## SESSÕES (aba ao lado de REPOS)
+
+Claudes abertos de todos os repos do workspace, agrupados por repo: título, estado, última fala, mensagens, modelo. Subagentes em execução aparecem como linha `↳` dentro da sessão pai. Enter foca o painel da sessão.
 
 ## REPOS
 
@@ -83,12 +87,11 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam p
 - Abas temporárias não são restauradas no `restart`.
 - Foco na tira (`ctrl+b ↑`): ←→ move, Enter ativa.
 
-## Lado direito (barra: ARQUIVOS · SESSÕES · DIFF · GITHUB)
+## Lado direito (barra: ARQUIVOS · DIFF · GITHUB)
 
 Clique na aba, ou foque a barra (`ctrl+b ↑`) e use ←→ + Enter.
 
 - **ARQUIVOS**: árvore do repo. Enter abre/fecha pasta ou abre o arquivo no nvim (mídia e documentos abrem no programa padrão do sistema). `y` copia o arquivo selecionado para o clipboard como arquivo: é só colar (Ctrl+V) em chat, e-mail, upload etc., sem abrir o Finder. Segue o `cd` do terminal ativo. Amarelo = modificado, verde = novo.
-- **SESSÕES**: sessões salvas do Claude neste repo (título, última fala, mensagens, quando, modelo). Enter retoma.
 - **DIFF**: branch, `+/-` totais e arquivos mudados (`U` novo verde, `M` modificado amarelo, `D` apagado vermelho). Enter abre o diff (ou o arquivo novo) num popup; `q` fecha.
 - **GITHUB**: via `gh`: repo, PR da branch com checks, PRs, issues, CI, release. Enter abre no navegador.
 

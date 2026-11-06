@@ -37,7 +37,7 @@ def t(key):
     return i18n.t(f"tabs.{key}")
 
 
-SIDE_TABS = [(k, t(k)) for k in ("tree", "sessions", "diff", "github")]
+SIDE_TABS = [(k, t(k)) for k in ("tree", "diff", "github")]
 VARS = {"claude": ("@ws_tabs", "@ws_ativo"), "terminal": ("@ws_ttabs", "@ws_tativo")}
 
 
@@ -83,12 +83,14 @@ def janela_repo():
 def estado():
     win =tm("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{window_id}")
     if KIND == "side":
-        return win, SIDE_TABS, tm("show", "-wqv", "-t", win, "@ws_side") or "tree"
+        modo = tm("show", "-wqv", "-t", win, "@ws_side")
+        return win, SIDE_TABS, modo if modo in ("diff", "github") else "tree"
     if KIND == "repos":
         # REPOS plus the listed plugins; the active one is the window the panel runs in
         nome = tm("display", "-p", "-t", win, "#{window_name}")
-        ativo = nome if nome.startswith("plugin:") else "repos"
-        return win, [("repos", t("repos"))] + abas_plugins(sessao()), ativo
+        modo = tm("show", "-wqv", "-t", win, "@ws_left")
+        ativo = nome if nome.startswith("plugin:") else ("sessions" if modo == "sessions" else "repos")
+        return win, [("repos", t("repos")), ("sessions", t("sessions"))] + abas_plugins(sessao()), ativo
     if KIND == "tasks":
         return win, [(KIND, t(KIND))], KIND
     v_tabs, v_ativo = VARS[KIND]
@@ -138,10 +140,14 @@ def main():
             if wid:
                 tm("select-window", "-t", wid)
             return
-        if KIND == "repos" and p == "repos" and tm("display", "-p", "-t", win, "#{window_name}").startswith("plugin:"):
+        if KIND == "repos" and p in ("repos", "sessions") and tm("display", "-p", "-t", win, "#{window_name}").startswith("plugin:"):
             wid = janela_repo()
             if wid:
                 tm("select-window", "-t", wid)
+                subprocess.Popen([WS, "left", p, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        if KIND == "repos" and p in ("repos", "sessions"):
+            subprocess.Popen([WS, "left", p, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if KIND in ("repos", "tasks"):
             return

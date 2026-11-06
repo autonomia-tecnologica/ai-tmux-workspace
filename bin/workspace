@@ -7,7 +7,7 @@
 #   workspace fit [perfil]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
 #   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace stop [perfil]   kill the profile's tmux server
-# Internal (called from inside tmux): open <repo> · side <tree|sessions|diff|github> · resume
+# Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
 #   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <perfil>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -239,6 +239,18 @@ side() { # $1=modo $2=janela
   [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs side)"
 }
 
+# Left-top panel mode (repos | sessions), next to REPOS in the rtabs strip.
+left() { # $1=repos|sessions $2=window
+  local pane strip
+  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1}')"
+  [ -n "$pane" ] || return 0
+  tmux set -w -t "$2" @ws_left "$1"
+  tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+  strip="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="rtabs"{print $1}')"
+  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs repos)"
+  return 0
+}
+
 # Opens the repo window and submits a message in its active Claude tab.
 send_prompt() { # $1=repo path $2=message
   local path W pane S
@@ -455,6 +467,7 @@ PY
 case "${1:-}" in
   open) shift; open_repo "$@" ;;
   side) shift; side "$@" ;;
+  left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" ;;
   type) type_prompt "$2" "$3" ;;
   prompts) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$AQUI" "python3 $SRC/prompts.py $3" ;;

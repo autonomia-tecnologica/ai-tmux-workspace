@@ -82,6 +82,14 @@ def _cor(d, agora):
     return est
 
 
+def cor_sessao(d, agora):
+    """Displayed state of one session file: _cor, with Stop-only red masked while subagents run."""
+    c = _cor(d, agora)
+    if c == "pergunta" and d.get("stopped") and d.get("agents"):
+        c = "trabalha"
+    return c
+
+
 def _live_panes():
     """Set of tmux pane ids alive right now, or None when tmux cannot be queried."""
     try:
@@ -117,10 +125,7 @@ def estados_por_repo(repos, agora=None):
                 melhor = p
         if not melhor:
             continue
-        c = _cor(d, agora)
-        # red that only came from Stop is not a question while subagents (SubagentStart/Stop) run
-        if c == "pergunta" and d.get("stopped") and d.get("agents"):
-            c = "trabalha"
+        c = cor_sessao(d, agora)
         if PRIO[c] >= PRIO[res.get(melhor, "ocioso")]:
             res[melhor] = c
     return res

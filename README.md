@@ -11,7 +11,7 @@ tmux para os repos de `groups` do settings.json. Comando: `workspace` (abre `cla
 servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
-    │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS SESSÕES DIFF ... │
+    │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS DIFF GITHUB ... │
     │ ● grupos    │                        │ GITHUB                    │
     ├─────────────┤                        │ (aba escolhida)           │
     │ TAREFAS     ├────────────────────────┤                           │
@@ -50,9 +50,10 @@ an expired token just fails silently. Amounts come in minor units and are divide
 
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
-- lado direito: a barra do topo troca entre ARQUIVOS (padrão) · SESSÕES salvas (Enter retoma) · DIFF atual (Enter abre o diff) ·
+- lado direito: a barra do topo troca entre ARQUIVOS (padrão) · DIFF atual (Enter abre o diff) ·
   GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema.
 - `ctrl+b h` abre a ajuda · `ctrl+b e` abre a roda de prompts (popup com os prompts que você cansou de digitar; lista em `prompts` no `settings.json`, o escolhido é digitado no Claude ativo, sem enviar: o Enter é seu) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
+- barra do painel de repos: REPOS · SESSÕES (Claudes abertos de todos os repos do workspace, agrupados por repo; subagentes em execução viram uma linha `↳` dentro da sessão pai; Enter foca o painel da sessão).
 - painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para o Claude (implementar, refinar ou "o que preciso validar?").
 - abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
   temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,
