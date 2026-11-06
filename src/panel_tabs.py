@@ -10,6 +10,7 @@ o `workspace` reinicia este painel (respawn-pane) a cada mudança de abas.
 import os
 import re
 import select
+import signal
 import subprocess
 import sys
 import termios
@@ -72,7 +73,7 @@ def desenhar(abas, ativo, cursor=None):
         out += f"{cor}{rot}\x1b[0m "
         mapa.append((x, x + len(rot) - 1, p))
         x += len(rot) + 1
-    return out, mapa
+    return out.rstrip(" "), mapa   # no trailing space: on a full-width bar it would wrap and scroll the bar up
 
 
 def main():
@@ -95,12 +96,22 @@ def main():
             cmd = [WS, "tab-new", win, KIND] if p == "new" else [WS, "tab-show", win, p]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    cursor = [cur]
+
+    def redraw(*_):   # resize (fit_window) can scroll the bar up: clear and draw again on its row
+        sys.stdout.write("\x1b[2J" + f"\x1b[{PAD + 1};1H" + desenhar(abas, ativo, itens[cursor[0]])[0])
+        sys.stdout.flush()
+
+    signal.signal(signal.SIGWINCH, redraw)
     try:
         buf = b""
         while True:
-            if not select.select([fd], [], [], 60)[0]:
+            try:
+                if not select.select([fd], [], [], 60)[0]:
+                    continue
+                buf += os.read(fd, 4096)
+            except InterruptedError:
                 continue
-            buf += os.read(fd, 4096)
             for m in SGR.finditer(buf):
                 b, x, press = int(m.group(1)), int(m.group(2)) - 1, m.group(4) == b"M"
                 if b == 0 and press:
@@ -119,6 +130,7 @@ def main():
                     abrir(itens[cur])
                     continue
                 cur = max(0, min(len(itens) - 1, cur + passo))
+                cursor[0] = cur
                 sys.stdout.write(f"\x1b[{PAD + 1};1H" + desenhar(abas, ativo, itens[cur])[0])
                 sys.stdout.flush()
             buf = b"" if len(buf) < 64 else buf[-8:]
