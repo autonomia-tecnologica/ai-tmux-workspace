@@ -21,7 +21,7 @@
   "tasks.confirm": "Mandar pro terminal: \"{msg}\" (y/n)",
   "prompt.tasks.ready": "Implemente a fatia {id} do BACKLOG.md (use o subagente implementador).",
   "prompt.tasks.refine": "Vamos refinar o item {id} do BACKLOG.md.",
-  "prompt.tasks.validate": "O que preciso validar?",
+  "prompt.tasks.validate": "O que preciso validar no item {id} do BACKLOG.md?",
   "sessions.title": "SESSÕES",
   "sessions.header": "{n} salvas · Enter retoma",
   "sessions.untitled": "(sem título)",

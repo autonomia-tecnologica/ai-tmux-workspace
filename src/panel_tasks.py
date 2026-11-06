@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tasks panel: open BACKLOG.md items of the repo of this tmux window only.
 
-  ● green ready   ◆ yellow to validate (Enter asks "what do I need to validate?")   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
+  ● green ready   ◆ yellow to validate (Enter asks "what do I need to validate in item <id>?")   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
 A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
