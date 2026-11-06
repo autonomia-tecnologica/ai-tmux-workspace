@@ -269,7 +269,7 @@ prune() { # $1=session
   local names id nome base
   names="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib
 ids = [e['id'] for e in lib.plugins_listados(sys.argv[1]) if isinstance(e, dict) and isinstance(e.get('id'), str)]
-print('\n'.join([n for g,r in lib.ler_repos() for n,p in r] + ['plugin:' + i for i in ids]))" "$1")"
+print('\n'.join(([lib.ler_principal()[0]] if lib.ler_principal() else []) + [n for g,r in lib.ler_repos() for n,p in r] + ['plugin:' + i for i in ids]))" "$1")"
   [ -n "$names" ] || return 0   # unreadable/empty settings: never prune
   while IFS='|' read -r id nome; do
     [ "$nome" = boot ] && continue
@@ -406,7 +406,7 @@ iniciar() {
     env -u TMUX tmux -L "$sock" set-environment -g WS_PERFIL "$perfil"
     env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$AQUI"
     if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$perfil:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
-      primeiro="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_repos()[0][1][0][1])")"
+      primeiro="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print((lib.ler_principal() or lib.ler_repos()[0][1][0])[1])")"
       env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$primeiro'"
     fi
     env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$perfil'"

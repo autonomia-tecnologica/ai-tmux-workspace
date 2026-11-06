@@ -4,7 +4,7 @@ Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma 
 
 A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/filosofia.md`) e vale sobre este repo. O manifesto da Autonomia Tecnológica mora primariamente no site (`site/i18n/pt_BR.json`).
 
-**Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles` e `groups`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
+**Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles`, `main` e `groups`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
 
 tmux para os repos de `groups` do settings.json. Comando: `workspace` (abre `claude --settings …/settings.claude.json`) ou
 `workspace deepseek` (idem com `settings.deepseek.json`); os perfis estão em `profiles` do settings.json. Cada perfil tem o seu
@@ -19,6 +19,7 @@ servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
     └─ 2 ─────────┴──────── 7 ─────────────┴──────────── 3 ───────────┘
 
 Proporção 2:7:3. A coluna esquerda tem os repos (metade de cima) e as tarefas do `BACKLOG.md` do repo da janela (metade de baixo); branch e commits ficam na aba diff.
+O repo principal (`main` no settings.json) fica fora dos grupos, sempre no topo da lista e em azul.
 Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Bolinhas

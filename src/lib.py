@@ -46,6 +46,15 @@ def ler_repos():
     return grupos
 
 
+def ler_principal():
+    """(nome, caminho) do repo principal de settings.json ("main"), ou None. Fica fora dos grupos."""
+    c = ler_config().get("main")
+    if not isinstance(c, str) or not c:
+        return None
+    p = expandir(c)
+    return (os.path.basename(p) or p, p)
+
+
 def repo_atual():
     """Repo da janela onde este painel roda (opção @ws_repo da janela do tmux)."""
     pane = os.environ.get("TMUX_PANE")

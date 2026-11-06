@@ -5,6 +5,7 @@
     "claude": "claude",
     "deepseek": "claude --settings ~/.claude/settings.deepseek.json"
   },
+  "main": "~/Codes/main-repo",
   "groups": {
     "Example": [
       "~/Codes/some-repo"
