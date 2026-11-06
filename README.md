@@ -4,7 +4,7 @@ Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma 
 
 A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/filosofia.md`) e vale sobre este repo. O manifesto da Autonomia Tecnológica mora primariamente no site (`site/i18n/pt_BR.json`).
 
-**Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles`, `main` e `groups`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
+**Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles`, `main`, `groups` e `prompts`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
 
 tmux para os repos de `groups` do settings.json. Comando: `workspace` (abre `claude --settings …/settings.claude.json`) ou
 `workspace deepseek` (idem com `settings.deepseek.json`); os perfis estão em `profiles` do settings.json. Cada perfil tem o seu
@@ -52,7 +52,7 @@ an expired token just fails silently. Amounts come in minor units and are divide
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
 - lado direito: a barra do topo troca entre ARQUIVOS (padrão) · SESSÕES salvas (Enter retoma) · DIFF atual (Enter abre o diff) ·
   GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema.
-- `ctrl+b h` abre a ajuda · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
+- `ctrl+b h` abre a ajuda · `ctrl+b e` abre a roda de prompts (popup com os prompts que você cansou de digitar; lista em `prompts` no `settings.json`, o escolhido é digitado no Claude ativo, sem enviar: o Enter é seu) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
 - painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para o Claude (implementar, refinar ou "o que preciso validar?").
 - abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
   temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,

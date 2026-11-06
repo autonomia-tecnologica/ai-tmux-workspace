@@ -251,6 +251,16 @@ send_prompt() { # $1=repo path $2=message
   tmux send-keys -t "$pane" -l "$2" && tmux send-keys -t "$pane" Enter
 }
 
+# Types text into the active Claude tab of a window, without Enter (bracketed paste: newlines stay text), and focuses it.
+type_prompt() { # $1=window id $2=text
+  local pane
+  pane="$(tmux show -wqv -t "$1" @ws_ativo)"
+  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  [ -n "$pane" ] || return 1
+  tmux set-buffer -b ws_prompt -- "$2" && tmux paste-buffer -p -d -b ws_prompt -t "$pane"
+  tmux select-pane -t "$pane"
+}
+
 resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando essa sessão
   local pane cmd path
   cmd="$(perfil_cmd "$(env_global WS_PERFIL)")"
@@ -446,6 +456,8 @@ case "${1:-}" in
   open) shift; open_repo "$@" ;;
   side) shift; side "$@" ;;
   send) send_prompt "$2" "$3" ;;
+  type) type_prompt "$2" "$3" ;;
+  prompts) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$AQUI" "python3 $SRC/prompts.py $3" ;;
   resume) shift; resume "$@" ;;
   tab-new) tab_new "$2" "${3:-}" ;;
   tab-show) tab_show "$2" "$3" ;;

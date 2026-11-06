@@ -26,6 +26,7 @@ Abrir de novo: `ctrl+b h`.
 | `ctrl+b t` | nova aba temporária (Claude ou terminal, conforme o painel em foco) |
 | `ctrl+b n` / `p` | próxima / anterior aba do painel em foco |
 | `ctrl+b z` | zoom do painel em foco |
+| `ctrl+b e` | roda de prompts: lista (com quebra de linha) dos prompts salvos (`prompts` no `settings.json`); Enter ou 1-9 digita no Claude ativo, sem enviar (o Enter é seu) |
 | `ctrl+b r` | recarrega a config sem sair |
 | `ctrl+b d` | desanexa (o workspace continua rodando) |
 
