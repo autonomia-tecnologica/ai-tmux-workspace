@@ -32,6 +32,7 @@ def effective(i):
     return "blocked" if i["blocked"] and i["status"] == "ready" else i["status"]
 CURRENT = lib.repo_atual()
 OPEN = set()    # ids of items whose description is expanded (Right opens, Left closes)
+OPEN_GROUPS = set()    # categories whose items are shown (Right opens, Left closes); closed by default
 
 
 def collect(v):
@@ -64,7 +65,25 @@ def collect(v):
         body.append(Linha(row))
         body.append(Linha())                                # blank line between counters and tasks
         rail = {}                                           # id -> tree prefix for its children/lines
-        for i, par, last, kids in backlog.tree(items):
+        rows = []                                           # (group header | tree row), grouped by category
+        for cat, members in backlog.groups(items):
+            rows.append(("g", cat, members))
+            if cat in OPEN_GROUPS:
+                rows.extend(("i", *r) for r in backlog.tree(members))
+        for row in rows:
+            if row[0] == "g":
+                _, cat, members = row
+                opened = cat in OPEN_GROUPS
+                n_ready = sum(effective(m) == "ready" for m in members)
+                counts = f"{len(members)}" + (f", {n_ready} {t('ready')}" if n_ready else "")
+                name = cat or t("no_category")
+                room = cols - len(counts) - 7
+                if len(name) > room:
+                    name = name[:max(1, room - 1)].rstrip() + "…"
+                body.append(Linha(f" {DIM}{'▾' if opened else '▸'}{R} {B}{name}{R} {DIM}({counts}){R}",
+                                  ("g", CURRENT, cat)))
+                continue
+            _, i, par, last, kids = row
             st = effective(i)
             key = ("i", CURRENT, i["id"], st)
             base = rail.get(par, " ") if par is not None else " "
@@ -72,7 +91,7 @@ def collect(v):
             rail[i["id"]] = base + (("   " if last else "│  ") if par is not None else "")
             deps = ", ".join(map(str, i["deps"]))
             dep = f" ←{deps}" if len(i["deps"]) > 1 or (i["deps"] and par is None) else ""
-            if i["typo"]:
+            if i["typo"] or i["cross"]:
                 dep += " ⚠"
             pad = len(lead) + 5 + len(str(i["id"]))         # "<lead>▸ ● 12 "
             opened = i["id"] in OPEN
@@ -95,6 +114,8 @@ def collect(v):
                 body.append(Linha(f"{ind}{DIM}←{deps}{R}", cont=True))
             if i["cycle"]:
                 body.append(Linha(f"{ind}\x1b[31m✖ {t('cycle')}{R}", cont=True))
+            if i["cross"]:
+                body.append(Linha(f"{ind}{AMARELO}⚠ {t('cross', ids=', '.join(map(str, i['cross'])))}{R}", cont=True))
             if i["typo"]:
                 body.append(Linha(f"{ind}{AMARELO}⚠ {t('typo', ids=', '.join(map(str, i['typo'])))}{R}", cont=True))
             for n, ln in enumerate(textwrap.wrap(i["accept"], width - 2) if i["accept"] else []):
@@ -104,6 +125,8 @@ def collect(v):
 
 def enter(v, key, k):
     path = key[1]
+    if key[0] == "g":          # category header: Right/Left open and close it
+        return
     if key[3] == "cycle":      # invalid until the cycle is undone
         return
     # ready -> implement; blocked -> implement its open dependencies first; to validate -> ask what to
@@ -119,10 +142,11 @@ def enter(v, key, k):
 
 
 def on_key(v, k):
-    """Right expands the item under the cursor, Left collapses it (like the files tree)."""
-    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] != "i":
+    """Right expands the item or category under the cursor, Left collapses it (like the files tree)."""
+    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] not in ("i", "g"):
         return
-    (OPEN.add if k in ("\x1b[C", "\x1bOC") else OPEN.discard)(v.chave[2])
+    target = OPEN_GROUPS if v.chave[0] == "g" else OPEN
+    (target.add if k in ("\x1b[C", "\x1bOC") else target.discard)(v.chave[2])
     v.recoletar.set()
 
 

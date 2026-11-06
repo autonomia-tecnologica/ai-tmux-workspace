@@ -17,6 +17,8 @@
   "tasks.validate": "a validar",
   "tasks.blocked": "bloqueadas",
   "tasks.cycle": "ciclo de dependência: inválida até desfazer",
+  "tasks.no_category": "sem categoria",
+  "tasks.cross": "depende de {ids}, de outra categoria (inválido: categorias não dependem entre si)",
   "tasks.typo": "id {ids} >= próximo id (erro de digitação?)",
   "tasks.confirm": "Mandar pro terminal: \"{msg}\" (y/n)",
   "prompt.tasks.ready": "Implemente a fatia {id} do BACKLOG.md (use o subagente implementador).",

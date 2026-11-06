@@ -15,8 +15,8 @@ import backlog  # noqa: E402
 import lib  # noqa: E402
 
 LEGACY = ["TODO.md", "TODOS.md", "docs/BACKLOG.md", "docs/TODO.md", "ROADMAP.md", "docs/ROADMAP.md", "TASKS.md"]
-FIELDS = {"Arquivos", "Depende de", "Aceite", "Validação"}
-VALIDATE_FIELDS = {"Conferir", "Como", "Decide"}
+FIELDS = {"Categoria", "Arquivos", "Depende de", "Aceite", "Validação"}
+VALIDATE_FIELDS = {"Categoria", "Conferir", "Como", "Decide"}
 
 
 def git(repo, *args):
@@ -82,10 +82,11 @@ def audit(name, path):
         out["panel_parses"] = items is not None
         out["items"] = len(items or [])
         out["problems"] = format_problems(text)
+        out["cross_category"] = {i["id"]: i["cross"] for i in items or [] if i["cross"]}
         out["cycles"] = [i["id"] for i in items or [] if i["cycle"]]
         out["typo_deps"] = {i["id"]: i["typo"] for i in items or [] if i["typo"]}
     out["ok"] = not out.get("error") and (not is_git or (out.get("ignored_as_root_rule") and not out.get("tracked"))) \
-        and not out["legacy_files"] and (not bl.is_file() or (out["panel_parses"] and not out["problems"] and not out["cycles"]))
+        and not out["legacy_files"] and (not bl.is_file() or (out["panel_parses"] and not out["problems"] and not out["cycles"] and not out["cross_category"]))
     return out
 
 

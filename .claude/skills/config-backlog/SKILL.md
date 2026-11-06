@@ -16,15 +16,16 @@ applies it. Arguments (optional): repo names or paths to restrict the run; none 
 2. `/BACKLOG.md` in the repo's `.gitignore` (root-anchored) and the file not tracked by git. This
    applies to every repo, even one without a backlog.
 3. Format: `Próximo id: N` at the top; the three sections `## Refinadas`, `## A refinar`,
-   `## A validar` in that order; items `### N. Title` with the four fields (`A validar` items use
-   `Conferir`/`Como`/`Decide`); unique, incremental integer ids; no dependency cycles; item ~15 lines.
+   `## A validar` in that order; items `### N. Title` starting with the mandatory `- Categoria: X` field, then the four fields
+   (`A validar` items use `Conferir`/`Como`/`Decide`); items are grouped by category and
+   categories never depend on each other (a `Depende de` id in another category is invalid); unique, incremental integer ids; no dependency cycles; item ~15 lines.
 4. A repo without a `BACKLOG.md` has no tasks: never create an empty one.
 
 ## Steps
 
 1. **Audit** (read-only): `python3 -I ~/Codes/ai-tmux-workspace/.claude/skills/config-backlog/audit.py [repo ...]`.
    It prints one JSON line per repo: `ok`, `ignored_as_root_rule`, `tracked`, `legacy_files`,
-   `panel_parses`, `problems`, `cycles`, `typo_deps`. Summarize it as a table (repo → what is wrong).
+   `panel_parses`, `problems`, `cycles`, `typo_deps`, `cross_category`. Summarize it as a table (repo → what is wrong).
 2. **Plan**: list the exact changes per repo and ask for confirmation before touching any repo. Group
    the cheap mechanical ones (gitignore, empty sections) separately from the ones that need judgment
    (legacy migration, missing fields).
@@ -37,7 +38,8 @@ applies it. Arguments (optional): repo names or paths to restrict the run; none 
      `## A refinar` with a new id from `Próximo id`. Fill only the fields the source actually supports;
      write `Aceite`/`Validação` as "a definir" when unknown rather than inventing them. Done entries are dropped.
      Show the result and ask before deleting the legacy file (removal is the user's call).
-   - **Missing fields / cycles / typo deps**: report them, propose the fix, ask. Do not guess.
+   - **Missing `Categoria`**: propose a category per item (short name, reuse the repo's existing ones), ask, then insert `- Categoria: X` right under the title.
+   - **Missing fields / cycles / typo deps / cross-category deps**: report them, propose the fix, ask. Do not guess.
    - An item too big for one slice (65k context) is split into new-numbered items; the original leaves.
 4. **Commit**: the only versioned change is `.gitignore` (and the untracking). One commit per repo with
    that message ending in `AI Generated` (English message, no tool/model/co-author mention). `BACKLOG.md`

@@ -60,7 +60,7 @@ Ao lado do nome, dois ícones:
 
 ## TAREFAS
 
-Itens abertos do `BACKLOG.md` do repo. Contadores no topo; árvore mostra dependências (`←id`).
+Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam por categoria (`Categoria:` do item): `→` abre o grupo e `←` fecha (começam fechados), e dentro dele a árvore mostra dependências (`←id`).
 
 | Marca | Significado |
 |---|---|
@@ -70,9 +70,9 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; árvore mostra depend
 | `◌` apagada | pausada (título com `PAUSADA` entre parênteses) |
 | `⊘` | bloqueada por dependência ainda aberta |
 | `✖` | ciclo de dependência (inválida até desfazer) |
-| `⚠` | id de dependência >= próximo id (provável erro de digitação) |
+| `⚠` | id de dependência >= próximo id (provável erro de digitação) ou dependência de outra categoria (inválida) |
 
-- `→` expande o item (título completo, dependências, aceite); `←` recolhe.
+- `→` expande o grupo ou o item (título completo, dependências, aceite); `←` recolhe. Enter no grupo não faz nada.
 - Enter pede confirmação (y/n) e manda a mensagem para o Claude: pronta = implementar, a refinar/pausada = refinar, a validar = "o que preciso validar?". Bloqueada e ciclo não despacham.
 - "sem formato" = o `BACKLOG.md` não segue o formato padrão. "nenhum backlog encontrado" = não existe o arquivo.
 

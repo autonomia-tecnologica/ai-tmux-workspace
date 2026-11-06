@@ -8,8 +8,8 @@ SECTIONS = {"refinadas": "ready", "a refinar": "refine", "a validar": "validate"
 
 def parse(path):
     """-> None if the file has no recognizable sections, else a list of
-    {"id", "title", "status": ready|refine|validate|paused, "deps": [int], "accept": str, "blocked": bool, "cycle": bool,
-    "typo": [int]}."""
+    {"id", "title", "category": str ("" if missing), "status": ready|refine|validate|paused, "deps": [int],
+    "accept": str, "blocked": bool, "cycle": bool, "typo": [int], "cross": [int]}."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -26,12 +26,15 @@ def parse(path):
             title = m.group(2)
             paused = "(PAUSADA)" in title.upper()
             cur = {"id": int(m.group(1)), "title": re.sub(r"\s*\(PAUSADA\)\s*", " ", title, flags=re.I).strip(),
-                   "status": "paused" if paused and section != "validate" else section, "deps": [], "accept": ""}
+                   "status": "paused" if paused and section != "validate" else section, "deps": [], "accept": "", "category": ""}
             items.append(cur)
         elif cur is not None:
             d = re.match(r"^-\s*Depende de:\s*(.*)$", line)
             if d:
                 cur["deps"] = [int(n) for n in re.findall(r"\d+", d.group(1))]
+            c = re.match(r"^-\s*Categoria:\s*(.*?)\s*$", line)
+            if c:
+                cur["category"] = c.group(1)
             a = re.match(r"^-\s*(?:Aceite|Conferir):\s*(.*)$", line)
             if a:
                 cur["accept"] = a.group(1).strip()
@@ -46,8 +49,10 @@ def parse(path):
 
 def resolve(items, next_id):
     """Adds "blocked" (a listed id is still in the file), "cycle" (item is in a dependency
-    cycle, self-dependency included; invalid and blocked) and "typo" (ids >= next id)."""
+    cycle, self-dependency included; invalid and blocked), "typo" (ids >= next id) and "cross"
+    (dependencies on an item of another category: invalid, categories never depend on each other)."""
     ids = {i["id"] for i in items}
+    cat = {i["id"]: i["category"] for i in items}
     graph = {i["id"]: [d for d in i["deps"] if d in ids] for i in items}
 
     def reaches(start, goal):
@@ -65,6 +70,17 @@ def resolve(items, next_id):
         i["cycle"] = reaches(i["id"], i["id"])
         i["blocked"] = bool(graph[i["id"]]) or i["cycle"]
         i["typo"] = [d for d in i["deps"] if next_id is not None and d >= next_id]
+        i["cross"] = [d for d in i["deps"] if d in cat and cat[d] != i["category"]]
+
+
+def groups(items):
+    """-> [(category, [items])] in order of first appearance in the file; items without a
+    category (invalid format) go last under the empty name."""
+    out = {}
+    for i in items:
+        out.setdefault(i["category"], []).append(i)
+    names = [c for c in out if c] + ([""] if "" in out else [])
+    return [(c, out[c]) for c in names]
 
 
 def ordered(items):
