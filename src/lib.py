@@ -3,9 +3,12 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
+
+from i18n import t
 
 BASE = Path(__file__).resolve().parent.parent   # raiz do repo
 HOME = Path.home()
@@ -221,3 +224,112 @@ def estado_git(repo):
         sujo = rc == 0 and bool(out.strip())
     _GH_CACHE[repo] = (agora, (est, sujo))
     return est, sujo
+
+
+# --- Plugins -----------------------------------------------------------------------------------
+# Listed in settings.json ("plugins": {perfil: [{"id", "path"}]}). Nothing is discovered: a folder
+# is loaded only when its entry is there, and only from the fixed path written in the entry.
+# The folder holds plugin.json: id, label (key of the plugin's own i18n/pt-BR.json), layout (same
+# line format as REPO_TREE in bin/workspace; the root pane is the window itself and has role claude),
+# needs (list of strings, validated but not acted on yet).
+PLUGIN_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+PLUGIN_ROLE = re.compile(r"[a-z][a-z0-9-]*")
+PLUGIN_SPLIT = re.compile(r"[vh][bf]*")
+PLUGIN_SIZE = re.compile(r"(\d+%?|TERM|LEFT|RIGHT)?")
+
+
+class ErroPlugin(Exception):
+    """Message already translated (i18n), ready to show the person."""
+
+
+def plugins_listados(perfil):
+    """Raw entries of settings.json["plugins"][perfil]: only what is listed there is ever loaded."""
+    return ler_config().get("plugins", {}).get(perfil, [])
+
+
+def _layout_plugin(id_, texto):
+    """Checks the layout lines and returns them in the REPO_TREE format (role|parent|split|size|cmd)."""
+    linhas, papeis = [], {"claude"}
+    for n, linha in enumerate(texto.splitlines(), 1):
+        s = linha.strip()
+        if not s or s.startswith("#"):
+            continue
+
+        def falha(chave):
+            return ErroPlugin(t("plugin.err.layout", id=id_, line=n, detail=t(chave)))
+
+        campos = s.split("|", 4)
+        if len(campos) != 5:
+            raise falha("plugin.err.layout_fields")
+        papel, pai, divisao, tamanho, comando = campos
+        if not PLUGIN_ROLE.fullmatch(papel) or papel in papeis:
+            raise falha("plugin.err.layout_role")
+        if pai not in papeis:
+            raise falha("plugin.err.layout_parent")
+        if not PLUGIN_SPLIT.fullmatch(divisao):
+            raise falha("plugin.err.layout_split")
+        if not PLUGIN_SIZE.fullmatch(tamanho):
+            raise falha("plugin.err.layout_size")
+        if comando != "shell":
+            raise falha("plugin.err.layout_cmd")
+        papeis.add(papel)
+        linhas.append(f"{papel}|{pai}|{divisao}|{tamanho}|{comando}")
+    if not linhas:
+        raise ErroPlugin(t("plugin.err.field", id=id_, field="layout"))
+    return "\n".join(linhas)
+
+
+def carregar_plugin(entrada):
+    """(id, pasta, label traduzido, layout) of one settings.json entry; raises ErroPlugin if invalid."""
+    if not isinstance(entrada, dict) or not isinstance(entrada.get("id"), str) \
+            or not isinstance(entrada.get("path"), str):
+        raise ErroPlugin(t("plugin.err.entry", entry=json.dumps(entrada, ensure_ascii=False)))
+    id_ = entrada["id"]
+    if not PLUGIN_ID.fullmatch(id_):
+        raise ErroPlugin(t("plugin.err.id", id=id_))
+    pasta = expandir(entrada["path"])
+    arq = Path(pasta) / "plugin.json"
+    try:
+        dados = json.loads(arq.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ErroPlugin(t("plugin.err.not_found", id=id_, path=pasta))
+    except (OSError, ValueError):
+        raise ErroPlugin(t("plugin.err.json", id=id_, path=str(arq)))
+    if not isinstance(dados, dict):
+        raise ErroPlugin(t("plugin.err.json", id=id_, path=str(arq)))
+    if dados.get("id") != id_:
+        raise ErroPlugin(t("plugin.err.id_mismatch", id=id_, found=str(dados.get("id"))))
+    label = dados.get("label")
+    if not isinstance(label, str) or not label:
+        raise ErroPlugin(t("plugin.err.field", id=id_, field="label"))
+    layout = dados.get("layout")
+    if not isinstance(layout, str):
+        raise ErroPlugin(t("plugin.err.field", id=id_, field="layout"))
+    necessita = dados.get("needs", [])
+    if not isinstance(necessita, list) or not all(isinstance(x, str) for x in necessita):
+        raise ErroPlugin(t("plugin.err.field", id=id_, field="needs"))
+    try:
+        textos = json.loads((Path(pasta) / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        textos = {}
+    if label not in textos:
+        raise ErroPlugin(t("plugin.err.label", id=id_, chave=label))
+    return id_, pasta, textos[label], _layout_plugin(id_, layout)
+
+
+if __name__ == "__main__":
+    import sys
+    comando, perfil = sys.argv[1], sys.argv[2]
+    if comando == "plugins":           # bash reads: "@@id<TAB>pasta<TAB>rótulo", then the layout lines
+        for entrada in plugins_listados(perfil):
+            try:
+                id_, pasta, rotulo, arvore = carregar_plugin(entrada)
+            except ErroPlugin as e:
+                print(e, file=sys.stderr)
+                continue
+            print(f"@@{id_}\t{pasta}\t{rotulo}")
+            print(arvore)
+    elif comando == "plugin-ids":      # listed ids, valid or not (a broken plugin keeps its window)
+        for entrada in plugins_listados(perfil):
+            if isinstance(entrada, dict) and isinstance(entrada.get("id"), str):
+                print(entrada["id"])

@@ -9,5 +9,8 @@
     "Example": [
       "~/Codes/some-repo"
     ]
+  },
+  "plugins": {
+    "claude": []
   }
 }

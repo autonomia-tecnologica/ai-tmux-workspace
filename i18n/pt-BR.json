@@ -84,5 +84,20 @@
   "tmux.hint_prefix": " PREFIXO · setas navegar  z zoom  t nova aba  n/p troca  r recarrega  d desanexa  h ajuda ",
   "tmux.hint_right_options": "mostra as opções",
   "tmux.hint_right_help": "ajuda",
-  "help.not_found": "{path} não encontrado"
+  "help.not_found": "{path} não encontrado",
+  "plugin.opened": "plugin aberto: {label} ({id})",
+  "plugin.err.entry": "settings.json: entrada de plugin inválida: {entry}",
+  "plugin.err.id": "plugin com id inválido: {id} (use minúsculas, números e hífen)",
+  "plugin.err.not_found": "plugin {id}: pasta sem plugin.json ou inexistente: {path}",
+  "plugin.err.json": "plugin {id}: plugin.json não é um objeto JSON válido ({path})",
+  "plugin.err.id_mismatch": "plugin {id}: o plugin.json diz id \"{found}\"",
+  "plugin.err.field": "plugin {id}: campo \"{field}\" ausente ou inválido em plugin.json",
+  "plugin.err.label": "plugin {id}: a chave \"{chave}\" não existe em i18n/pt-BR.json do plugin",
+  "plugin.err.layout": "plugin {id}, layout linha {line}: {detail}",
+  "plugin.err.layout_fields": "são esperados 5 campos separados por |",
+  "plugin.err.layout_role": "papel vazio, repetido ou reservado (claude)",
+  "plugin.err.layout_parent": "pai desconhecido (use claude ou um papel de cima)",
+  "plugin.err.layout_split": "divisão inválida (v ou h, com b e f opcionais)",
+  "plugin.err.layout_size": "tamanho inválido (linhas, N%, TERM, LEFT ou RIGHT)",
+  "plugin.err.layout_cmd": "comando inválido (nesta versão só shell)"
 }

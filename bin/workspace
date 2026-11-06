@@ -8,7 +8,7 @@
 #   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace stop [perfil]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|sessions|diff|github> · resume
-#   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one)
+#   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <perfil>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 AQUI="$(dirname "$BIN")"        # raiz do repo
@@ -267,7 +267,9 @@ resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando
 # Runs on reload, so removing a repo from settings cleans up the rest.
 prune() { # $1=session
   local names id nome base
-  names="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print('\n'.join(n for g,r in lib.ler_repos() for n,p in r))")"
+  names="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib
+ids = [e['id'] for e in lib.plugins_listados(sys.argv[1]) if isinstance(e, dict) and isinstance(e.get('id'), str)]
+print('\n'.join([n for g,r in lib.ler_repos() for n,p in r] + ['plugin:' + i for i in ids]))" "$1")"
   [ -n "$names" ] || return 0   # unreadable/empty settings: never prune
   while IFS='|' read -r id nome; do
     [ "$nome" = boot ] && continue
@@ -316,14 +318,44 @@ fit_window() { # $1=window
   id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
 }
 
+# Plugin windows: the plugins listed in settings.json ("plugins" por perfil), one window "plugin:<id>" each.
+# Nothing is discovered (see src/lib.py). lib.py checks plugin.json and prints only the valid ones, so a
+# broken plugin shows its error here and the other windows are still built.
+plugin_abrir() { # $1=perfil $2=id $3=pasta $4=rótulo $5=árvore (ver REPO_TREE)
+  local S="$1" nome="plugin:$2" W
+  W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' -v n="$nome" '$2==n{print $1; exit}')"
+  if [ -z "$W" ]; then
+    W="$(tmux new-window -d -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$3")"
+    tmux set -p -t "$(tmux display -p -t "$W" '#{pane_id}')" @papel claude
+  fi
+  ensure_window "$W" "$3" "$5"
+  msg plugin.opened label="$4" id="$2"
+}
+
+plugin_sync() { # $1=perfil: abre ou completa a janela de cada plugin listado (idempotente)
+  local S="${1:-claude}" bloco="" id="" dir="" label="" linha
+  while IFS= read -r linha; do
+    if [[ "$linha" == @@* ]]; then
+      [ -n "$id" ] && plugin_abrir "$S" "$id" "$dir" "$label" "$bloco"
+      IFS=$'\t' read -r id dir label <<<"${linha#@@}"
+      bloco=""
+    else
+      bloco+="$linha"$'\n'
+    fi
+  done < <(python3 "$SRC/lib.py" plugins "$S")
+  [ -n "$id" ] && plugin_abrir "$S" "$id" "$dir" "$label" "$bloco"
+  return 0
+}
+
 # Checks an open window and creates what is missing (tab strips, repos, side, terminal) without touching
 # what exists. New structural changes go in REPO_TREE, and `reload` applies them without a restart.
-ensure_window() { # $1=janela $2=caminho do repo
+# $3 = árvore de painéis (padrão REPO_TREE; plugins passam a própria). Plugin windows have no @ws_repo.
+ensure_window() { # $1=janela $2=caminho do repo $3=árvore
   local W="$1" path="$2" P T
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
   [ -n "$(tmux show -wqv -t "$W" @ws_tabs)" ] || {
     tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
-  build_tree "$W" "$path" "$REPO_TREE"
+  build_tree "$W" "$path" "${3-$REPO_TREE}"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && {
     [ -n "$(tmux show -wqv -t "$W" @ws_ttabs)" ] || {
@@ -352,6 +384,7 @@ reload() {
   while IFS='|' read -r W path; do
     [ -n "$path" ] && ensure_window "$W" "$path"
   done < <(tmux list-windows -t "$perfil:" -F '#{window_id}|#{@ws_repo}')
+  plugin_sync "$perfil"
   panels "$perfil"
   tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$perfil"
 }
@@ -371,6 +404,7 @@ iniciar() {
       primeiro="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_repos()[0][1][0][1])")"
       env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$primeiro'"
     fi
+    env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$perfil'"
   fi
   [ -n "${WS_SEM_ANEXAR:-}" ] && return 0
   exec env -u TMUX tmux -L "$sock" attach -t "$perfil"
@@ -412,6 +446,7 @@ case "${1:-}" in
   tab-show) tab_show "$2" "$3" ;;
   tab-step) tab_step "$2" "$3" "${4:-}" ;;
   tab-exit) tab_exit "$2" ;;
+  plugins-sync) plugin_sync "${2:-claude}" ;;
   install) install ;;
   install-hooks) install_hooks ;;
   stop) tmux -L "ws-${2:-claude}" kill-server ;;
