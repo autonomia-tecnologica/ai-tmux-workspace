@@ -14,7 +14,6 @@ BASE = Path(__file__).resolve().parent.parent   # raiz do repo
 HOME = Path.home()
 ESTADO = Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace"))
 SESSOES = ESTADO / "sessoes"
-SUBAGENTE_S = 120     # s: a pane-less "trabalha" file this fresh is a subagent still working
 ESPERA_S = 8          # ferramenta aberta há mais que isso = "esperando as coisas acontecerem"
 PRIO = {"ocioso": 0, "trabalha": 1, "espera": 2, "pergunta": 3}
 
@@ -94,13 +93,14 @@ def estados_por_repo(repos, agora=None):
     except OSError:
         return res
     vivos = _live_panes()
-    rows = []       # (repo, file data, repo-matched)
-    sub_ativo = set()   # repos with a fresh pane-less "trabalha" file: a background subagent session
     for f in arquivos:
         try:
             d = json.loads(f.read_text())
             cwd = expandir(d["cwd"])
         except Exception:
+            continue
+        # Orphan: pane-less legacy file, or its pane is gone (session died without SessionEnd).
+        if vivos is not None and d.get("pane") not in vivos:
             continue
         melhor = None
         for p in caminhos:
@@ -108,21 +108,9 @@ def estados_por_repo(repos, agora=None):
                 melhor = p
         if not melhor:
             continue
-        # Subagents run under their own session id and no TMUX_PANE: they are not the pane's
-        # session, but while fresh they mean the repo is working.
-        if d.get("pane") is None:
-            if d.get("estado") == "trabalha" and agora - d.get("ts", 0) < SUBAGENTE_S:
-                sub_ativo.add(melhor)
-            if vivos is not None:
-                continue
-        # Orphan: pane-less legacy file, or its pane is gone (session died without SessionEnd).
-        elif vivos is not None and d.get("pane") not in vivos:
-            continue
-        rows.append((melhor, d))
-    for melhor, d in rows:
         c = _cor(d, agora)
-        # red that only came from Stop is not a question while background subagents work
-        if c == "pergunta" and d.get("stopped") and melhor in sub_ativo:
+        # red that only came from Stop is not a question while subagents (SubagentStart/Stop) run
+        if c == "pergunta" and d.get("stopped") and d.get("agents"):
             c = "trabalha"
         if PRIO[c] >= PRIO[res.get(melhor, "ocioso")]:
             res[melhor] = c

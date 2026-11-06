@@ -99,6 +99,19 @@ def main():
                     pass
     prev = e.get("estado")
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora, pane=pane)
+    agents = [a for a in e.get("agents") or [] if a != d.get("agent_id")] if ev == "SubagentStop" else list(e.get("agents") or [])
+    if ev == "SubagentStart" and d.get("agent_id"):
+        agents.append(d["agent_id"])
+    e["agents"] = agents
+    if ev in ("SubagentStart", "SubagentStop"):
+        e["ts"] = agora     # running subagents are tracked in e["agents"]; the color is derived from it
+        SESSOES.mkdir(parents=True, exist_ok=True)
+        tmp = arq.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(e))
+        os.replace(tmp, arq)
+        return
+    if ev in ("SessionStart", "UserPromptSubmit"):
+        e["agents"] = []    # a new prompt/session starts clean: a lost SubagentStop cannot stick
     if ev == "SessionStart":
         e.update(estado="ocioso", ferramenta=None)
     elif ev == "Stop":      # turn ended with text in the session: red until the next prompt
@@ -110,9 +123,8 @@ def main():
     elif d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
         # subagent tools share the parent's session id: the session is waiting on an agent
         # (green), not on a long-running command (yellow), and must not mask a pending question.
-        # A red that only came from Stop is not a question: background subagents outlive the turn.
-        if e.get("estado") != "pergunta" or e.get("stopped"):
-            e.update(estado="trabalha", ferramenta=None, stopped=False)
+        if e.get("estado") != "pergunta":
+            e.update(estado="trabalha", ferramenta=None)
     elif ev == "PreToolUse":
         e.update(estado="trabalha", ferramenta=d.get("tool_name"), ferr_ts=agora)
     elif ev in ("PostToolUse", "PostToolUseFailure"):

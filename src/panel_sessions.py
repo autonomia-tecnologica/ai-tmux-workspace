@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sessões salvas do Claude Code para o repo da janela (histórico, como no Orca):
+"""Sessões salvas do Claude Code para o repo da janela (histórico):
 título, última fala do agente, nº de mensagens, quando, modelo. Enter retoma a sessão."""
 import json
 import os

@@ -4,7 +4,7 @@ Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma 
 
 **Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles` e `groups`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
 
-tmux no estilo do Orca para os repos de `groups` do settings.json. Comando: `workspace` (abre `claude --settings …/settings.claude.json`) ou
+tmux para os repos de `groups` do settings.json. Comando: `workspace` (abre `claude --settings …/settings.claude.json`) ou
 `workspace deepseek` (idem com `settings.deepseek.json`); os perfis estão em `profiles` do settings.json. Cada perfil tem o seu
 servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
 

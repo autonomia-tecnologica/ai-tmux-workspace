@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mudanças atuais do repo da janela (como a aba de controle de código do Orca):
+"""Mudanças atuais do repo da janela (aba de controle de código):
 branch, total +/-, e a lista de arquivos alterados com +linhas/-linhas e status."""
 import os
 import shlex

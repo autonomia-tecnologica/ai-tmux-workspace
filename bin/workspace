@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# workspace — tmux estilo Orca para os repos de settings.json (~/.config/ai-tmux-workspace/).
+# workspace — tmux para os repos de settings.json (~/.config/ai-tmux-workspace/).
 #   workspace [perfil]        abre (ou reanexa) o workspace; perfil em settings.json (padrão: claude)
 #   workspace install         links `workspace` into ~/.local/bin
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
