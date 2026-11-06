@@ -20,6 +20,7 @@
   "tasks.typo": "id {ids} >= próximo id (erro de digitação?)",
   "tasks.confirm": "Mandar pro terminal: \"{msg}\" (y/n)",
   "prompt.tasks.ready": "Implemente a fatia {id} do BACKLOG.md (use o subagente implementador).",
+  "prompt.tasks.blocked": "Mande a fatia {id} do BACKLOG.md junto com todas as dependências dela.",
   "prompt.tasks.refine": "Vamos refinar o item {id} do BACKLOG.md.",
   "prompt.tasks.validate": "O que preciso validar no item {id} do BACKLOG.md?",
   "sessions.title": "SESSÕES",

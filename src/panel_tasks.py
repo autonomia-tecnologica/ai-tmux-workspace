@@ -104,10 +104,12 @@ def collect(v):
 
 def enter(v, key, k):
     path = key[1]
-    if key[3] in ("blocked", "cycle"):      # never dispatched while a dependency is open
+    if key[3] == "cycle":      # invalid until the cycle is undone
         return
-    # ready -> implement; to validate -> ask what to check; anything else (to refine, paused) -> refine
-    msg = i18n.t("prompt.tasks." + {"ready": "ready", "validate": "validate"}.get(key[3], "refine"), id=key[2])
+    # ready -> implement; blocked -> implement its open dependencies first; to validate -> ask what to
+    # check; anything else (to refine, paused) -> refine
+    kinds = {"ready": "ready", "blocked": "blocked", "validate": "validate"}
+    msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
     send = " ".join(shlex.quote(a) for a in (str(lib.BASE / "bin" / "workspace"), "send", path, msg))
     # tmux command string: double quotes, with \\ " $ escaped and # doubled (format expansion)
     tq = '"' + send.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##") + '"'
