@@ -27,6 +27,7 @@
   "wheel.keys": "↑↓ move · Enter ou 1-9 digita no Claude · Esc fecha",
   "wheel.empty": "nenhum prompt: adicione \"prompts\" no settings.json",
   "prompt.wheel.clear_session": "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos?",
+  "prompt.wheel.questions": "Você me enviou muito texto. Tem alguma dúvida? Se sim, me pergunte com enquetes individuais, com a pergunta direto na enquete.",
   "sessions.title": "SESSÕES",
   "sessions.header": "{n} salvas · Enter retoma",
   "sessions.untitled": "(sem título)",
