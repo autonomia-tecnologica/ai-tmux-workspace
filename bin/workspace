@@ -32,9 +32,68 @@ col_w() { # $1=left|right  $2=window width
 # Terminal height: 17% of the Claude pane plus the 1 line the terminal tab strip takes back.
 term_h() { echo $(( ($(tmux display -p -t "$1" '#{window_height}') - 2) * 17 / 100 + 1 )); }
 
+# Repo pane tree, in creation order (the order decides how much room each split takes).
+# One line per pane: role|parent|split|size|command. The claude pane is the window itself (not in the tree).
+#   split: v (stacked) | h (side by side); b = before the parent; f = full (window height/width)
+#   size: lines, N%, or TERM / LEFT / RIGHT (computed at build time); empty = half of the parent
+#   command: shell (plain shell, restarted at its final size), laco:<panel>, tabs:<strip>
+REPO_TREE='tabs|claude|vb|2|tabs:claude
+terminal|claude|v|TERM|shell
+ttabs|terminal|vb|1|tabs:terminal
+repos|claude|hbf|LEFT|laco:repos
+tasks|repos|v|50%|laco:tasks
+rtabs|repos|vb|2|tabs:repos
+ktabs|tasks|vb|1|tabs:tasks
+direita|claude|hf|RIGHT|laco:tree
+dtabs|direita|vb|2|tabs:side'
+
+# Pane with a given role in a window. "terminal" also matches the temporary "ttmp N" tab standing in for it.
+pane_with_role() { # $1=janela $2=papel
+  tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' |
+    awk -F'|' -v r="$2" '$2==r || (r=="terminal" && $2 ~ /^ttmp /){print $1; exit}'
+}
+
+# Creates, in tree order, the panes the window lacks (a role already present is skipped, and so is a missing parent).
+# Does not apply the final sizes: the caller decides (construir does not, ensure_window calls fit_window).
+build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
+  local W="$1" path="$2" tree="$3" role parent split size cmd anchor P larg id dir sh shells=""
+  local opts hfix=""
+  P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
+  larg="$(tmux display -p -t "$W" '#{window_width}')"
+  while IFS='|' read -r role parent split size cmd; do
+    case "$role" in ''|\#*) continue ;; esac
+    [ -n "$(pane_with_role "$W" "$role")" ] && continue
+    anchor="$(pane_with_role "$W" "$parent")"; [ -n "$anchor" ] || continue
+    case "$size" in
+      TERM) size="$(term_h "$P")" ;;
+      LEFT) size="$(col_w left "$larg")" ;;
+      RIGHT) size="$(col_w right "$larg")" ;;
+    esac
+    dir=-v; case "$split" in h*) dir=-h ;; esac
+    opts=(-d "$dir")
+    case "$split" in *b*) opts+=(-b) ;; esac
+    case "$split" in *f*) opts+=(-f) ;; esac
+    [ -n "$size" ] && opts+=(-l "$size")
+    sh=""
+    case "$cmd" in laco:*) sh="$(laco "${cmd#laco:}")" ;; tabs:*) sh="$(laco tabs "${cmd#tabs:}")" ;; esac
+    if [ -n "$sh" ]; then
+      id="$(tmux split-window "${opts[@]}" -t "$anchor" -c "$path" -P -F '#{pane_id}' "$sh")"
+    else
+      id="$(tmux split-window "${opts[@]}" -t "$anchor" -c "$path" -P -F '#{pane_id}')"
+    fi
+    tmux set -p -t "$id" @papel "$role"
+    case "$split" in h*) [ -n "$size" ] && hfix="$hfix $id:$size" ;; esac
+    [ "$cmd" = shell ] && shells="$shells $id"
+  done <<<"$tree"
+  # side columns get their exact width once all splits exist (a later split can shrink them)
+  for x in $hfix; do tmux resize-pane -t "${x%%:*}" -x "${x#*:}"; done
+  # shell panes start only now, at their final size (no stray "%")
+  for id in $shells; do tmux respawn-pane -k -t "$id" -c "$path"; done
+}
+
 # Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   ~22% : rest : ~19% (clamped)
 construir() { # $1=caminho  $2=-d (não selecionar)
-  local path="$1" d="${2:-}" S nome W P larg L Rw Rr term repos tasks cmd strip
+  local path="$1" d="${2:-}" S nome W P cmd T
   S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S")"
   nome="$(basename "$path")"
   W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
@@ -42,30 +101,11 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_perfil "$S"
   tmux set -p -t "$P" @papel claude
   tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2
-  strip="$(tmux split-window -v -b -l 2 -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tabs claude)")"
-  tmux set -p -t "$strip" @papel tabs
-  larg="$(tmux display -p -t "$W" '#{window_width}')"
-  L="$(col_w left "$larg")"; Rw="$(col_w right "$larg")"
-  term="$(tmux split-window -v -l "$(term_h "$P")" -t "$P" -c "$path" -P -F '#{pane_id}')"
-  tmux set -p -t "$term" @papel terminal
-  tmux set -w -t "$W" @ws_ttabs "$term"; tmux set -w -t "$W" @ws_tativo "$term"; tmux set -w -t "$W" @ws_tnext 2
-  strip="$(tmux split-window -v -b -l 1 -t "$term" -c "$path" -P -F '#{pane_id}' "$(laco tabs terminal)")"
-  tmux set -p -t "$strip" @papel ttabs
-  repos="$(tmux split-window -h -b -f -l "$L" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco repos)")"
-  tmux set -p -t "$repos" @papel repos
-  tasks="$(tmux split-window -v -l 50% -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")"
-  tmux set -p -t "$tasks" @papel tasks
-  # every panel gets a 1-line top bar (panel_tabs.py): REPOS and TASKS are title-only
-  tmux set -p -t "$(tmux split-window -v -b -l 2 -t "$repos" -c "$path" -P -F '#{pane_id}' "$(laco tabs repos)")" @papel rtabs
-  tmux set -p -t "$(tmux split-window -v -b -l 1 -t "$tasks" -c "$path" -P -F '#{pane_id}' "$(laco tabs tasks)")" @papel ktabs
-  Rr="$(tmux split-window -h -f -l "$Rw" -t "$P" -c "$path" -P -F '#{pane_id}' "$(laco tree)")"
-  tmux set -p -t "$Rr" @papel direita
-  strip="$(tmux split-window -v -b -l 2 -t "$Rr" -c "$path" -P -F '#{pane_id}' "$(laco tabs side)")"
-  tmux set -p -t "$strip" @papel dtabs
+  build_tree "$W" "$path" "$REPO_TREE"
+  T="$(pane_with_role "$W" terminal)"
+  tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
   tmux send-keys -t "$P" "$cmd --continue || $cmd" Enter
-  tmux resize-pane -t "$repos" -x "$L"; tmux resize-pane -t "$Rr" -x "$Rw"
-  tmux respawn-pane -k -t "$term" -c "$path"   # shell starts only now, at its final size (no stray "%")
   tmux select-pane -t "$P"
 }
 
@@ -276,44 +316,19 @@ fit_window() { # $1=window
   id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
 }
 
-# Confere uma janela já aberta e cria o que falta (tira de abas, repos, lateral, terminal), sem
-# mexer no que existe. Mudança estrutural nova entra aqui, e o `reload` resolve sem restart.
+# Checks an open window and creates what is missing (tab strips, repos, side, terminal) without touching
+# what exists. New structural changes go in REPO_TREE, and `reload` applies them without a restart.
 ensure_window() { # $1=janela $2=caminho do repo
-  local W="$1" path="$2" P larg roles
-  P="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1; exit}')"
-  [ -n "$P" ] || return 0
-  roles="$(tmux list-panes -t "$W" -F '#{@papel}')"
-  larg="$(tmux display -p -t "$W" '#{window_width}')"
-  has() { grep -qxF "$1" <<<"$roles"; }
-  mk() { # $1=papel $2...=args do split-window; o último é o comando
-    local role="$1" id; shift
-    id="$(tmux split-window -d -t "$P" -c "$path" -P -F "#{pane_id}" "$@")" && tmux set -p -t "$id" @papel "$role"
-    echo "$id"
-  }
+  local W="$1" path="$2" P T
+  P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
   [ -n "$(tmux show -wqv -t "$W" @ws_tabs)" ] || {
     tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
-  has tabs || mk tabs -v -b -l 2 "$(laco tabs claude)" >/dev/null
-  # the visible terminal can be a temporary tab ("ttmp N", the main one swapped out to the hidden window)
-  has terminal || grep -qE '^ttmp ' <<<"$roles" || mk terminal -v -l "$(term_h "$P")" >/dev/null
-  local T; T="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="terminal" || $2 ~ /^ttmp /{print $1; exit}')"
+  build_tree "$W" "$path" "$REPO_TREE"
+  T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && {
     [ -n "$(tmux show -wqv -t "$W" @ws_ttabs)" ] || {
       tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2; }
-    has ttabs || tmux set -p -t "$(tmux split-window -d -v -b -l 1 -t "$T" -c "$path" -P -F '#{pane_id}' "$(laco tabs terminal)")" @papel ttabs
   }
-  has repos || tmux resize-pane -x "$(col_w left "$larg")" -t "$(mk repos -h -b -f -l "$(col_w left "$larg")" "$(laco repos)")"
-  has tasks || {
-    local rp; rp="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1; exit}')"
-    [ -n "$rp" ] && tmux set -p -t "$(tmux split-window -d -v -l 50% -t "$rp" -c "$path" -P -F '#{pane_id}' "$(laco tasks)")" @papel tasks
-  }
-  has direita || tmux resize-pane -x "$(col_w right "$larg")" -t "$(mk direita -h -f -l "$(col_w right "$larg")" "$(laco tree)")"
-  local R2 K2
-  R2="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1; exit}')"
-  K2="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="tasks"{print $1; exit}')"
-  [ -n "$R2" ] && { has rtabs || tmux set -p -t "$(tmux split-window -d -v -b -l 2 -t "$R2" -c "$path" -P -F '#{pane_id}' "$(laco tabs repos)")" @papel rtabs; }
-  [ -n "$K2" ] && { has ktabs || tmux set -p -t "$(tmux split-window -d -v -b -l 1 -t "$K2" -c "$path" -P -F '#{pane_id}' "$(laco tabs tasks)")" @papel ktabs; }
-  local D; D="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1; exit}')"
-  [ -n "$D" ] && { has dtabs || tmux set -p -t "$(tmux split-window -d -v -b -l 2 -t "$D" -c "$path" -P -F '#{pane_id}' "$(laco tabs side)")" @papel dtabs; }
   fit_window "$W"
 }
 
