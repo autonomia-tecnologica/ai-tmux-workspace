@@ -53,9 +53,9 @@ def coletar(v):
     est = lib.estados_por_repo(grupos + ([("", [principal])] if principal else []))
     cab = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
     corpo = []
-    if principal:   # main repo: outside the groups, always on top, green (blue when it is this window's repo)
+    if principal:   # main repo: outside the groups, always on top, bold in the default foreground (blue when it is this window's repo)
         rnome, p = principal
-        cor = AZUL if p == ATUAL else VERDE
+        cor = AZUL if p == ATUAL else ""
         corpo.append(Linha(f" {BOLA[est.get(p, 'ocioso')]} {cor}{B}{rnome}{R} {icone_git(p)}", ("r", p)))
     for nome, repos in grupos:
         seta = "▸" if nome in col else "▾"
