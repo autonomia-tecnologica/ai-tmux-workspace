@@ -167,23 +167,23 @@ def _copied(path):
         return None
 
 
-def copy_selected(v):
-    """`y`: puts the selected file on the clipboard as a file, to paste elsewhere."""
-    if not v.chave or v.chave[0] != "f":
-        msg = t("tree.copy_pick_file")
-    elif _copied(v.chave[1]):
-        msg = t("tree.copied", name=os.path.basename(v.chave[1]))
+def copiar(v, chave):
+    """Puts the file on the clipboard as a file, to paste elsewhere. Only files reach here (see acoes)."""
+    if _copied(chave[1]):
+        msg = t("tree.copied", name=os.path.basename(chave[1]))
     else:
         msg = t("tree.copy_failed")
     subprocess.run(["tmux", "display-message", "-d", "2000", msg], check=False, stdin=subprocess.DEVNULL,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def acoes(v, chave):
+    """Context menu (Espaço or right click). On a folder the action is shown but unavailable."""
+    return [(t("tree.menu_copy"), chave[0] == "f", copiar)]
+
+
 def on_key(v, k):
-    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder). `y` copies the file."""
-    if k == "y":
-        copy_selected(v)
-        return
+    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
     if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave:
         return
     tipo, caminho = v.chave
@@ -200,4 +200,5 @@ def on_key(v, k):
 
 
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO), rodape=footer).rodar()
+    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO), rodape=footer,
+           acoes=acoes).rodar()

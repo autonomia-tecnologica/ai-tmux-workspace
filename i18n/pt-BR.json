@@ -5,7 +5,7 @@
   "tabs.tasks": "TAREFAS",
   "tabs.tree": "ARQUIVOS",
   "tree.copied": "{name} copiado: cole (Ctrl+V) onde precisar",
-  "tree.copy_pick_file": "selecione um arquivo para copiar",
+  "tree.menu_copy": "Copiar arquivo",
   "tree.copy_failed": "não consegui copiar: instale wl-copy (Wayland) ou xclip (X11)",
   "tabs.sessions": "SESSÕES",
   "tabs.diff": "DIFF",

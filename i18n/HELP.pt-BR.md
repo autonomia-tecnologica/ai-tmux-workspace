@@ -91,7 +91,7 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam p
 
 Clique na aba, ou foque a barra (`ctrl+b ↑`) e use ←→ + Enter.
 
-- **ARQUIVOS**: árvore do repo. Enter abre/fecha pasta ou abre o arquivo no nvim (mídia e documentos abrem no programa padrão do sistema). `y` copia o arquivo selecionado para o clipboard como arquivo: é só colar (Ctrl+V) em chat, e-mail, upload etc., sem abrir o Finder. Segue o `cd` do terminal ativo. Amarelo = modificado, verde = novo.
+- **ARQUIVOS**: árvore do repo. Enter abre/fecha pasta ou abre o arquivo no nvim (mídia e documentos abrem no programa padrão do sistema). Espaço (ou clique direito) abre o menu; "Copiar arquivo" copia o arquivo selecionado para o clipboard como arquivo: é só colar (Ctrl+V) em chat, e-mail, upload etc., sem abrir o Finder. Segue o `cd` do terminal ativo. Amarelo = modificado, verde = novo.
 - **DIFF**: branch, `+/-` totais e arquivos mudados (`U` novo verde, `M` modificado amarelo, `D` apagado vermelho). Enter abre o diff (ou o arquivo novo) num popup; `q` fecha.
 - **GITHUB**: via `gh`: repo, PR da branch com checks, PRs, issues, CI, release. Enter abre no navegador.
 
