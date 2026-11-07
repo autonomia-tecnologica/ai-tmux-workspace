@@ -14,6 +14,7 @@ BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 AQUI="$(dirname "$BIN")"        # raiz do repo
 SRC="$AQUI/src"
 export WS_DIR="$AQUI"
+MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
 perfil_cmd() { python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_config().get('profiles',{}).get(sys.argv[1],''))" "$1"; }
@@ -26,6 +27,7 @@ laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|t
 col_w() { # $1=left|right  $2=window width
   local pct min max w
   case "$1" in left) pct=22 min=28 max=44;; *) pct=19 min=24 max=44;; esac
+  [ "$2" -lt "$MOBILE_W" ] && min=8   # phone: side panes are never seen side by side (zoomed one at a time)
   w=$(( $2 * pct / 100 )); [ "$w" -lt "$min" ] && w=$min; [ "$w" -gt "$max" ] && w=$max
   echo "$w"
 }
@@ -107,6 +109,7 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
   tmux send-keys -t "$P" "$cmd --continue || $cmd" Enter
   tmux select-pane -t "$P"
+  mobile_apply "$W"
 }
 
 # --- Abas temporárias (Claude e terminal) -----------------------------------------------------
@@ -163,6 +166,8 @@ tab_show() { # $1=janela $2=painel da aba
   fi
   tmux select-pane -t "$T"
   tab_render "$W" "$kind"
+  tmux set -w -t "$W" @ws_mview "$([ "$kind" = t ] && echo terminal || echo claude)"
+  mobile_apply "$W"
 }
 
 tab_new() { # $1=janela $2=papel do painel em foco (define o tipo; padrão Claude)
@@ -323,11 +328,81 @@ panels() { # $1=perfil (padrão: claude)
   return 0
 }
 
+# --- Phone layout --------------------------------------------------------------------------------
+# On a narrow window (portrait phone) the window shows ONE pane at a time (tmux zoom): Claude by default,
+# and the hamburger menu (status bar, or ctrl+b m) picks the view. State: window option @ws_mview.
+is_mobile() { [ "$(tmux display -p -t "$1" '#{window_width}')" -lt "$MOBILE_W" ]; }
+
+mview_target() { # $1=window $2=claude|terminal|repos|tasks|side -> pane id
+  local W="$1" p=""
+  case "$2" in
+    claude) p="$(tmux show -wqv -t "$W" @ws_ativo)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" claude)" ;;
+    terminal) p="$(tmux show -wqv -t "$W" @ws_tativo)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" terminal)" ;;
+    repos) p="$(pane_with_role "$W" repos)" ;;
+    tasks) p="$(pane_with_role "$W" tasks)" ;;
+    side) p="$(pane_with_role "$W" direita)" ;;
+  esac
+  echo "$p"
+}
+
+# Idempotent: zooms the current view on a narrow window, undoes our zoom on a wide one.
+mobile_apply() { # $1=window
+  local W="$1" view target
+  [ -n "$(tmux show -wqv -t "$W" @ws_repo)" ] || return 0   # plugin windows keep their own layout
+  if ! is_mobile "$W"; then
+    if [ "$(tmux show -wqv -t "$W" @ws_mzoom)" = 1 ]; then
+      [ "$(tmux display -p -t "$W" '#{window_zoomed_flag}')" = 1 ] && tmux resize-pane -Z -t "$W"
+      tmux set -wu -t "$W" @ws_mzoom
+    fi
+    return 0
+  fi
+  view="$(tmux show -wqv -t "$W" @ws_mview)"; view="${view:-claude}"
+  target="$(mview_target "$W" "$view")"; [ -n "$target" ] || return 0
+  tmux set -w -t "$W" @ws_mzoom 1
+  if [ "$(tmux display -p -t "$W" '#{window_zoomed_flag}')" = 1 ]; then
+    tmux select-pane -Z -t "$target"
+  else
+    tmux select-pane -t "$target"; tmux resize-pane -Z -t "$target"
+  fi
+}
+
+mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tree|diff|github)
+  local W="$1"
+  case "$2" in
+    repos) [ -n "${3:-}" ] && left "$3" "$W" ;;
+    side) [ -n "${3:-}" ] && side "$3" "$W" ;;
+  esac
+  tmux set -w -t "$W" @ws_mview "$2"
+  mobile_apply "$W"
+  return 0
+}
+
+# Hamburger menu (labels are the @t_menu_* i18n options, expanded by tmux).
+menu() { # $1=client $2=window
+  local C="$1" W="$2" w="$BIN/workspace"
+  tmux display-menu -c "$C" -T '#{@t_menu_title}' -x C -y C \
+    '#{@t_menu_claude}' c "run-shell -b \"$w mview $W claude\"" \
+    '#{@t_menu_terminal}' t "run-shell -b \"$w mview $W terminal\"" \
+    '' \
+    '#{@t_menu_repos}' r "run-shell -b \"$w mview $W repos repos\"" \
+    '#{@t_menu_sessions}' s "run-shell -b \"$w mview $W repos sessions\"" \
+    '#{@t_menu_tasks}' k "run-shell -b \"$w mview $W tasks\"" \
+    '#{@t_menu_tree}' f "run-shell -b \"$w mview $W side tree\"" \
+    '#{@t_menu_diff}' d "run-shell -b \"$w mview $W side diff\"" \
+    '#{@t_menu_github}' g "run-shell -b \"$w mview $W side github\"" \
+    '' \
+    '#{@t_menu_tab_new}' n "run-shell -b \"$w tab-new $W claude\"" \
+    '#{@t_menu_tab_next}' p "run-shell -b \"$w tab-step $W 1 claude\"" \
+    '#{@t_menu_tterm_new}' N "run-shell -b \"$w tab-new $W terminal\"" \
+    '#{@t_menu_tterm_next}' P "run-shell -b \"$w tab-step $W 1 terminal\""
+}
+
 # Re-applies only the pane sizes of one window (cheap; used by ensure_window and the tmux hooks).
 fit_window() { # $1=window
   local W="$1" P larg id
   P="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1; exit}')"
   [ -n "$P" ] || return 0
+  if is_mobile "$W"; then mobile_apply "$W"; return 0; fi
   larg="$(tmux display -p -t "$W" '#{window_width}')"
   role_pane() { tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$1" '$2==r{print $1; exit}'; }
   id="$(role_pane repos)";    [ -n "$id" ] && tmux resize-pane -t "$id" -x "$(col_w left "$larg")"
@@ -338,6 +413,7 @@ fit_window() { # $1=window
   id="$(role_pane dtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
   id="$(role_pane rtabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 2
   id="$(role_pane ktabs)";    [ -n "$id" ] && tmux resize-pane -t "$id" -y 1
+  mobile_apply "$W"   # wide window: undoes the phone zoom, if any
 }
 
 # Plugin windows: the plugins listed in settings.json ("plugins" por perfil), one window "plugin:<id>" each.
@@ -483,6 +559,8 @@ case "${1:-}" in
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;
   fit) shift; fit "$@" ;;
+  mview) shift; mview "$@" ;;
+  menu) menu "$2" "$3" ;;
   ""|-*) iniciar claude ;;
   *) iniciar "$1" ;;
 esac
