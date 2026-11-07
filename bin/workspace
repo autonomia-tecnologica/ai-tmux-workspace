@@ -107,7 +107,8 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   T="$(pane_with_role "$W" terminal)"
   tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
-  tmux send-keys -t "$P" "$cmd --continue || $cmd" Enter
+  # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
+  tmux send-keys -t "$P" "cd ${path@Q}; $cmd --continue || $cmd" Enter
   tmux select-pane -t "$P"
   mobile_apply "$W"
 }
@@ -186,10 +187,10 @@ tab_new() { # $1=janela $2=papel do painel em foco (define o tipo; padrão Claud
     # Terminal: swap first, then start the shell at its final size (a resize while zsh starts
     # prints a stray "%"), with no typed command line either.
     tab_show "$W" "$P"
-    tmux respawn-pane -k -t "$P" -c "$path" "$cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\""
+    tmux respawn-pane -k -t "$P" -c "$path" "cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\""
     return
   fi
-  tmux send-keys -t "$P" "clear; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\"; exit" Enter
+  tmux send-keys -t "$P" "clear; cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\"; exit" Enter
   tab_show "$W" "$P"
 }
 
@@ -225,6 +226,8 @@ open_repo() {
     local foco; foco="$(tmux show -wqv -t "$ja" @ws_ativo)"
     tab_alive "$foco" 2>/dev/null || foco="$(tmux list-panes -t "$ja" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
     [ -n "$foco" ] && tmux select-pane -t "$foco"
+    tmux set -w -t "$ja" @ws_mview claude   # phone: picking a repo lands on its Claude
+    mobile_apply "$ja"
     return
   fi
   construir "$path"

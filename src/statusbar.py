@@ -235,6 +235,15 @@ def main():
         return
     repo = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
+    largura = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 999
+    if largura < 100:       # phone: repo name + every Claude tab (active one highlighted)
+        tabs = sys.argv[4].split() if len(sys.argv) > 4 else []
+        ativa = sys.argv[5] if len(sys.argv) > 5 else ""
+        marcas = "".join(
+            f" #[bg=colour208,fg=colour16,bold] {i} #[default]" if p == ativa else f" #[fg=colour250]{i}#[default]"
+            for i, p in enumerate(tabs, 1)) if len(tabs) > 1 else ""
+        print(f"#[fg=colour75,bold] {(os.path.basename(repo) or repo).replace('#', '##')}#[default]{marcas}")
+        return
     lim = limites()
     poll_extra_usage()
     usd = extra_usage_txt()

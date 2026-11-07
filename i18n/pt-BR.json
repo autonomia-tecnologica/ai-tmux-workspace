@@ -10,7 +10,7 @@
   "tabs.sessions": "SESSÕES",
   "tabs.diff": "DIFF",
   "tabs.github": "GITHUB",
-  "tmux.menu_button": "☰ MENU",
+  "tmux.menu_button": "● MENU",
   "tmux.menu_title": "WORKSPACE",
   "tmux.menu_claude": "Claude",
   "tmux.menu_terminal": "Terminal",
