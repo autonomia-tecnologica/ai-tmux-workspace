@@ -5,6 +5,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
+import glyphs
 import i18n
 import lib
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
@@ -86,7 +87,7 @@ def coletar(v):
         for r in runs:
             c = r["conclusion"] or r["status"]
             cor = VERDE if c == "success" else VERMELHO if c in ("failure", "cancelled", "timed_out") else AMARELO
-            corpo.append(Linha(f"  {cor}●{R} {r['name']} {CINZA}{r['headBranch']} · {ha(r['createdAt'])}{R}",
+            corpo.append(Linha(f"  {glyphs.ci_dot(cor)} {r['name']} {CINZA}{r['headBranch']} · {ha(r['createdAt'])}{R}",
                                ("run", r["databaseId"])))
         if not runs:
             corpo.append(Linha(f"  {DIM}{i18n.t('github.no_runs')}{R}"))

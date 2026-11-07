@@ -13,27 +13,16 @@ import json
 import subprocess
 import sys
 
+import glyphs
 import lib
 from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, VERMELHO, Linha, Viewer
 
-BOLA = {"ocioso": f"{CINZA}○{R}", "trabalha": f"{VERDE}●{R}", "espera": f"{AMARELO}●{R}",
-        "pergunta": f"{VERMELHO}●{R}"}
-GH = "\uf09b"   # nerd font: logo do GitHub
-BRANCH = "\ue725"   # nerd font: git branch
-ESMAECIDO = "\x1b[38;5;238m"
 
 
 def icone_git(repo):
     """Dois ícones, sempre presentes: branch (git local) e logo do GitHub (remoto)."""
     est, sujo = lib.estado_git(repo)
-    if est is None:                                   # sem git: os dois esmaecidos
-        return f"{ESMAECIDO}{BRANCH} {GH}{R}"
-    git = f"{AMARELO}{BRANCH}{R}" if sujo else BRANCH
-    if est == "local":
-        remoto = f"{ESMAECIDO}{GH}{R}"
-    else:
-        remoto = f"{AMARELO}{GH}{R}" if est == "dessinc" else GH
-    return f"{git} {remoto}"
+    return glyphs.git_icons(est, sujo)
 
 
 COLAPSADOS = lib.ESTADO / "colapsados.json"
@@ -56,18 +45,18 @@ def coletar(v):
     if principal:   # main repo: outside the groups, always on top, bold in the default foreground (blue when it is this window's repo)
         rnome, p = principal
         cor = AZUL if p == ATUAL else ""
-        corpo.append(Linha(f" {BOLA[est.get(p, 'ocioso')]} {cor}{B}{rnome}{R} {icone_git(p)}", ("r", p)))
+        corpo.append(Linha(f" {glyphs.dot(est.get(p, 'ocioso'))} {cor}{B}{rnome}{R} {icone_git(p)}", ("r", p)))
     for nome, repos in grupos:
         seta = "▸" if nome in col else "▾"
         # a bolinha do grupo fechado mostra o pior estado de dentro
         pior = max((est.get(p, "ocioso") for _, p in repos), key=lib.PRIO.get, default="ocioso")
-        marca = f" {BOLA[pior]}" if nome in col and pior != "ocioso" else ""
+        marca = f" {glyphs.dot(pior)}" if nome in col and pior != "ocioso" else ""
         corpo.append(Linha(f" {CINZA}{seta} {nome.upper()}{R}{marca}", ("g", nome)))
         if nome in col:
             continue
         for rnome, p in repos:
             sel = f"{AZUL}{B}" if p == ATUAL else ""
-            corpo.append(Linha(f"   {BOLA[est.get(p, 'ocioso')]} {sel}{rnome}{R} {icone_git(p)}", ("r", p)))
+            corpo.append(Linha(f"   {glyphs.dot(est.get(p, 'ocioso'))} {sel}{rnome}{R} {icone_git(p)}", ("r", p)))
     return cab, corpo
 
 

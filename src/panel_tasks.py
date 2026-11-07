@@ -11,6 +11,7 @@ import subprocess
 import textwrap
 
 import backlog
+import glyphs
 import i18n
 import lib
 from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer
@@ -21,8 +22,6 @@ def t(key, **kw):
     return i18n.t(f"tasks.{key}", **kw)
 
 
-MARK = {"ready": f"{VERDE}●{R}", "refine": f"{CINZA}○{R}", "paused": f"{DIM}◌{R}",
-        "blocked": f"{AMARELO}⊘{R}", "validate": f"{AMARELO}◆{R}", "cycle": f"\x1b[31m✖{R}"}
 
 
 def effective(i):
@@ -80,7 +79,7 @@ def collect(v):
                 room = cols - len(counts) - 7
                 if len(name) > room:
                     name = name[:max(1, room - 1)].rstrip() + "…"
-                body.append(Linha(f" {DIM}{'▾' if opened else '▸'}{R} {B}{name}{R} {DIM}({counts}){R}",
+                body.append(Linha(f" {DIM}{glyphs.arrow(opened)}{R} {B}{name}{R} {DIM}({counts}){R}",
                                   ("g", CURRENT, cat)))
                 continue
             _, i, par, last, kids = row
@@ -92,10 +91,10 @@ def collect(v):
             deps = ", ".join(map(str, i["deps"]))
             dep = f" ←{deps}" if len(i["deps"]) > 1 or (i["deps"] and par is None) else ""
             if i["typo"] or i["cross"]:
-                dep += " ⚠"
-            pad = len(lead) + 5 + len(str(i["id"]))         # "<lead>▸ ● 12 "
+                dep += f" {glyphs.warn()}"
+            pad = len(lead) + 5 + len(str(i["id"]))   # "<lead>▸ ● 12 "
             opened = i["id"] in OPEN
-            first = f"{DIM}{lead}{'▾' if opened else '▸'}{R} {MARK[st]} {DIM}{i['id']}{R} "
+            first = f"{DIM}{lead}{glyphs.arrow(opened)}{R} {glyphs.task_mark(st)} {DIM}{i['id']}{R} "
             if not opened:
                 title = i["title"]
                 room = cols - pad - len(dep) - 1
@@ -113,11 +112,11 @@ def collect(v):
             if i["deps"]:
                 body.append(Linha(f"{ind}{DIM}←{deps}{R}", cont=True))
             if i["cycle"]:
-                body.append(Linha(f"{ind}\x1b[31m✖ {t('cycle')}{R}", cont=True))
+                body.append(Linha(f"{ind}{glyphs.cross()} {t('cycle')}{R}", cont=True))
             if i["cross"]:
-                body.append(Linha(f"{ind}{AMARELO}⚠ {t('cross', ids=', '.join(map(str, i['cross'])))}{R}", cont=True))
+                body.append(Linha(f"{ind}{AMARELO}{glyphs.warn()} {t('cross', ids=', '.join(map(str, i['cross'])))}{R}", cont=True))
             if i["typo"]:
-                body.append(Linha(f"{ind}{AMARELO}⚠ {t('typo', ids=', '.join(map(str, i['typo'])))}{R}", cont=True))
+                body.append(Linha(f"{ind}{AMARELO}{glyphs.warn()} {t('typo', ids=', '.join(map(str, i['typo'])))}{R}", cont=True))
             for n, ln in enumerate(textwrap.wrap(i["accept"], width - 2) if i["accept"] else []):
                 body.append(Linha(f"{ind}{DIM}{'✓ ' if not n else '  '}{ln}{R}", cont=True))
     return head, body

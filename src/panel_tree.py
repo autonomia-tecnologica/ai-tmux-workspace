@@ -6,6 +6,7 @@ import shutil
 import subprocess
 
 import clipboard
+import glyphs
 import icons
 import lib
 from i18n import t
@@ -116,17 +117,17 @@ def coletar(v):
             ind = "  " * nivel
             if e.is_dir(follow_symlinks=False):
                 aberta = e.path in ABERTAS
-                mark = f" {AMARELO}•{R}" if e.path in sujos else ""
-                ic = icons.dir_icon(aberta, e.name in ign) if USE_ICONS else ""
+                mark = f" {glyphs.dirty_mark()}" if e.path in sujos else ""
+                ic = glyphs.dir_icon(aberta, e.name in ign) if USE_ICONS else ""
                 nome = f"{DIM}{e.name}/{R}" if e.name in ign else f"{AZUL}{e.name}/{R}"
-                corpo.append(Linha(f" {ind}{CINZA}{'▾' if aberta else '▸'}{R} {ic}{nome}{mark}",
+                corpo.append(Linha(f" {ind}{CINZA}{glyphs.arrow(aberta)}{R} {ic}{nome}{mark}",
                                    ("d", e.path)))
                 if aberta:
                     descer(e.path, nivel + 1, e.name in ign)
             else:
                 s = st.get(e.path)
                 cor = DIM if e.name in ign else "" if not s else (VERDE if s.strip() in ("??", "A") else AMARELO)
-                ic = icons.file_icon(e.name, e.name in ign) if USE_ICONS else ""
+                ic = glyphs.file_icon(e.name, e.name in ign) if USE_ICONS else ""
                 corpo.append(Linha(f" {ind}  {ic}{cor}{e.name}{R}", ("f", e.path)))
 
     descer(REPO, 0)

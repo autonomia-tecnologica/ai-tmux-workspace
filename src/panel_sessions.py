@@ -7,12 +7,11 @@ import re
 import subprocess
 import time
 
+import glyphs
 import i18n
 import lib
 from viewer import AMARELO, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
-BOLA = {"ocioso": f"{CINZA}○{R}", "trabalha": f"{VERDE}●{R}", "espera": f"{AMARELO}●{R}",
-        "pergunta": f"{VERMELHO}●{R}"}
 
 CACHE = {}
 
@@ -116,7 +115,7 @@ def coletar(v):
                 corpo.append(Linha(f" {CINZA}{rnome.upper()}{R}"))
                 rnome = None
             k = (e["pane"], rpath)
-            corpo.append(Linha(f" {BOLA[cor]} {B}{d['titulo']}{R}", k))
+            corpo.append(Linha(f" {glyphs.dot(cor)} {B}{d['titulo']}{R}", k))
             corpo.append(Linha(f"   {CINZA}{i18n.t('sessions.agent')}{R} {DIM}{d['ultima']}{R}", cont=True))
             corpo.append(Linha(f"   {CINZA}{i18n.t('sessions.msgs', n=d['n'])} · {d['modelo']}{R}", cont=True))
             tipos = e.get("agent_types") or {}
