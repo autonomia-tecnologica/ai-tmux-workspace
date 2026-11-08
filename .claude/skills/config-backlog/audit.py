@@ -15,7 +15,8 @@ import backlog  # noqa: E402
 import lib  # noqa: E402
 
 LEGACY = ["TODO.md", "TODOS.md", "docs/BACKLOG.md", "docs/TODO.md", "ROADMAP.md", "docs/ROADMAP.md", "TASKS.md"]
-FIELDS = {"Categoria", "Arquivos", "Depende de", "Aceite", "Validação"}
+FIELDS = {"Categoria", "Caminhos", "Depende de", "Aceite", "Validação"}
+FIELD_ALIASES = {"Arquivos": "Caminhos"}  # legacy name, accepted during the transition
 VALIDATE_FIELDS = {"Categoria", "Conferir", "Como", "Decide"}
 
 
@@ -46,7 +47,7 @@ def format_problems(text):
             continue
         n = int(m.group(1))
         ids.append(n)
-        have = set(re.findall(r"^- ([^:\n]+):", b, re.M))
+        have = {FIELD_ALIASES.get(f, f) for f in re.findall(r"^- ([^:\n]+):", b, re.M)}
         need = VALIDATE_FIELDS if section == "a validar" else FIELDS
         if have & need != need:
             problems.append(f"item {n}: missing {sorted(need - have)}")

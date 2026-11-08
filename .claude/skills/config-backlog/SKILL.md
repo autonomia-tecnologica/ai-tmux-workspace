@@ -17,7 +17,7 @@ applies it. Arguments (optional): repo names or paths to restrict the run; none 
    applies to every repo, even one without a backlog.
 3. Format: `Próximo id: N` at the top; the three sections `## Refinadas`, `## A refinar`,
    `## A validar` in that order; items `### N. Title` starting with the mandatory `- Categoria: X` field, then the four fields
-   (`A validar` items use `Conferir`/`Como`/`Decide`); items are grouped by category and
+   (`Caminhos`, `Depende de`, `Aceite`, `Validação`; `Arquivos` is a legacy alias for `Caminhos`; `A validar` items use `Conferir`/`Como`/`Decide`); items are grouped by category and
    categories never depend on each other (a `Depende de` id in another category is invalid); unique, incremental integer ids; no dependency cycles; item ~15 lines.
 4. A repo without a `BACKLOG.md` has no tasks: never create an empty one.
 
