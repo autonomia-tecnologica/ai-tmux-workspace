@@ -176,10 +176,10 @@ def acoes(v, chave):
 
 def on_key(v, k):
     """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
-    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave:
+    if k not in ("left", "right") or not v.chave:
         return
     tipo, caminho = v.chave
-    if k in ("\x1b[C", "\x1bOC"):
+    if k == "right":
         if tipo == "d":
             ABERTAS.add(caminho)
     elif tipo == "d" and caminho in ABERTAS:

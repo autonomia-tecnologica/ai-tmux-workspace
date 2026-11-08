@@ -147,10 +147,10 @@ def enter(v, key, k):
 
 def on_key(v, k):
     """Right expands the item or category under the cursor, Left collapses it (like the files tree)."""
-    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] not in ("i", "g"):
+    if k not in ("left", "right") or not v.chave or v.chave[0] not in ("i", "g"):
         return
     target = OPEN_GROUPS if v.chave[0] == "g" else OPEN
-    (target.add if k in ("\x1b[C", "\x1bOC") else target.discard)(v.chave[2])
+    (target.add if k == "right" else target.discard)(v.chave[2])
     v.recoletar.set()
 
 

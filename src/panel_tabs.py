@@ -19,6 +19,7 @@ import tty
 import i18n
 import lib
 import tmux
+from viewer import direcao
 
 WS =os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                   "bin", "workspace")
@@ -180,9 +181,10 @@ def main():
             buf = SGR.sub(b"", buf)
             passo = 0
             for k in re.findall(rb"\x1b[\[O][CD]|\r|\n|[hl]", buf):
-                if k in (b"\x1b[D", b"\x1bOD", b"h"):
+                d = direcao(k.decode("latin1"))
+                if d == "left":
                     passo = -1
-                elif k in (b"\x1b[C", b"\x1bOC", b"l"):
+                elif d == "right":
                     passo = 1
                 else:
                     abrir(itens[cur])

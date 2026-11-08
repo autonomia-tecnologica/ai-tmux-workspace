@@ -23,6 +23,18 @@ import i18n
 
 ANSI = re.compile(r"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
+SETA_ESQ, SETA_DIR = ("\x1b[D", "\x1bOD"), ("\x1b[C", "\x1bOC")
+
+
+def direcao(k):
+    """"left" / "right" for the arrow keys and h / l; None for any other key."""
+    if k in SETA_ESQ or k == "h":
+        return "left"
+    if k in SETA_DIR or k == "l":
+        return "right"
+    return None
+
+
 BG = "\x1b[48;5;237m"
 MENU_BG = "\x1b[48;5;239m"
 FOOTER_ROWS = 3
@@ -325,7 +337,7 @@ class Viewer:
         elif k == "\x1b[I":
             pass
         elif self.ao_tecla:
-            self.ao_tecla(self, k)
+            self.ao_tecla(self, direcao(k) or k)
 
     def _indice_em(self, linha):
         """Index in the body of the selectable row at screen row `linha` (0-based), or None."""
