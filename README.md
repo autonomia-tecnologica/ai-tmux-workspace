@@ -22,6 +22,17 @@ Proporção 2:7:3. A coluna esquerda tem os repos (metade de cima) e as tarefas 
 O repo principal (`main` no settings.json) fica fora dos grupos, sempre no topo da lista, em laranja (azul quando é o repo da janela).
 Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
+## Platforms (Windows)
+Decision: Windows is supported only through WSL2, plus the system toast notification (see Notificações). There is no tmux clone and no custom multiplexer for native Windows.
+
+Why:
+- tmux does not run on native Windows, and the whole workspace is built on it.
+- The launcher (`bin/workspace`) is a bash script.
+- `src/viewer.py` and `src/panel_tabs.py` use the POSIX terminal APIs `termios`, `tty`, `select` and `SIGWINCH`.
+- `src/statusbar.py` uses `fcntl.flock`, which is also POSIX-only.
+
+Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution.
+
 ## Bolinhas
 ○ parado · 🟢 agente/subagente trabalhando · 🟡 uma ferramenta rodando há mais de 8 s ·
 🔴 esperando você (permissão/pergunta). Vêm dos hooks do Claude Code: rode uma vez
@@ -32,7 +43,7 @@ Quando uma sessão do Claude passa a 🔴 (precisa de você), o hook dispara uma
 título = nome do repo, corpo = trecho curto (pergunta, comando pedido ou fim da última resposta). Só na
 transição para vermelho, então um pedido de permissão não notifica duas vezes. Desligue com
 `"notifications": false` no `settings.json` (padrão: ligado). Plataformas: Linux (`notify-send`), macOS
-(`osascript`), Windows nativo e WSL (toast via `powershell`, nada a instalar). Se o comando não existir, ignora.
+(`osascript`), WSL2 no Windows (toast via `powershell`, nada a instalar). Se o comando não existir, ignora.
 
 ## Extra usage na barra de status (opt-in, desligado por padrão)
 Shows the account's monthly extra usage spend next to the 5h/7d percentages, e.g. `$12.30/$50`
