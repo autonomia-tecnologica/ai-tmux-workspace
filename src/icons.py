@@ -10,9 +10,8 @@ packages at runtime (no network, no daemon), which removes the supply-chain atta
 compromised or typosquatted package, a hijacked update). A table of constants is cheap to embed
 and to review.
 
-Requires a Nerd Font in the terminal; set "icons": false in settings.json to turn it off.
+Requires a Nerd Font in the terminal; set "icons": false in config.yaml to turn it off.
 """
-import json
 import os
 
 import lib
@@ -44,11 +43,7 @@ DIR_CLOSED, DIR_OPEN = "", ""
 
 
 def enabled():
-    try:
-        with open(lib.config_path(), encoding="utf-8") as f:
-            return bool(json.load(f).get("icons", True))
-    except Exception:
-        return True
+    return bool(lib.ler_config().get("icons", True))
 
 
 def file_icon(name, dim=False):

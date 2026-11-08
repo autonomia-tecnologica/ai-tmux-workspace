@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch the account's "extra usage" (monthly spend) and cache the numbers for statusbar.py.
 
-Opt-in: does nothing unless `"extra_usage": true` is set in settings.json. Spawned detached by
+Opt-in: does nothing unless `extra_usage: true` is set in config.yaml. Spawned detached by
 statusbar.py at most once per 5 minutes; never runs as a daemon.
 
 Security: the OAuth access token is the account key. It is read (never refreshed), sent only in

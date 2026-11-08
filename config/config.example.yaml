@@ -1,0 +1,52 @@
+# Config do workspace. Copie para ~/.config/ai-tmux-workspace/config.yaml (ou rode ./install.sh).
+# Só estrutura, sem dado pessoal. Caminhos aceitam ~. AT_WS_CONFIG troca o caminho do arquivo.
+# Sintaxe: o subconjunto de YAML de src/yaml_min.py (mapas, listas, escalares, comentários com #).
+
+notifications: true
+extra_usage: false
+icons: true
+agent: claude
+
+profiles:
+  claude: claude
+  deepseek: claude --settings ~/.claude/settings.deepseek.json
+
+prompts:
+  - "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos?"
+  - "Você me enviou muito texto. Tem alguma dúvida? Se sim, me pergunte com enquetes individuais, com a pergunta direto na enquete."
+  - "Implemente o máximo de tarefas já refinadas que podem ser paralelizadas."
+  - "Quero refinar TODAS as tarefas pendentes no backlog, exceto as pausadas (PAUSADA). Me pergunte cada coisa em uma enquete separada, e toda enquete precisa ter as opções \"Remover\" e \"Pausar\" (para eu descartar ou pausar o item). Envie por lotes, mas não me espere para enviar cada lote."
+  - "Já validei todas as tarefas pendentes a validar, pode removê-las."
+
+options:
+  - label: Ask Claude
+    children:
+      - label: Sonnet
+        ask: sonnet
+  - label: Git status
+    run: git status -sb
+
+# Repo principal: fica fora dos grupos, sempre no topo da lista.
+main: ~/Codes/main-repo
+
+# Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
+# "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).
+groups:
+  Example:
+    - ~/Codes/some-repo
+    - path: ~/Codes/other-repo
+      siblings:
+        - ~/Codes/some-repo
+
+# Pasta-mãe (opcional, descomentar para usar): todo repo listado (main ou groups) que estiver dentro dela
+# é irmão de todos os outros listados dentro dela, sem precisar de "siblings". Fora dela, valem só os "siblings".
+# parent_folder: ~/Codes/my-folder
+
+# Relações nomeadas: agrupamento por relacionamento, independente de "groups". Não abre janelas.
+relations:
+  Pair:
+    - ~/Codes/some-repo
+    - ~/Codes/other-repo
+
+plugins:
+  claude: []

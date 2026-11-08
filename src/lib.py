@@ -10,6 +10,7 @@ from pathlib import Path
 
 from i18n import t
 import tmux
+import yaml_min
 
 BASE = Path(__file__).resolve().parent.parent   # raiz do repo
 WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # the `workspace` script
@@ -24,16 +25,68 @@ def expandir(p):
     return os.path.realpath(os.path.expanduser(p))
 
 
+class ErroConfig(ValueError):
+    """The config file exists but cannot be read, so nothing may be written over it."""
+
+
 def config_path():
-    """settings.json único; mora fora do repo (o repo só guarda a estrutura)."""
-    return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "settings.json"))
+    """config.yaml único; mora fora do repo (o repo só guarda a estrutura). AT_WS_CONFIG troca o caminho."""
+    return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "config.yaml"))
+
+
+def legado_path():
+    """settings.json antigo (JSON), lido enquanto o config.yaml não existir. Com AT_WS_CONFIG, é o mesmo caminho em .json."""
+    if "AT_WS_CONFIG" in os.environ:
+        return config_path().with_suffix(".json")
+    return HOME / ".config" / "ai-tmux-workspace" / "settings.json"
+
+
+ERRO_CONFIG = None   # (caminho, linha ou None) da última leitura que falhou; None quando leu bem
+
+
+def _ler_arquivo(path):
+    """dict de um arquivo de config: JSON se o caminho terminar em .json, senão YAML."""
+    texto = path.read_text(encoding="utf-8")
+    dados = json.loads(texto) if path.suffix == ".json" else (yaml_min.loads(texto) or {})
+    if not isinstance(dados, dict):
+        raise ValueError("config root is not a mapping")
+    return dados
 
 
 def ler_config():
+    """Config como dict: config_path() se existir; senão o settings.json antigo; senão {}. Erro de leitura dá {} e marca ERRO_CONFIG."""
+    global ERRO_CONFIG
+    ERRO_CONFIG = None
     try:
-        return json.loads(config_path().read_text())
-    except (OSError, ValueError):
-        return {}
+        if config_path().exists():
+            return _ler_arquivo(config_path())
+        if legado_path().exists():
+            return _ler_arquivo(legado_path())
+    except (OSError, ValueError) as e:
+        ERRO_CONFIG = (str(config_path()), getattr(e, "linha", None))
+    return {}
+
+
+def precisa_migrar():
+    """True quando só o settings.json antigo existe; a migração é oferecida, nunca feita sozinha."""
+    return config_path().suffix != ".json" and not config_path().exists() and legado_path().exists()
+
+
+def migrar_config():
+    """Grava config_path() em YAML a partir do settings.json antigo, depois de reler o YAML e conferir que é igual.
+    Não altera nem apaga o JSON. Devolve o caminho gravado; levanta OSError/ValueError se falhar."""
+    dados = _ler_arquivo(legado_path())
+    texto = yaml_min.dumps(dados)
+    if yaml_min.loads(texto) != dados:
+        raise ValueError("YAML does not read back to the same config")
+    destino = config_path()
+    if destino.exists():
+        raise FileExistsError(str(destino))
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_name(destino.name + ".tmp")
+    tmp.write_text(texto, encoding="utf-8")
+    tmp.replace(destino)
+    return destino
 
 
 def agent_name():
@@ -49,25 +102,83 @@ def agent_command():
 
 
 def set_agent(name):
-    """Persists the chosen agent in settings.json (all other keys untouched)."""
+    """Persists the chosen agent in the config (other keys untouched). Refuses to overwrite a config that
+    failed to read (ErroConfig). With only the old settings.json, the whole config is written as YAML."""
     cfg = ler_config()
+    if ERRO_CONFIG:
+        raise ErroConfig(str(config_path()))
     cfg["agent"] = name
     path = config_path()
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    texto = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n" if path.suffix == ".json" else yaml_min.dumps(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(texto, encoding="utf-8")
     tmp.replace(path)
 
 
+def _entradas(caminhos):
+    """Paths of a group list: each entry is a string, or {"path": ..., "siblings": [...]}. Bad entries are skipped."""
+    res = []
+    for c in caminhos if isinstance(caminhos, list) else []:
+        if isinstance(c, dict):
+            c = c.get("path")
+        if isinstance(c, str) and c:
+            res.append(expandir(c))
+    return res
+
+
 def ler_repos():
-    """[(grupo, [(nome, caminho), ...]), ...] a partir de settings.json ("groups")."""
+    """[(grupo, [(nome, caminho), ...]), ...] a partir de "groups" (categoria; cada entrada é caminho ou {path, siblings})."""
     grupos = []
     for nome_grupo, caminhos in ler_config().get("groups", {}).items():
-        repos = []
-        for c in caminhos:
-            p = expandir(c)
-            repos.append((os.path.basename(p) or p, p))
+        repos = [(os.path.basename(p) or p, p) for p in _entradas(caminhos)]
         grupos.append((nome_grupo, repos))
     return grupos
+
+
+def ler_relacoes():
+    """[(nome, [caminho, ...]), ...] de "relations": agrupamento por relação, independente de "groups". Não abre janelas."""
+    relacoes = ler_config().get("relations", {})
+    if not isinstance(relacoes, dict):
+        return []
+    return [(nome, _entradas(caminhos)) for nome, caminhos in relacoes.items()]
+
+
+def _pares_irmaos(cfg):
+    """{caminho: {irmãos}}: "siblings" declarado numa entrada de "groups" vale nos dois sentidos."""
+    pares = {}
+    for caminhos in cfg.get("groups", {}).values():
+        for c in caminhos if isinstance(caminhos, list) else []:
+            if not isinstance(c, dict) or not isinstance(c.get("path"), str) or not c["path"]:
+                continue
+            a = expandir(c["path"])
+            sibs = c.get("siblings")
+            for s in sibs if isinstance(sibs, list) else []:
+                if isinstance(s, str) and s and expandir(s) != a:
+                    b = expandir(s)
+                    pares.setdefault(a, set()).add(b)
+                    pares.setdefault(b, set()).add(a)
+    return pares
+
+
+def _dentro(caminho, pasta):
+    return caminho == pasta or caminho.startswith(pasta + "/")
+
+
+def irmaos(caminho):
+    """Irmãos de um repo, sem o próprio, em ordem. Duas fontes:
+    (a) "parent_folder": se o repo está dentro dela, são irmãos todos os repos listados (main e groups) também dentro dela;
+    (b) "siblings" declarado numa entrada de "groups", que vale nos dois sentidos (inclusive fora da pasta-mãe)."""
+    cfg = ler_config()
+    alvo = expandir(caminho)
+    res = set(_pares_irmaos(cfg).get(alvo, set()))
+    pasta = cfg.get("parent_folder")
+    if isinstance(pasta, str) and pasta:
+        pasta = expandir(pasta)
+        if _dentro(alvo, pasta):
+            listados = _entradas([cfg.get("main")]) + [p for _, rs in ler_repos() for _, p in rs]
+            res |= {p for p in listados if p != alvo and _dentro(p, pasta)}
+    return sorted(res)
 
 
 def ler_principal():
