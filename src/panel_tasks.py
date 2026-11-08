@@ -5,7 +5,6 @@
 A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
-import shlex
 import shutil
 import textwrap
 
@@ -143,11 +142,7 @@ def enter(v, key, k):
     # check; anything else (to refine, paused) -> refine
     kinds = {"ready": "ready", "blocked": "blocked", "validate": "validate"}
     msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
-    send = " ".join(shlex.quote(a) for a in (str(lib.BASE / "bin" / "workspace"), "send", path, msg))
-    # tmux command string: double quotes, with \\ " $ escaped and # doubled (format expansion)
-    tq = '"' + send.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##") + '"'
-    prompt = t("confirm", msg=msg).replace("#", "##")
-    tmux.run("confirm-before", "-p", prompt, f"run-shell -b {tq}", timeout=20)
+    tmux.confirm_then(t("confirm", msg=msg), [str(lib.BASE / "bin" / "workspace"), "send", path, msg])
 
 
 def on_key(v, k):
