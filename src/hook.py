@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Hook do Claude Code: grava o estado da sessão para a bolinha do painel de repos.
-Lê o JSON do hook no stdin, escreve ~/.cache/workspace/sessoes/<sessao>.json. Nunca falha."""
+"""Claude Code hook: records the session state for the repo panel's dot.
+Reads the hook JSON from stdin and writes ~/.cache/workspace/sessoes/<session>.json.
+Never fails and never prints."""
+import contextlib
 import json
 import os
 import sys
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:     # no fcntl (Windows): updates are not serialized
+    fcntl = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -14,6 +21,15 @@ SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")
 # Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
 # light and never fail on import. That is why the settings read in _notifications_enabled
 # duplicates lib's config loader instead of calling it. Keep it that way.
+
+EVENTS = {
+    "SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+    "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Notification", "Elicitation",
+    "Stop", "StopFailure", "SubagentStart", "SubagentStop", "CwdChanged", "PostModelSwitch",
+}
+CLAUDE_NAMES = ("claude", "claude.exe")
+MAX_LAST_MESSAGE = 500
+MAX_PARENT_HOPS = 32
 
 
 def _one_line(text, n=100):
@@ -59,9 +75,9 @@ def _last_assistant_text(d):
 
 def _snippet(d, ev):
     try:
-        if ev == "Notification":
+        if ev in ("Notification", "Elicitation"):
             return _one_line(d.get("message"))
-        if ev == "Stop":
+        if ev in ("Stop", "StopFailure"):
             return _one_line(_last_assistant_text(d)[-300:])
         ti = d.get("tool_input") or {}
         detail = ti.get("command") or ti.get("file_path") or ti.get("question") or ""
@@ -77,78 +93,234 @@ def _notify(d, ev):
     notify(os.path.basename((d.get("cwd") or "").rstrip("/\\")) or "Claude Code", _snippet(d, ev))
 
 
-def main():
-    d = json.load(sys.stdin)
-    ev, sid = d.get("hook_event_name", ""), d.get("session_id")
-    if not sid:
-        return
-    arq = SESSOES / f"{sid}.json"
-    if ev == "SessionEnd":
-        arq.unlink(missing_ok=True)
-        return
-    agora = time.time()
+# --- claude process lookup -------------------------------------------------------------------
+
+def _proc_stat(pid):
+    """(ppid, comm) from /proc/<pid>/stat. Raises OSError when /proc is missing (e.g. macOS)."""
+    with open(f"/proc/{pid}/stat", "rb") as f:
+        raw = f.read().decode("utf-8", "replace")
+    comm = raw[raw.index("(") + 1: raw.rindex(")")]
+    ppid = int(raw[raw.rindex(")") + 2:].split()[1])
+    return ppid, comm
+
+
+def _is_claude(pid, comm):
+    if comm == "claude":
+        return True
+    # The npm install runs as `node .../claude-code/cli.js`, so look at the first two argv entries.
+    with open(f"/proc/{pid}/cmdline", "rb") as f:
+        argv = [a.decode("utf-8", "replace") for a in f.read().split(b"\0")[:2]]
+    return any(os.path.basename(a) in CLAUDE_NAMES for a in argv) or any("claude-code" in a for a in argv[1:])
+
+
+def _claude_pid():
+    """PID of the claude process above this hook (hooks run through `sh -c`); 0 when not found."""
+    pid = os.getppid()
+    for _ in range(MAX_PARENT_HOPS):
+        if pid <= 1:
+            break
+        try:
+            ppid, comm = _proc_stat(pid)
+            if _is_claude(pid, comm):
+                return pid
+        except (OSError, ValueError, IndexError):
+            return 0
+        pid = ppid
+    return 0
+
+
+def _alive(pid):
     try:
-        e = json.loads(arq.read_text())
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:     # exists but not signalable (EPERM): treat as alive
+        return True
+    return True
+
+
+# --- session files: lock, read, atomic write ---------------------------------------------------
+
+def _paths(sid):
+    return SESSOES / f"{sid}.json", SESSOES / f"{sid}.lock"
+
+
+@contextlib.contextmanager
+def _session_lock(sid):
+    """Exclusive per-session lock held for a read-modify-write. The lock file is separate from the
+    JSON so the JSON can be replaced atomically while the lock is held."""
+    SESSOES.mkdir(parents=True, exist_ok=True)
+    with open(_paths(sid)[1], "a") as lock:
+        if fcntl is not None:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield    # closing the file releases the lock
+
+
+def _read_state(path):
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except Exception:
-        e = {}
-    pane = os.environ.get("TMUX_PANE")
-    if ev == "SessionStart" and pane:
-        # /clear (and resume) starts a new session id in the same pane without reliably firing
-        # SessionEnd for the old one; drop the old files so their stale color does not linger.
-        for outro in SESSOES.glob("*.json"):
-            if outro != arq:
-                try:
-                    if json.loads(outro.read_text()).get("pane") == pane:
-                        outro.unlink(missing_ok=True)
-                except Exception:
-                    pass
-    prev = e.get("estado")
-    e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=agora, pane=pane)
-    agents = [a for a in e.get("agents") or [] if a != d.get("agent_id")] if ev == "SubagentStop" else list(e.get("agents") or [])
-    types = {k: v for k, v in (e.get("agent_types") or {}).items() if k in agents}
-    if ev == "SubagentStart" and d.get("agent_id"):
-        agents.append(d["agent_id"])
-        types[d["agent_id"]] = d.get("agent_type") or "agent"
-    e["agents"], e["agent_types"] = agents, types
+        return {}
+
+
+def _write_state(path, state):
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+# --- state machine -------------------------------------------------------------------------
+
+def _has_background_work(d):
+    return bool(d.get("background_tasks")) or bool(d.get("session_crons"))
+
+
+def _apply(e, ev, d, ctx):
+    """Applies one event to the session state `e`, in place. Returns False when nothing is written."""
+    e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=ctx["now"], pane=ctx["pane"],
+             tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"])
+    if d.get("transcript_path"):
+        e["transcript_path"] = str(d["transcript_path"])
+    e["agents"] = list(e.get("agents") or [])
+    e["agent_types"] = dict(e.get("agent_types") or {})
+
     if ev in ("SubagentStart", "SubagentStop"):
-        e["ts"] = agora     # running subagents are tracked in e["agents"]; the color is derived from it
-        SESSOES.mkdir(parents=True, exist_ok=True)
-        tmp = arq.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(e))
-        os.replace(tmp, arq)
-        return
-    if ev in ("SessionStart", "UserPromptSubmit"):
-        e["agents"], e["agent_types"] = [], {}    # a new prompt/session starts clean: a lost SubagentStop cannot stick
+        # running subagents are tracked in e["agents"]; the session color is derived from it
+        agent_id = d.get("agent_id")
+        if ev == "SubagentStart" and agent_id and agent_id not in e["agents"]:
+            e["agents"].append(agent_id)
+            e["agent_types"][agent_id] = d.get("agent_type") or "agent"
+        elif ev == "SubagentStop":
+            e["agents"] = [a for a in e["agents"] if a != agent_id]
+        e["agent_types"] = {k: v for k, v in e["agent_types"].items() if k in e["agents"]}
+        return True
     if ev == "SessionStart":
-        e.update(estado="ocioso", ferramenta=None)
-    elif ev == "Stop":      # turn ended with text in the session: red until the next prompt
-        e.update(estado="pergunta", ferramenta=None, stopped=True)
-    elif ev == "UserPromptSubmit":
+        if d.get("source") != "compact":     # compact keeps the session: only ts and context fields move
+            e.update(estado="ocioso", ferramenta=None, agents=[], agent_types={})
+        return True
+    if ev == "UserPromptSubmit":     # a new prompt starts clean: a lost SubagentStop cannot stick
+        e.update(estado="trabalha", ferramenta=None, stopped=False, erro=False, agents=[], agent_types={})
+        return True
+    if ev in ("Stop", "StopFailure"):
+        if _has_background_work(d):    # background tasks or crons keep the session working
+            e.update(estado="trabalha", ferramenta=None, stopped=False)
+        else:                          # turn ended with text in the session: red until the next prompt
+            e.update(estado="pergunta", ferramenta=None, stopped=True)
+        e["erro"] = ev == "StopFailure"
+        if "last_assistant_message" in d:
+            e["last_assistant_message"] = str(d["last_assistant_message"] or "")[:MAX_LAST_MESSAGE]
+        return True
+    if ev in ("PostModelSwitch", "CwdChanged"):    # only ts (and cwd, set above) move
+        return True
+    if ev == "PermissionDenied":
         e.update(estado="trabalha", ferramenta=None, stopped=False)
-    elif ev == "PreToolUse" and d.get("tool_name") in ("AskUserQuestion", "ExitPlanMode"):
+        return True
+    if ev == "Elicitation":          # the session waits on the person: the existing "pergunta" state
+        e.update(estado="pergunta", stopped=False)
+        return True
+    if ev == "PreToolUse" and d.get("tool_name") in ("AskUserQuestion", "ExitPlanMode"):
         e.update(estado="pergunta", ferramenta=None, stopped=False)    # poll/plan approval: waiting on the person
-    elif d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+        return True
+    if d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
         # subagent tools share the parent's session id: the session is waiting on an agent
         # (green), not on a long-running command (yellow), and must not mask a pending question.
         if e.get("estado") != "pergunta":
             e.update(estado="trabalha", ferramenta=None)
-    elif ev == "PreToolUse":
-        e.update(estado="trabalha", ferramenta=d.get("tool_name"), ferr_ts=agora)
-    elif ev in ("PostToolUse", "PostToolUseFailure"):
+        return True
+    if ev == "PreToolUse":
+        e.update(estado="trabalha", ferramenta=d.get("tool_name"), ferr_ts=ctx["now"])
+        return True
+    if ev in ("PostToolUse", "PostToolUseFailure"):
         e.update(estado="trabalha", ferramenta=None)
-    elif ev == "PermissionRequest" or (ev == "Notification" and d.get("notification_type")
-                                       in ("permission_prompt", "elicitation_dialog")):
+        return True
+    if ev == "PermissionRequest" or (ev == "Notification" and d.get("notification_type")
+                                     in ("permission_prompt", "elicitation_dialog")):
         e.update(estado="pergunta", stopped=False)
-    elif ev == "Notification":
-        return      # idle_prompt keeps whatever Stop set (red if the session has text)
-    else:
+        return True
+    return False    # idle_prompt keeps whatever Stop set; unknown events change nothing
+
+
+def _record(d, ev, sid):
+    """Applies the event to the session file under its lock. Returns the context used."""
+    ctx = {
+        "now": time.time(),
+        "pane": os.environ.get("TMUX_PANE"),
+        "socket": os.environ.get("TMUX", "").split(",")[0],
+        "claude_pid": _claude_pid(),
+    }
+    path = _paths(sid)[0]
+    with _session_lock(sid):
+        e = _read_state(path)
+        prev = e.get("estado")
+        written = _apply(e, ev, d, ctx)
+        if written:
+            _write_state(path, e)
+    if written and e.get("estado") == "pergunta" and prev != "pergunta":
+        try:    # only the transition into red: PermissionRequest + Notification fire once
+            _notify(d, ev)
+        except Exception:
+            pass
+    return ctx
+
+
+def _is_stale(state, ctx):
+    """True when a session file belongs to this pane and tmux server and its claude process is gone.
+    A file written by the same claude process is also stale: /clear reuses the process with a new id."""
+    if state.get("pane") != ctx["pane"] or state.get("tmux_socket", "") != ctx["socket"]:
+        return False
+    other_pid = int(state.get("claude_pid") or 0)
+    if other_pid and other_pid != ctx["claude_pid"] and _alive(other_pid):
+        return False    # live session (e.g. an outer claude around a nested `claude -p`)
+    return True
+
+
+def _sweep_stale(sid, ctx):
+    """On SessionStart, removes older session files of this pane whose claude process is gone."""
+    keep = _paths(sid)[0].name
+    for other in SESSOES.glob("*.json"):
+        other_sid = other.name[: -len(".json")]
+        if other.name == keep or "." in other_sid:    # "<sid>.status.json" belongs to statusline
+            continue
+        try:
+            if not _is_stale(_read_state(other), ctx):    # unlocked pre-check, re-checked under the lock
+                continue
+            with _session_lock(other_sid):
+                other_state = _read_state(other)
+                if _is_stale(other_state, ctx):
+                    other.unlink(missing_ok=True)
+                    _paths(other_sid)[1].unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _end_session(sid):
+    path, lock = _paths(sid)
+    with _session_lock(sid):
+        path.unlink(missing_ok=True)
+        lock.unlink(missing_ok=True)
+
+
+def _valid_session_id(sid):
+    return isinstance(sid, str) and bool(sid) and sid not in (".", "..") and not any(c in sid for c in "/\\\0")
+
+
+def main():
+    d = json.load(sys.stdin)
+    if not isinstance(d, dict):
         return
-    if e.get("estado") == "pergunta" and prev != "pergunta":
-        _notify(d, ev)      # only the transition into red: PermissionRequest + Notification fire once
-    SESSOES.mkdir(parents=True, exist_ok=True)
-    tmp = arq.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(e))
-    os.replace(tmp, arq)
+    ev, sid = d.get("hook_event_name"), d.get("session_id")
+    if not isinstance(ev, str) or ev not in EVENTS or not _valid_session_id(sid):
+        return
+    if ev == "SessionEnd":
+        _end_session(sid)
+        return
+    ctx = _record(d, ev, sid)
+    if ev == "SessionStart" and ctx["pane"]:
+        _sweep_stale(sid, ctx)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ run() never raises: tmux missing, a timeout or a failing command gives "" so a p
 while the server is busy or gone. Pass timeout=None for commands that block until the user closes
 them (display-popup -E).
 """
+import os
 import shlex
 import subprocess
 
@@ -20,14 +21,33 @@ def run(*args, timeout=TIMEOUT):
         return ""
 
 
+_SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu"}
+
+
 def live_panes():
-    """Set of pane ids alive now, or None when tmux cannot be queried (different from "no panes")."""
+    """Set of pane ids alive now and not sitting at a bare shell prompt, or None when tmux cannot be
+    queried (different from "no panes"). A pane back at a shell means Claude exited there, possibly
+    without SessionEnd, so its session file is stale."""
     try:
-        r = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}"], capture_output=True,
-                           text=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+        r = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_current_command}"],
+                           capture_output=True, text=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
     except Exception:
         return None
-    return set(r.stdout.split()) if r.returncode == 0 else None
+    if r.returncode != 0:
+        return None
+    panes = set()
+    for line in r.stdout.splitlines():
+        pid, _, cmd = line.partition(" ")
+        if pid and cmd.strip().lstrip("-") not in _SHELLS:
+            panes.add(pid)
+    return panes
+
+
+def server_socket():
+    """Socket path of the tmux server in use, "" when unknown. Same value the hook stores as
+    tmux_socket (first field of $TMUX)."""
+    sock = os.environ.get("TMUX", "").split(",")[0]
+    return sock or run("display", "-p", "#{socket_path}")
 
 
 def show_w(window, option):

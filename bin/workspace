@@ -543,23 +543,60 @@ install() {
 }
 
 install_hooks() {
-  python3 - "$SRC/hook.py" <<'PY'
-import json, shutil, sys
+  python3 - "$SRC/hook.py" "$SRC/statusline.py" <<'PY'
+import json, os, shutil, sys
 from pathlib import Path
-hook = sys.argv[1]
-f = Path.home() / ".claude" / "settings.json"
-cfg = json.loads(f.read_text())
-shutil.copy(f, f.with_suffix(".json.bak-workspace"))
-novo = 0
-for ev in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
-           "PermissionRequest", "Notification", "Stop", "SessionEnd"):
-    grupos = cfg.setdefault("hooks", {}).setdefault(ev, [])
+
+hook, statusline = sys.argv[1], sys.argv[2]
+# Events confirmed in the Claude Code 2.1.319 binary. Third-party hooks are never touched.
+EVENTOS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+           "PermissionRequest", "PermissionDenied", "Notification", "Stop", "StopFailure",
+           "SubagentStart", "SubagentStop", "SessionEnd", "Elicitation", "CwdChanged", "PostModelSwitch")
+
+f = Path.home() / ".claude" / "settings.json"   # HOME overrides this, e.g. for tests
+raw = f.read_text() if f.exists() else ""
+try:
+    cfg = json.loads(raw) if raw.strip() else {}
+except json.JSONDecodeError as e:
+    sys.exit(f"settings.json inválido, nada gravado: {e}")
+if not isinstance(cfg, dict):
+    sys.exit("settings.json não é um objeto JSON, nada gravado")
+
+changed = []
+hooks = cfg.setdefault("hooks", {})
+for ev in EVENTOS:
+    grupos = hooks.setdefault(ev, [])
     if any(hook in h.get("command", "") for g in grupos for h in g.get("hooks", [])):
         continue
     grupos.append({"hooks": [{"type": "command", "command": f"python3 {hook}", "timeout": 5}]})
-    novo += 1
-f.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
-print(f"hooks registrados em {novo} evento(s); backup em settings.json.bak-workspace. Sessões abertas precisam reiniciar.")
+    changed.append(ev)
+
+sl = cfg.get("statusLine")
+if sl is None:
+    cfg["statusLine"] = {"type": "command", "command": f"python3 {statusline}"}
+    changed.append("statusLine")
+    aviso = None
+elif isinstance(sl, dict) and statusline in str(sl.get("command", "")):
+    aviso = None
+else:
+    aviso = "AVISO: já existe um statusLine de outra origem; não foi alterado."
+
+if changed:
+    if f.exists():
+        shutil.copy(f, f.with_suffix(".json.bak-workspace"))
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f.name + ".tmp-workspace")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    if f.exists():
+        shutil.copymode(f, tmp)
+    os.replace(tmp, f)
+
+if aviso:
+    print(aviso)
+eventos = [c for c in changed if c != "statusLine"]
+print(f"hooks registrados em {len(eventos)} evento(s); statusLine {'registrado' if 'statusLine' in changed else 'sem mudança'}."
+      + (" Backup em settings.json.bak-workspace." if changed and raw else "")
+      + (" Sessões abertas precisam reiniciar; eventos novos exigem 'workspace restart'." if changed else " Nada a fazer."))
 PY
 }
 

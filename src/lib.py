@@ -16,7 +16,11 @@ WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # t
 HOME = Path.home()
 ESTADO = Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace"))
 SESSOES = ESTADO / "sessoes"
-ESPERA_S = 8          # ferramenta aberta há mais que isso = "esperando as coisas acontecerem"
+ESPERA_S = 8                 # ferramenta aberta há mais que isso = "esperando as coisas acontecerem"
+ESPERA_TETO_S = 30 * 60      # sem nenhum evento há isso, a espera por ferramenta vira ocioso
+SEM_EVENTO_S = 10 * 60       # trabalha sem ferramenta aberta e sem evento há isso = ocioso
+OCIOSO_APOS_S = 6 * 3600     # sem evento há isso = ocioso (vermelho de Stop também envelhece)
+ORFAO_IDADE_S = 24 * 3600    # arquivo de sessão morta há mais que isso é apagado
 PRIO = {"ocioso": 0, "trabalha": 1, "espera": 2, "pergunta": 3}
 
 
@@ -94,23 +98,25 @@ def repo_atual():
 
 def _cor(d, agora):
     est, ts = d.get("estado", "ocioso"), d.get("ts", 0)
-    if agora - ts > 6 * 3600:
+    # erro: true keeps the red state until the next event; other red states age out like the rest.
+    if agora - ts > OCIOSO_APOS_S and not (est == "pergunta" and d.get("erro") is True):
         return "ocioso"
     if est == "trabalha":
         f = d.get("ferramenta")
-        if f and f not in ("Task", "Agent") and agora - d.get("ferr_ts", ts) > ESPERA_S:
-            return "espera"
-        if not f and agora - ts > 600:      # sem evento há 10 min: sessão morreu sem avisar
+        if f and f not in ("Task", "Agent"):
+            if agora - ts > ESPERA_TETO_S:  # nenhum evento há 30 min: a ferramenta não vai voltar
+                return "ocioso"
+            if agora - d.get("ferr_ts", ts) > ESPERA_S:
+                return "espera"
+        if not f and agora - ts > SEM_EVENTO_S:     # sem evento há 10 min: sessão morreu sem avisar
             return "ocioso"
     return est
 
 
 def cor_sessao(d, agora):
-    """Displayed state of one session file: _cor, with Stop-only red masked while subagents run."""
-    c = _cor(d, agora)
-    if c == "pergunta" and d.get("stopped") and d.get("agents"):
-        c = "trabalha"
-    return c
+    """Displayed state of one session file. `agents` is informational only: the hook keeps the state
+    at "trabalha" while background tasks run, so nothing here masks a red state."""
+    return _cor(d, agora)
 
 
 def repo_of(cwd, paths):
@@ -122,33 +128,126 @@ def repo_of(cwd, paths):
     return melhor
 
 
-def live_sessions(paths, agora=None):
-    """{repo_path: [(sid, state_json, color)]} of live Claude sessions inside `paths`, newest first.
-
-    A session file without a pane is dropped, and so is one whose pane is gone; when tmux cannot be
-    queried, only the pane-less files are dropped.
-    """
-    agora = agora or time.time()
+def _pid_do(d):
     try:
-        arquivos = list(SESSOES.glob("*.json"))
+        return max(0, int(d.get("claude_pid") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pid_vivo(pid):
+    """True se `pid` é um processo claude vivo; False se morreu, virou zumbi ou foi reaproveitado por
+    outro programa; None se não dá para saber. Sem /proc (macOS) basta o kill(pid, 0)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:     # existe, mas é de outro usuário
+        pass
     except OSError:
-        return {}
+        return None
+    if not os.path.isdir("/proc/self"):
+        return True
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+            estado = f.read().rsplit(")", 1)[1].split()[0]
+        if estado == "Z":
+            return False
+        with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
+            nome = f.read()
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except (OSError, IndexError):
+        return False
+    return "claude" in f"{nome} {argv}".lower()
+
+
+def _outro_servidor(d, socket_atual):
+    """True when the session was recorded on a tmux server other than the one in use."""
+    sock = d.get("tmux_socket")
+    return bool(sock and socket_atual and os.path.realpath(sock) != os.path.realpath(socket_atual))
+
+
+def _vida(d, vivos, socket_atual):
+    """True = viva, False = morta (pode apagar), None = não dá para saber.
+
+    Com claude_pid > 0 o teste é o processo. Sem ele (arquivo antigo), o teste é o pane no servidor
+    atual: pane que voltou ao shell já está fora de `vivos`.
+    """
+    pid = _pid_do(d)
+    if pid > 0:
+        return _pid_vivo(pid)
+    if not d.get("pane"):
+        return False
+    if _outro_servidor(d, socket_atual) or vivos is None:
+        return None
+    return d["pane"] in vivos
+
+
+def _sessoes_vivas(agora):
+    """[(sid, state_json, color)] das sessões vivas no servidor tmux atual, mais nova primeiro.
+
+    Lê só <sid>.json (pula *.status.json e *.lock). Apaga o arquivo de sessão morta há mais de
+    ORFAO_IDADE_S; nunca apaga sessão viva nem a que não se consegue testar. Falha de unlink é ignorada.
+    """
+    try:
+        arquivos = [f for f in SESSOES.glob("*.json") if "." not in f.stem]
+    except OSError:
+        return []
     vivos = tmux.live_panes()
-    res = {}
+    socket_atual = tmux.server_socket()
+    res = []
     for f in arquivos:
         try:
             d = json.loads(f.read_text())
-            cwd = expandir(d["cwd"])
-        except Exception:
+            if not isinstance(d, dict):
+                d = {}
+        except Exception:       # ilegível: sem pane nem pid, então órfão pela idade do arquivo
+            d = {}
+        try:
+            ref = d["ts"] if isinstance(d.get("ts"), (int, float)) else f.stat().st_mtime
+        except OSError:
+            ref = agora
+        vida = _vida(d, vivos, socket_atual)
+        if vida is False and agora - ref > ORFAO_IDADE_S:
+            try:
+                f.unlink()
+            except OSError:
+                pass
             continue
-        # Orphan: pane-less legacy file, or its pane is gone (session died without SessionEnd).
-        if not d.get("pane") or (vivos is not None and d["pane"] not in vivos):
+        # Não mostrada: sem pane, morta, ou de outro servidor (pane id pode repetir entre servidores).
+        if vida is False or not d.get("pane") or _outro_servidor(d, socket_atual):
             continue
-        repo = repo_of(cwd, paths)
+        res.append((f.stem, d, cor_sessao(d, agora)))
+    res.sort(key=lambda x: x[1].get("ts", 0), reverse=True)
+    return res
+
+
+def session_for_pane(pane_id, agora=None):
+    """(sid, state_json, color) da sessão viva do pane no servidor atual (a mais nova, se houver
+    mais de uma), ou None. Para a statusbar e quem precisa da sessão de um pane só."""
+    if not pane_id:
+        return None
+    for entrada in _sessoes_vivas(agora or time.time()):
+        if entrada[1].get("pane") == pane_id:
+            return entrada
+    return None
+
+
+def live_sessions(paths, agora=None):
+    """{repo_path: [(sid, state_json, color)]} of live Claude sessions inside `paths`, newest first.
+
+    See _sessoes_vivas for what counts as live. Sessions without a cwd are skipped.
+    """
+    agora = agora or time.time()
+    res = {}
+    for sid, d, cor in _sessoes_vivas(agora):
+        cwd = d.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            continue
+        repo = repo_of(expandir(cwd), paths)
         if repo:
-            res.setdefault(repo, []).append((f.stem, d, cor_sessao(d, agora)))
-    for v in res.values():
-        v.sort(key=lambda x: x[1].get("ts", 0), reverse=True)
+            res.setdefault(repo, []).append((sid, d, cor))
     return res
 
 

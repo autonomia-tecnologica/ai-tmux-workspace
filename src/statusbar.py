@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Barra de status do tmux:  repo selecionado • modelo atual • consumo do Claude.
 
-Uso:  statusbar.py <repo> [perfil]      (o tmux chama isto a cada poucos segundos)
+Uso:  statusbar.py <repo> [perfil] [largura] [abas] [ativa] [pane]
+(o tmux chama isto a cada poucos segundos; `pane` é o pane focado, #{pane_id})
+Modelo e % de contexto vêm do <sid>.status.json da sessão desse pane (gravado pelo statusline.py);
+sem ele, do transcript da sessão e, por último, do log mais recente da pasta do repo.
 O consumo vem dos logs locais do Claude Code (~/.claude/projects), somado de forma incremental
 por um processo em segundo plano — a barra só lê o cache, então nunca trava.
 """
@@ -208,13 +211,45 @@ def fmt(n):
     return str(n)
 
 
-def modelo(repo):
-    """Modelo da última resposta nesse repo (do log mais recente); senão o do perfil."""
-    pasta = PROJ / re.sub(r"[^A-Za-z0-9]", "-", repo)
+def clean_text(value):
+    """Non-blank string -> stripped string, anything else -> None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
+def as_number(value):
+    """int/float (not bool) -> itself, anything else -> None."""
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def session_of_pane(pane):
+    """(sid, entry) of the live session in `pane`, or (None, None)."""
+    hit = lib.session_for_pane(pane)
+    return (hit[0], hit[1]) if hit else (None, None)
+
+
+def status_of(sid):
+    """What statusline.py saved for session `sid` (model, context_pct, cost_usd, ts) -> dict, or {}."""
+    if not sid:
+        return {}
     try:
-        logs = sorted(pasta.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
-        logs = []
+        data = json.loads((lib.SESSOES / f"{sid}.status.json").read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def modelo(repo, transcript=None):
+    """Modelo da última resposta: do transcript da sessão, se houver; senão do log mais recente do repo."""
+    if clean_text(transcript):
+        logs = [Path(os.path.expanduser(transcript))]
+    else:
+        pasta = PROJ / re.sub(r"[^A-Za-z0-9]", "-", repo)
+        try:
+            logs = sorted(pasta.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            logs = []
     for f in logs[:2]:
         try:
             with open(f, "rb") as fh:
@@ -255,8 +290,14 @@ def main():
         uso_txt = " · ".join(partes)
     else:
         uso_txt = i18n.t("status.usage_tokens", h5=fmt(h5), d7=fmt(d7))
-    print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{modelo(repo)}"
-          f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{sep}"
+    pane = sys.argv[6] if len(sys.argv) > 6 else ""
+    sid, entry = session_of_pane(pane)
+    st = status_of(sid)
+    model = clean_text(st.get("model")) or modelo(repo, (entry or {}).get("transcript_path"))
+    pct = as_number(st.get("context_pct"))
+    ctx = f"{sep}#[fg=colour250]{i18n.t('status.context', pct=f'{pct:.0f}')}" if pct is not None else ""
+    print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{model}"
+          f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{ctx}{sep}"
           f"#[fg=colour250]{uso_txt}#[default]")
 
 
