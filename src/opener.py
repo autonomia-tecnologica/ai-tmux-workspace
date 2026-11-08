@@ -4,6 +4,7 @@ Extensions of types that normally have a default viewer/player go to the OS open
 (macOS `open`, Linux `xdg-open`, WSL `wslview`/`explorer.exe`, Windows `start`).
 Everything else, including unknown extensions, stays in the editor.
 """
+import glob
 import os
 import shutil
 import subprocess
@@ -23,6 +24,51 @@ SYSTEM_EXTENSIONS = {
 }
 
 
+# Extensions opened in Blender (the OS has no sensible default for them).
+BLENDER_EXTENSIONS = {"ifc", "ifczip"}
+IFC_EXTENSIONS = {"ifc", "ifczip"}
+
+
+def find_blender(which=shutil.which, environ=os.environ):
+    """Path to the Blender binary: AT_WS_BLENDER, PATH, then common install dirs."""
+    env = environ.get("AT_WS_BLENDER")
+    if env and os.path.isfile(env):
+        return env
+    found = which("blender")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    patterns = [
+        f"{home}/Applications/blender-*/blender",
+        f"{home}/blender-*/blender",
+        "/opt/blender*/blender",
+        "/Applications/Blender.app/Contents/MacOS/Blender",
+    ]
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern), reverse=True)
+        if matches:
+            return matches[0]
+    return None
+
+
+def build_blender_command(path, blender):
+    """argv that opens `path` in Blender; IFC goes through the Bonsai add-on when present."""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    if ext in IFC_EXTENSIONS:
+        expr = ("import bpy\n"
+                "try:\n"
+                f"    bpy.ops.bim.load_project(filepath={os.path.abspath(path)!r})\n"
+                "except Exception as e:\n"
+                "    print('Bonsai not available:', e)\n")
+        return [blender, "--python-expr", expr]
+    return [blender, path]
+
+
+def use_blender(path):
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    return ext in BLENDER_EXTENSIONS
+
+
 def _is_wsl():
     try:
         with open("/proc/version") as f:
@@ -33,7 +79,7 @@ def _is_wsl():
 
 def use_system(path):
     ext = os.path.splitext(path)[1].lstrip(".").lower()
-    return ext in SYSTEM_EXTENSIONS
+    return ext in SYSTEM_EXTENSIONS or ext in BLENDER_EXTENSIONS
 
 
 def build_command(path, platform=None, wsl=None, which=shutil.which):
@@ -58,7 +104,12 @@ def build_command(path, platform=None, wsl=None, which=shutil.which):
 
 def open_system(path):
     """Spawns the OS opener detached. Returns False when there is no opener available."""
-    cmd = build_command(path)
+    cmd = None
+    if use_blender(path):
+        blender = find_blender()
+        if blender:
+            cmd = build_blender_command(path, blender)
+    cmd = cmd or build_command(path)
     if not cmd:
         return False
     try:
