@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Painel de repos: grupos de settings.json, cada repo com a bolinha do estado do agente.
+"""Painel de repos: grupos de config.yaml, cada repo com a bolinha do estado do agente.
 
   ○ vazio    sessão sem texto           ● verde   agente (ou subagente) trabalhando
   ● amarelo  parado, mas rodando algo         ● vermelho parado com texto / pergunta

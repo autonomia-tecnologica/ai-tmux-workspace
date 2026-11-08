@@ -32,9 +32,19 @@ class OpeningCommandTest(unittest.TestCase):
         self.repo.mkdir()
         self.set_command("claude --settings ~/.claude/settings.a.json")
 
-    def set_command(self, command):
-        self.config.write_text(json.dumps({"agent": "a", "profiles": {"a": command}}), encoding="utf-8")
+    def set_command(self, command, agent="a"):
+        self.agent = agent
+        self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: command}}), encoding="utf-8")
         self.command = command
+
+    @property
+    def launch(self):
+        """Command line the workspace actually runs: non-Claude profiles disable tool search (D9) and
+        open in bypassPermissions, since the classifier does not run there; the claude profile opens
+        in acceptEdits (D10)."""
+        base = self.command if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {self.command}"
+        mode = "acceptEdits" if self.agent == "claude" else "bypassPermissions"
+        return f"{base} --permission-mode {mode}"
 
     def opening(self, repo=None):
         env = dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state), AT_WS_CONFIG=str(self.config))
@@ -62,7 +72,7 @@ class OpeningCommandTest(unittest.TestCase):
     def assert_prompt(self, out, transcript):
         self.assertNotIn("--continue", out)
         argv = shlex.split(out)
-        base = shlex.split(self.command)
+        base = shlex.split(self.launch)
         # "<agent command> <prompt> || <agent command>": one positional argument, the prompt
         self.assertEqual(argv[:len(base)], base)
         self.assertEqual(argv[len(base) + 1:], ["||"] + base)
@@ -73,7 +83,22 @@ class OpeningCommandTest(unittest.TestCase):
         self.assertIn("releia a transcrição", prompt.lower())
 
     def test_first_opening_without_record_does_not_resume(self):
-        self.assertEqual(self.opening(), self.command)
+        self.assertEqual(self.opening(), self.launch)
+
+    def test_non_claude_profile_disables_tool_search(self):
+        out = self.opening()
+        self.assertTrue(out.startswith("env ENABLE_TOOL_SEARCH=false "))
+        self.assertIn(self.command, out)
+
+    def test_claude_profile_keeps_tool_search(self):
+        self.set_command("claude", agent="claude")
+        self.assertEqual(self.opening(), self.launch)
+
+    def test_tool_search_prefix_is_not_part_of_the_recorded_identity(self):
+        self.opening()
+        self.assertEqual(self.saved()[str(self.repo)]["command"], self.command)
+        self.new_session_transcript()
+        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
 
     def test_first_opening_with_a_transcript_gets_the_migration_prompt(self):
         old = self.transcript()
@@ -84,7 +109,7 @@ class OpeningCommandTest(unittest.TestCase):
         self.opening()                          # records command A, no session yet
         self.new_session_transcript()           # the session this opening started
         out = self.opening()
-        self.assertEqual(out, f"{self.command} --continue || {self.command}")
+        self.assertEqual(out, f"{self.launch} --continue || {self.launch}")
 
     def test_prompt_is_shown_only_once_per_change(self):
         self.opening()
@@ -93,7 +118,7 @@ class OpeningCommandTest(unittest.TestCase):
         self.assert_prompt(self.opening(), old)             # first opening with the new command
         again = self.opening()
         self.assertNotIn("migrado", again)
-        self.assertEqual(again, f"{self.command} --continue || {self.command}")
+        self.assertEqual(again, f"{self.launch} --continue || {self.launch}")
 
     def test_prompt_is_shown_once_across_repos(self):
         second = self.root / "second"
@@ -105,12 +130,12 @@ class OpeningCommandTest(unittest.TestCase):
         self.set_command("claude --settings ~/.claude/settings.b.json")
         self.assert_prompt(self.opening(), old)             # first repo of the new environment
         out = self.opening(second)
-        self.assertEqual(out, self.command)                 # new session, prompt not repeated
+        self.assertEqual(out, self.launch)                  # new session, prompt not repeated
         self.assertNotIn("migrado", out)
 
     def test_old_string_state_format_is_understood(self):
         (self.state / "agent.json").write_text(json.dumps({str(self.repo): self.command}), encoding="utf-8")
-        self.assertEqual(self.opening(), f"{self.command} --continue || {self.command}")
+        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
 
     def test_changed_command_opens_new_session_with_prompt_citing_the_transcript(self):
         self.opening()
@@ -124,7 +149,7 @@ class OpeningCommandTest(unittest.TestCase):
         self.set_command("claude --settings ~/.claude/settings.b.json")
         self.assertNotIn("--continue", self.opening())
         self.new_session_transcript()           # the new session this opening started
-        self.assertEqual(self.opening(), f"{self.command} --continue || {self.command}")
+        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
         self.assertEqual(self.saved()[str(self.repo)]["command"], self.command)
 
     def test_repo_without_transcript_opens_new_session_without_prompt(self):
@@ -132,7 +157,7 @@ class OpeningCommandTest(unittest.TestCase):
         other.mkdir()
         self.opening(other)                     # last opening of `other` used command A
         self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(other), self.command)
+        self.assertEqual(self.opening(other), self.launch)
 
     def test_newest_transcript_in_the_project_folder_wins(self):
         self.transcript(name="old.jsonl", mtime=1000)
@@ -163,7 +188,7 @@ class OpeningCommandTest(unittest.TestCase):
             "cwd": str(self.root / "elsewhere"), "ts": 1, "transcript_path": str(transcript)}),
             encoding="utf-8")
         self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(), self.command)
+        self.assertEqual(self.opening(), self.launch)
 
 
 if __name__ == "__main__":

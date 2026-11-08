@@ -43,7 +43,7 @@ def sessao():
 
 
 def abas_plugins(perfil):
-    """[(\"plugin:<id>\", rótulo)] for each valid plugin listed in settings.json (broken ones have no window)."""
+    """[(\"plugin:<id>\", rótulo)] for each valid plugin listed in config.yaml (broken ones have no window)."""
     abas = []
     for entrada in lib.plugins_listados(perfil):
         try:

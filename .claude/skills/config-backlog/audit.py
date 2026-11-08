@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only audit of the BACKLOG.md rule across the repos in settings.json.
+"""Read-only audit of the BACKLOG.md rule across the repos in config.yaml.
 
 Usage: audit.py [repo-name-or-path ...]   (no args = every configured repo)
 Prints one JSON object per repo (JSON lines). Never writes anything.

@@ -143,9 +143,9 @@ class YamlConfigTest(ConfigTestCase):
     def test_siblings_are_symmetric(self):
         self.write("config.yaml", "groups:\n  Cat:\n    - path: ~/a\n      siblings: [~/b]\n    - ~/b\n    - ~/c\n")
         a, b, c = (home(x) for x in "abc")
-        self.assertEqual(lib.irmaos(a), [b])
-        self.assertEqual(lib.irmaos(b), [a])   # declared only on a, visible from b
-        self.assertEqual(lib.irmaos(c), [])
+        self.assertEqual(lib.siblings(a), [b])
+        self.assertEqual(lib.siblings(b), [a])   # declared only on a, visible from b
+        self.assertEqual(lib.siblings(c), [])
 
     def test_parent_folder_makes_everything_inside_siblings_and_mixes_with_declared(self):
         parent = self.dir / "AT"
@@ -162,19 +162,19 @@ class YamlConfigTest(ConfigTestCase):
         ))
         a, b, m = (str(parent / x) for x in ("a", "b", "m"))
         outside, lone = str(self.dir / "outside"), str(self.dir / "lone")
-        self.assertEqual(lib.irmaos(a), sorted([b, m, outside]))   # inside: all listed inside; outside: declared
-        self.assertEqual(lib.irmaos(b), sorted([a, m]))
-        self.assertEqual(lib.irmaos(m), sorted([a, b]))
-        self.assertEqual(lib.irmaos(outside), [a])                 # outside the folder: only declared siblings
-        self.assertEqual(lib.irmaos(lone), [])
+        self.assertEqual(lib.siblings(a), sorted([b, m, outside]))   # inside: all listed inside; outside: declared
+        self.assertEqual(lib.siblings(b), sorted([a, m]))
+        self.assertEqual(lib.siblings(m), sorted([a, b]))
+        self.assertEqual(lib.siblings(outside), [a])                 # outside the folder: only declared siblings
+        self.assertEqual(lib.siblings(lone), [])
 
     def test_parent_folder_only_counts_repos_actually_listed(self):
         parent = self.dir / "AT"
         self.write("config.yaml", f"groups:\n  Cat:\n    - {parent}/a\nparent_folder: {parent}\n")
-        self.assertEqual(lib.irmaos(str(parent / "a")), [])        # b is not listed, so it is not a sibling
+        self.assertEqual(lib.siblings(str(parent / "a")), [])        # b is not listed, so it is not a sibling
 
-    def test_irmaos_without_any_config(self):
-        self.assertEqual(lib.irmaos(str(self.dir / "x")), [])
+    def test_siblings_without_any_config(self):
+        self.assertEqual(lib.siblings(str(self.dir / "x")), [])
 
     def test_bad_yaml_gives_empty_config_and_marks_the_error(self):
         path = self.write("config.yaml", "groups:\n  Cat:\n    - ~/a\n\tbroken: 1\n")
@@ -210,7 +210,7 @@ class LegacyAndMigrationTest(ConfigTestCase):
         self.write_legacy(self.LEGACY)
         self.assertEqual(lib.ler_config(), self.LEGACY)
         self.assertTrue(lib.precisa_migrar())
-        self.assertEqual(lib.irmaos(home("Codes/some-repo")), [home("Codes/b")])
+        self.assertEqual(lib.siblings(home("Codes/some-repo")), [home("Codes/b")])
 
     def test_migration_writes_yaml_and_never_touches_the_json(self):
         legacy = self.write_legacy(self.LEGACY)

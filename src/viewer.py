@@ -7,6 +7,9 @@ e o laço principal só desenha, rola e trata teclado/mouse.
 Menu de contexto: com `acoes(viewer, chave) -> [(rotulo, ativa, funcao)]`, Espaço ou clique direito
 sobre um item abre um overlay; setas/j/k navegam, Enter executa `funcao(viewer, chave)`, Esc fecha.
 Lista vazia não abre menu. Item inativo aparece apagado e Enter nele só fecha.
+
+Text input: `entrada(viewer, chave)` runs before navigation and returns True when it consumed the key;
+`rodape(viewer)` draws the fixed footer where the screen shows the text being typed.
 """
 import os
 import re
@@ -109,10 +112,11 @@ def close_on_esc(v, k):
 
 class Viewer:
     def __init__(self, coletar, intervalo=2.0, cursor=False, ao_enter=None, chave_inicial=None,
-                 ao_tecla=None, ao_perde_foco=None, rodape=None, acoes=None, wrap=False):
+                 ao_tecla=None, ao_perde_foco=None, rodape=None, acoes=None, wrap=False, entrada=None):
         self.coletar, self.intervalo, self.cursor = coletar, intervalo, cursor
         self.wrap = wrap        # up on the first row goes to the last, down on the last goes to the first
         self.ao_enter, self.ao_tecla, self.ao_perde_foco = ao_enter, ao_tecla, ao_perde_foco
+        self.entrada = entrada  # entrada(viewer, chave) -> True when it consumed the key (text input)
         self.rodape = rodape    # footer(viewer) -> full text of the selection, wrapped on a fixed footer
         self.acoes = acoes      # acoes(viewer, chave) -> [(rotulo, ativa, funcao(viewer, chave))]
         self.cab, self.corpo, self._sig = [], [], None
@@ -311,6 +315,8 @@ class Viewer:
     def _tecla(self, k):
         if self.menu is not None:
             self._tecla_menu(k)
+            return
+        if self.entrada and self.entrada(self, k):
             return
         h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
         if k in ("j", "\x1b[B", "\x1bOB"):

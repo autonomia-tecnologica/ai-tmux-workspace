@@ -18,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import yaml_min  # noqa: E402  (stdlib-only, no lib import)
 
+try:
+    import permission_state  # noqa: E402  (stdlib-only, same reason)
+except Exception:
+    permission_state = None
+
 SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "sessoes"
 
 # Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
@@ -84,6 +89,40 @@ def _last_assistant_text(d):
     except Exception:
         pass
     return ""
+
+
+def _last_permission_mode(d):
+    """Last permission mode recorded in the transcript, or "".
+
+    Claude Code writes {"type": "permission-mode", "permissionMode": "auto"} when the person changes
+    the mode; the launcher reapplies it on the next opening while the agent command is the same."""
+    try:
+        with open(d["transcript_path"], "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 262144))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except Exception:
+        return ""
+    for line in reversed(lines):
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if m.get("type") == "permission-mode":
+            mode = m.get("permissionMode")
+            return str(mode) if mode else ""
+    return ""
+
+
+def _record_permission_mode(d):
+    if permission_state is None:
+        return
+    mode = _last_permission_mode(d)
+    if mode:
+        try:
+            permission_state.record_mode(d.get("cwd") or "", mode)
+        except Exception:
+            pass
 
 
 def _snippet(d, ev):
@@ -329,11 +368,14 @@ def main():
     if not isinstance(ev, str) or ev not in EVENTS or not _valid_session_id(sid):
         return
     if ev == "SessionEnd":
+        _record_permission_mode(d)
         _end_session(sid)
         return
     ctx = _record(d, ev, sid)
     if ev == "SessionStart" and ctx["pane"]:
         _sweep_stale(sid, ctx)
+    if ev == "Stop":
+        _record_permission_mode(d)
 
 
 if __name__ == "__main__":

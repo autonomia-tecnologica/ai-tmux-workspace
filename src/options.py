@@ -3,8 +3,14 @@
 
 Built-in folders: "Agent" (picks the command that runs in the Claude panes, config["agent"]; changing it
 restarts the whole workspace), "Prompts" (config["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
-the prompt into the window's active Claude tab, without submitting) and "Ask Claude" (one-off question to
-`claude -p --model haiku` in the window's repo). config["options"] appends more nodes:
+the prompt into the window's active Claude tab, without submitting), "Ask Claude" (one-off question to
+`claude -p --model haiku` in the window's repo) and "Conference" (two start modes: the window's
+repo plus its config siblings, or a picker of the workspace repos; both create the conference and
+open the conversation screen with a message box in the footer (Enter sends, Ctrl+X stops). Every
+answer comes from an isolated headless Claude, never from the window's session; each participant
+answers only about its own repo (silent when the message is not its subject), may read the sibling
+repos for the cross-validation, reads the repo's harness and may change only its `BACKLOG.md`).
+config["options"] appends more nodes:
   {"label": "...", "children": [...]}   folder (Enter, Space or the arrows collapse/expand)
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer
   {"label": "...", "run": "cmd"}        runs a shell command in the repo, shows its output
@@ -12,6 +18,8 @@ the prompt into the window's active Claude tab, without submitting) and "Ask Cla
 Built-in "Microfone" leaf: records the default mic until you stop talking (mic.py) and types the transcript, no Enter.
 Usage: options.py <window id>
 """
+import contextlib
+import io
 import os
 import shlex
 import subprocess
@@ -53,6 +61,10 @@ def tree():
         {"label": i18n.t("options.prompts"), "prompts": True,
          "children": [{"label": " ".join(p.split()), "type": p} for p in prompt_list()]},
         {"label": i18n.t("options.ask"), "children": [{"label": i18n.t("options.ask_haiku"), "ask": "haiku"}]},
+        {"label": i18n.t("options.conference"), "children": [
+            {"label": i18n.t("options.conference.siblings"), "conference": "siblings"},
+            {"label": i18n.t("options.conference.selected"), "conference": "selected"},
+        ]},
     ]
     agents = sorted(set(lib.ler_config().get("profiles", {})) | {"claude"})
     current = lib.agent_name()
@@ -153,12 +165,35 @@ def on_key(v, k):
 
 def repo_and_command(window):
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
-    return repo, shlex.split(lib.agent_command())
+    return repo, shlex.split(lib.agent_launch_command())
+
+
+def confirm_security(name):
+    """Before switching to a non-Claude profile, shows what security is lost and asks for an explicit
+    confirmation. Non-Claude profiles lose the Claude auto classifier and run under bypassPermissions;
+    the full list is one key away, on the same screen. Returns True to continue."""
+    if name == "claude":
+        return True
+    title = i18n.t("options.agent.security.title", profile=name)
+    show(title, i18n.t("options.agent.security.summary", profile=name))
+    while True:
+        try:
+            answer = input(f" {ORANGE}{i18n.t('options.agent.security.confirm')}{R} ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            return False
+        if answer in ("s", "sim", "y", "yes"):
+            return True
+        if answer in ("d", "detalhes", "details"):
+            show(title, i18n.t("options.agent.security.details", profile=name))
+            continue
+        return False
 
 
 def switch_agent(name, window):
     """Saves the agent and restarts the whole workspace (Claude resumes with --continue)."""
     if name == lib.agent_name():
+        return
+    if not confirm_security(name):
         return
     try:
         lib.set_agent(name)
@@ -170,7 +205,127 @@ def switch_agent(name, window):
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def conference_output(fn, *args, **kwargs):
+    """Runs a conference action in-process and returns what it printed (stdout + stderr)."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        fn(*args, **kwargs)
+    return buf.getvalue().strip()
+
+
+def workspace_repos(window_repo):
+    """[(group, [(name, path), ...]), ...] for the picker. The window repo is always first (even
+    when the config does not list it); repeated paths keep the first occurrence."""
+    window_repo = lib.expandir(window_repo)
+    entries = [("", [(os.path.basename(window_repo), window_repo)])]
+    seen = {window_repo}
+
+    def add(group, repos):
+        keep = []
+        for name, path in repos:
+            path = lib.expandir(path)
+            if path in seen or not os.path.isdir(path):
+                continue
+            seen.add(path)
+            keep.append((name or os.path.basename(path), path))
+        if keep:
+            entries.append((group, keep))
+
+    principal = lib.ler_principal()
+    if principal:
+        add("", [principal])
+    for group, repos in lib.ler_repos():
+        add(group, repos)
+    return entries
+
+
+def choose_repos(window_repo):
+    """Multi-select screen of the workspace repos. Returns the marked paths in display order, or []
+    when the screen is cancelled or nothing is marked. The window repo starts marked."""
+    entries = workspace_repos(window_repo)
+    paths = [path for _, repos in entries for _, path in repos]
+    state = {"selected": {lib.expandir(window_repo)}, "done": False, "notice": ""}
+    title, keys = i18n.t("options.conference.pick_title"), i18n.t("options.conference.pick_keys")
+
+    def collect(v):
+        cols = term_cols()
+        body = [Linha()]
+        if state["notice"]:
+            body += [Linha(f" {DIM}{state['notice']}{R}"), Linha()]
+        for group, repos in entries:
+            if group:
+                body.append(Linha(f" {DIM}{group}{R}"))
+            for name, path in repos:
+                mark = "●" if path in state["selected"] else "○"
+                color = ORANGE if path == v.chave else ""
+                body.append(Linha(f" {color}{mark} {name}{R}", chave=path))
+        return popup_header(title, keys, cols), body
+
+    def on_input(v, k):
+        if k in ("\r", "\n"):
+            if not state["selected"]:
+                state["notice"] = i18n.t("options.conference.pick_none")
+                v.recoletar.set()
+                return True
+            state["done"] = True
+            v.parar = True
+            v._acordar()
+            return True
+        if k == " ":
+            if v.chave:
+                state["selected"] = (state["selected"] - {v.chave}
+                                     if v.chave in state["selected"]
+                                     else state["selected"] | {v.chave})
+                state["notice"] = ""
+                v.recoletar.set()
+            return True
+        if k == "a":
+            state["selected"] = set(paths)
+            state["notice"] = ""
+            v.recoletar.set()
+            return True
+        if k == "n":
+            state["selected"].clear()
+            state["notice"] = ""
+            v.recoletar.set()
+            return True
+        return False
+
+    def footer(_v):
+        return f"{DIM}{i18n.t('options.conference.pick_footer', n=len(state['selected']))}{R}"
+
+    Viewer(collect, intervalo=3600, cursor=True,
+           chave_inicial=paths[0] if paths else None,
+           ao_tecla=close_on_esc, entrada=on_input, rodape=footer).rodar()
+    if not state["done"]:
+        return []
+    return [path for path in paths if path in state["selected"]]
+
+
+def run_conference(node, window):
+    """Conference leaves: start with the window repo plus its config siblings, or with the workspace
+    repos chosen on the picker; both open the conversation screen right after the start."""
+    import conference
+
+    action = node["conference"]
+    repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
+    if action == "selected":
+        repos = choose_repos(repo)
+        if not repos:
+            return
+        text_out = conference_output(conference.start, repos=repos, repo=repo)
+    else:
+        text_out = conference_output(conference.start, repo=repo)
+    if conference.read_active():    # started: the point of starting is the message box
+        conference.converse(repo=repo)
+        return
+    show(node["label"], text_out or i18n.t("options.no_output"))
+
+
 def run_leaf(node, window):
+    if "conference" in node:
+        run_conference(node, window)
+        return
     if "migrate" in node:
         try:
             destino = lib.migrar_config()

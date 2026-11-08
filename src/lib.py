@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from i18n import t
+import permission_state
 import tmux
 import yaml_min
 
@@ -95,15 +96,26 @@ def migrar_config():
 
 
 def agent_name():
-    """Chosen agent (settings.json "agent"); falls back to "claude" when unset or not in "profiles"."""
+    """Chosen agent (config.yaml "agent"); falls back to "claude" when unset or not in "profiles"."""
     profiles = ler_config().get("profiles", {})
     name = ler_config().get("agent", "claude")
     return name if name in profiles or name == "claude" else "claude"
 
 
 def agent_command():
-    """Command line of the chosen agent: settings.json["profiles"][agent], else plain `claude`."""
+    """Command line of the chosen agent: config.yaml["profiles"][agent], else plain `claude`."""
     return ler_config().get("profiles", {}).get(agent_name(), "") or "claude"
+
+
+def agent_launch_command(mode=""):
+    """Command line that actually launches the agent. Profiles other than `claude` run with tool search
+    off: their Anthropic-compatible endpoints reject the `tool_definition` blocks Claude Code stores for
+    tool search, which breaks `--continue` (decision D9 in the harness record). The recorded agent
+    identity is still `agent_command()`; the env prefix and the permission mode are launch details, not a
+    profile change. `mode` is omitted when the caller does not have a repo to read it from."""
+    cmd = agent_command()
+    launch = cmd if agent_name() == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
+    return f"{launch} --permission-mode {shlex.quote(mode)}" if mode else launch
 
 
 # Per-repo agent command of the last opening: {repo path: {"command": ...}}, plus a reserved "__notice__"
@@ -185,13 +197,16 @@ def opening_command(repo):
     for the same repo and change."""
     repo = expandir(repo)
     cmd = agent_command()
+    mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+    permission_state.record_launch(repo, cmd, mode)
+    launch = agent_launch_command(mode)
     state = _read_agent_state()
     previous = state.get(repo)
     prev_cmd = previous.get("command") if isinstance(previous, dict) else previous   # old format: the command
     state[repo] = {"command": cmd}
     if prev_cmd == cmd:
         _write_agent_state(state)
-        return f"{cmd} --continue || {cmd}"
+        return f"{launch} --continue || {launch}"
     transcript = previous_transcript(repo)
     prompt = ""
     if transcript and state.get(NOTICE) != cmd:
@@ -199,8 +214,8 @@ def opening_command(repo):
         prompt = t("agent.migrated", path=str(transcript))
     _write_agent_state(state)
     if prompt:
-        return f"{cmd} {shlex.quote(prompt)} || {cmd}"
-    return cmd
+        return f"{launch} {shlex.quote(prompt)} || {launch}"
+    return launch
 
 
 def set_agent(name):
@@ -246,45 +261,45 @@ def ler_relacoes():
     return [(nome, _entradas(caminhos)) for nome, caminhos in relacoes.items()]
 
 
-def _pares_irmaos(cfg):
-    """{caminho: {irmãos}}: "siblings" declarado numa entrada de "groups" vale nos dois sentidos."""
-    pares = {}
-    for caminhos in cfg.get("groups", {}).values():
-        for c in caminhos if isinstance(caminhos, list) else []:
-            if not isinstance(c, dict) or not isinstance(c.get("path"), str) or not c["path"]:
+def _sibling_pairs(cfg):
+    """{path: {siblings}}: "siblings" written on a "groups" entry holds in both directions."""
+    pairs = {}
+    for paths in cfg.get("groups", {}).values():
+        for entry in paths if isinstance(paths, list) else []:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not entry["path"]:
                 continue
-            a = expandir(c["path"])
-            sibs = c.get("siblings")
-            for s in sibs if isinstance(sibs, list) else []:
-                if isinstance(s, str) and s and expandir(s) != a:
-                    b = expandir(s)
-                    pares.setdefault(a, set()).add(b)
-                    pares.setdefault(b, set()).add(a)
-    return pares
+            repo = expandir(entry["path"])
+            declared = entry.get("siblings")
+            for path in declared if isinstance(declared, list) else []:
+                if isinstance(path, str) and path and expandir(path) != repo:
+                    other = expandir(path)
+                    pairs.setdefault(repo, set()).add(other)
+                    pairs.setdefault(other, set()).add(repo)
+    return pairs
 
 
-def _dentro(caminho, pasta):
-    return caminho == pasta or caminho.startswith(pasta + "/")
+def _inside(path, folder):
+    return path == folder or path.startswith(folder + "/")
 
 
-def irmaos(caminho):
-    """Irmãos de um repo, sem o próprio, em ordem. Duas fontes:
-    (a) "parent_folder": se o repo está dentro dela, são irmãos todos os repos listados (main e groups) também dentro dela;
-    (b) "siblings" declarado numa entrada de "groups", que vale nos dois sentidos (inclusive fora da pasta-mãe)."""
+def siblings(path):
+    """Siblings of a repo, without itself, sorted. Two sources:
+    (a) "parent_folder": when the repo is inside it, every listed repo (main and groups) also inside it;
+    (b) "siblings" written on a "groups" entry, which holds in both directions (even outside the parent folder)."""
     cfg = ler_config()
-    alvo = expandir(caminho)
-    res = set(_pares_irmaos(cfg).get(alvo, set()))
-    pasta = cfg.get("parent_folder")
-    if isinstance(pasta, str) and pasta:
-        pasta = expandir(pasta)
-        if _dentro(alvo, pasta):
-            listados = _entradas([cfg.get("main")]) + [p for _, rs in ler_repos() for _, p in rs]
-            res |= {p for p in listados if p != alvo and _dentro(p, pasta)}
-    return sorted(res)
+    target = expandir(path)
+    found = set(_sibling_pairs(cfg).get(target, set()))
+    folder = cfg.get("parent_folder")
+    if isinstance(folder, str) and folder:
+        folder = expandir(folder)
+        if _inside(target, folder):
+            listed = _entradas([cfg.get("main")]) + [p for _, rs in ler_repos() for _, p in rs]
+            found |= {p for p in listed if p != target and _inside(p, folder)}
+    return sorted(found)
 
 
 def ler_principal():
-    """(nome, caminho) do repo principal de settings.json ("main"), ou None. Fica fora dos grupos."""
+    """(nome, caminho) do repo principal de config.yaml ("main"), ou None. Fica fora dos grupos."""
     c = ler_config().get("main")
     if not isinstance(c, str) or not c:
         return None
@@ -615,7 +630,7 @@ def estado_git(repo):
 
 
 # --- Plugins -----------------------------------------------------------------------------------
-# Listed in settings.json ("plugins": {perfil: [{"id", "path"}]}). Nothing is discovered: a folder
+# Listed in config.yaml ("plugins": {perfil: [{"id", "path"}]}). Nothing is discovered: a folder
 # is loaded only when its entry is there, and only from the fixed path written in the entry.
 # The folder holds plugin.json: id, label (key of the plugin's own i18n/pt-BR.json), layout (same
 # line format as REPO_TREE in bin/workspace; the root pane is the window itself and has role claude),
@@ -631,7 +646,7 @@ class ErroPlugin(Exception):
 
 
 def plugins_listados(perfil):
-    """Raw entries of settings.json["plugins"][perfil]: only what is listed there is ever loaded."""
+    """Raw entries of config.yaml["plugins"][perfil]: only what is listed there is ever loaded."""
     return ler_config().get("plugins", {}).get(perfil, [])
 
 
@@ -670,7 +685,7 @@ def _layout_plugin(id_, texto):
 
 
 def carregar_plugin(entrada):
-    """(id, pasta, label traduzido, layout) of one settings.json entry; raises ErroPlugin if invalid."""
+    """(id, pasta, label traduzido, layout) of one config.yaml entry; raises ErroPlugin if invalid."""
     if not isinstance(entrada, dict) or not isinstance(entrada.get("id"), str) \
             or not isinstance(entrada.get("path"), str):
         raise ErroPlugin(t("plugin.err.entry", entry=json.dumps(entrada, ensure_ascii=False)))
@@ -711,8 +726,15 @@ if __name__ == "__main__":
     import sys
     comando = sys.argv[1]
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
-    if comando == "perfil-cmd":        # bash: the command line of the chosen agent
-        print(agent_command())
+    if comando == "perfil-cmd":        # bash: the command line of the chosen agent (mode per repo when given)
+        repo = expandir(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
+        if repo:
+            cmd = agent_command()
+            mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+            permission_state.record_launch(repo, cmd, mode)
+            print(agent_launch_command(mode))
+        else:
+            print(agent_launch_command())
     elif comando == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
         print(opening_command(sys.argv[2]))
     elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
