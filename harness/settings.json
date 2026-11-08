@@ -1,0 +1,57 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Read"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit|NotebookEdit"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(sudo:*)",
+      "Write(./**/.env)",
+      "Edit(./**/.env)",
+      "Write(./**/*.pem)",
+      "Edit(./**/*.pem)",
+      "Write(./**/*.key)",
+      "Edit(./**/*.key)"
+    ]
+  }
+}
