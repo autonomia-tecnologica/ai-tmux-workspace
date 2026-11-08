@@ -83,5 +83,11 @@ Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova
 `src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
 `src/help.py` (popup da ajuda) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py`.
 
+## Segurança: modelagem de ameaças (pendente)
+
+A modelagem de ameaças deste ambiente será feita em breve e está pendente; até lá, tudo aqui está sujeito a falhas. Acredita-se que o ambiente já seja melhor que usar o Claude diretamente, mas isso não é garantia.
+
+Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `settings.json`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
+
 ## Textos (i18n)
 Todo texto exibido e todo prompt enviado ao Claude mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.
