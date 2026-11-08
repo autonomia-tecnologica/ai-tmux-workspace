@@ -44,7 +44,7 @@
   "prompt.wheel.clear_session": "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos?",
   "prompt.wheel.questions": "Você me enviou muito texto. Tem alguma dúvida? Se sim, me pergunte com enquetes individuais, com a pergunta direto na enquete.",
   "prompt.wheel.parallel": "Implemente o máximo de tarefas já refinadas que podem ser paralelizadas.",
-  "prompt.wheel.refine_all": "Quero refinar TODAS as tarefas pendentes no backlog. Me pergunte cada coisa em uma enquete separada. Envie por lotes, mas não me espere para enviar cada lote.",
+  "prompt.wheel.refine_all": "Quero refinar TODAS as tarefas pendentes no backlog, exceto as pausadas (PAUSADA). Me pergunte cada coisa em uma enquete separada. Envie por lotes, mas não me espere para enviar cada lote.",
   "options.bar": "OPÇÕES",
   "options.keys": "↑↓ move · Enter executa/expande · 1-9 digita prompt · ←→ recolhe/expande · Esc fecha",
   "options.empty": "nenhuma opção",
