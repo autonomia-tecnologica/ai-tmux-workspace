@@ -16,6 +16,7 @@ import json
 import os
 
 import lib
+from colors import R, fg
 
 # name or extension -> (glyph, 256-color code)
 BY_NAME = {
@@ -53,8 +54,8 @@ def enabled():
 def file_icon(name, dim=False):
     low = name.lower()
     g, c = BY_NAME.get(low) or BY_EXT.get(low.rsplit(".", 1)[-1] if "." in low else "") or FILE
-    return f"\x1b[{'2;' if dim else ''}38;5;{c}m{g}\x1b[0m "
+    return f"{fg(c, dim)}{g}{R} "
 
 
 def dir_icon(is_open, dim=False):
-    return f"\x1b[{'2;' if dim else ''}38;5;75m{DIR_OPEN if is_open else DIR_CLOSED}\x1b[0m "
+    return f"{fg(75, dim)}{DIR_OPEN if is_open else DIR_CLOSED}{R} "

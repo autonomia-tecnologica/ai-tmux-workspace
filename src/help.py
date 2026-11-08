@@ -9,11 +9,11 @@ import re
 
 import i18n
 import lib
+from colors import CODE
 from viewer import (ANSI, AMARELO, AZUL, B, CINZA, DIM, ORANGE, R, VERDE, VERMELHO, Linha, Viewer, _larg,
                     close_on_esc, cortar, popup_header, term_cols)
 
 HELP = lib.BASE / "i18n" / f"HELP.{i18n.LOCALE}.md"
-CODE = "\x1b[38;5;215m"            # inline code: soft orange
 MAX_W = 100                        # text column never gets wider than this
 LIST_ITEM = re.compile(r"(\s{0,3})([-*]|\d+\.)\s+")
 TOKEN = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*)")

@@ -19,6 +19,7 @@ import tty
 import i18n
 import lib
 import tmux
+from colors import R, TAB_ACTIVE, TAB_CURSOR, TAB_IDLE, TAB_NEW
 from viewer import direcao
 
 WS =os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -108,14 +109,14 @@ def desenhar(abas, ativo, cursor=None):
     for p, nome in abas + ([] if KIND in NO_PLUS else [("new", "+")]):
         rot = f" {nome} "
         if p == ativo:
-            cor = "\x1b[48;5;75;38;5;16;1m"
+            cor = TAB_ACTIVE
         elif p == "new":
-            cor = "\x1b[38;5;75;1m"
+            cor = TAB_NEW
         else:
-            cor = "\x1b[48;5;238;38;5;250m"
+            cor = TAB_IDLE
         if p == cursor and p != ativo:   # keyboard cursor: lighter background (no underline)
-            cor = "\x1b[48;5;250;38;5;16m"
-        out += f"{cor}{rot}\x1b[0m "
+            cor = TAB_CURSOR
+        out += f"{cor}{rot}{R} "
         mapa.append((x, x + len(rot) - 1, p))
         x += len(rot) + 1
     return out.rstrip(" "), mapa   # no trailing space: on a full-width bar it would wrap and scroll the bar up
