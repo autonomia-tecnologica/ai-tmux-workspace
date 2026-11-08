@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -103,6 +104,103 @@ def agent_name():
 def agent_command():
     """Command line of the chosen agent: settings.json["profiles"][agent], else plain `claude`."""
     return ler_config().get("profiles", {}).get(agent_name(), "") or "claude"
+
+
+# Per-repo agent command of the last opening: {repo path: {"command": ...}}, plus a reserved "__notice__"
+# key with the command whose migration prompt was already shown. A different command means the Claude Code
+# environment changed (other profile/settings/API), so the old transcript must not be resumed.
+AGENT_STATE = ESTADO / "agent.json"
+NOTICE = "__notice__"
+
+
+def _read_agent_state():
+    try:
+        data = json.loads(AGENT_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_agent_state(state):
+    try:
+        AGENT_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = AGENT_STATE.with_name(AGENT_STATE.name + ".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(AGENT_STATE)
+    except OSError:
+        pass
+
+
+def project_dir(repo):
+    """Claude Code project folder of a cwd: under ~/.claude/projects, every non-alphanumeric as `-`."""
+    return HOME / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", repo)
+
+
+def _newest_jsonl(folder):
+    try:
+        files = [f for f in folder.glob("*.jsonl") if f.is_file()]
+        return max(files, key=lambda f: f.stat().st_mtime) if files else None
+    except OSError:
+        return None
+
+
+def previous_transcript(repo):
+    """Newest transcript of the repo: ~/.claude/projects/<project>/*.jsonl, else the `transcript_path`
+    recorded in the session cache. Returns a Path or None."""
+    repo = expandir(repo)
+    found = _newest_jsonl(project_dir(repo))
+    if found:
+        return found
+    best = None
+    try:
+        files = list(SESSOES.glob("*.json"))
+    except OSError:
+        return None
+    for f in files:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        cwd = d.get("cwd") if isinstance(d, dict) else None
+        if not isinstance(cwd, str) or not cwd or expandir(cwd) != repo:
+            continue
+        path = d.get("transcript_path")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        path = Path(os.path.expanduser(path))
+        if not path.is_file():
+            continue
+        ts = d.get("ts") if isinstance(d.get("ts"), (int, float)) else 0
+        if best is None or ts >= best[0]:
+            best = (ts, path)
+    return best[1] if best else None
+
+
+def opening_command(repo):
+    """Command line that opens the repo's Claude pane. Same agent command as the last opening: today's
+    `--continue` (new session when there is none). Different or not recorded yet: new session. When the
+    environment changes, only the first repo opened with a previous transcript gets the i18n migration
+    prompt (the "__notice__" key remembers that this command was already announced); the other repos start
+    the new session silently. The command is recorded before the launch, so the prompt is never repeated
+    for the same repo and change."""
+    repo = expandir(repo)
+    cmd = agent_command()
+    state = _read_agent_state()
+    previous = state.get(repo)
+    prev_cmd = previous.get("command") if isinstance(previous, dict) else previous   # old format: the command
+    state[repo] = {"command": cmd}
+    if prev_cmd == cmd:
+        _write_agent_state(state)
+        return f"{cmd} --continue || {cmd}"
+    transcript = previous_transcript(repo)
+    prompt = ""
+    if transcript and state.get(NOTICE) != cmd:
+        state[NOTICE] = cmd
+        prompt = t("agent.migrated", path=str(transcript))
+    _write_agent_state(state)
+    if prompt:
+        return f"{cmd} {shlex.quote(prompt)} || {cmd}"
+    return cmd
 
 
 def set_agent(name):
@@ -615,6 +713,8 @@ if __name__ == "__main__":
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
     if comando == "perfil-cmd":        # bash: the command line of the chosen agent
         print(agent_command())
+    elif comando == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
+        print(opening_command(sys.argv[2]))
     elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
         print((ler_principal() or ler_repos()[0][1][0])[1])
     elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all

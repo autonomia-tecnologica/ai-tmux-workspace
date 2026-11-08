@@ -95,7 +95,7 @@ build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
 
 # Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   ~22% : rest : ~19% (clamped)
 construir() { # $1=caminho  $2=-d (não selecionar)
-  local path="$1" d="${2:-}" S nome W P cmd T
+  local path="$1" d="${2:-}" S nome W P cmd linha T
   S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S")"
   nome="$(basename "$path")"
   W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
@@ -106,9 +106,12 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   build_tree "$W" "$path" "$REPO_TREE"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
-  # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
+  # mesmo agente que abriu o repo por último: retoma a sessão mais recente (`--continue`, senão uma nova).
+  # agente diferente: sessão nova, já com o prompt de migração quando há transcrição anterior (lib.py).
   # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
-  tmux send-keys -t "$P" "cd ${path@Q}; $cmd --continue || $cmd" Enter
+  linha="$(python3 "$SRC/lib.py" opening-command "$path")"
+  [ -n "$linha" ] || linha="$cmd --continue || $cmd"
+  tmux send-keys -t "$P" "cd ${path@Q}; $linha" Enter
   tmux select-pane -t "$P"
   mobile_apply "$W"
 }

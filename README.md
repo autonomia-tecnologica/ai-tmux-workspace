@@ -10,7 +10,11 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 
 tmux para os repos de `groups` do settings.json. Comando: `workspace`. O agente que roda nos painéis do Claude é escolhido em `agent` do settings.json (comandos em `profiles`,
 ex.: `claude` ou `claude --settings ~/.claude/settings.deepseek.json`); troca pelo menu de opções (Ctrl+b o) e reinicia o
-workspace inteiro (`--continue` mantido). O servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
+workspace inteiro. Cada repo lembra a linha de comando do agente com que foi aberto por último: a mesma linha retoma a
+sessão com `--continue`; uma linha diferente (ou a primeira abertura depois desta mudança) abre sessão nova. Na primeira
+vez que o ambiente muda, o primeiro repo aberto com transcrição anterior recebe um prompt para relê-la e não perder o
+contexto; os demais abrem a sessão nova sem repetir o aviso (vale para qualquer perfil ou config editada à mão). O
+servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
     │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS DIFF GITHUB ... │
@@ -77,8 +81,9 @@ an expired token just fails silently. Amounts come in minor units and are divide
 `workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks`.
 
 ## Persistência
-Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova) e o resto vem do
-`settings.json` e dos arquivos do repo.
+Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
+agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
+migração aparece uma vez só por mudança; ver acima). O resto vem do `settings.json` e dos arquivos do repo.
 
 ## Arquivos
 `config/settings.example.json` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
