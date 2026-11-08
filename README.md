@@ -6,9 +6,9 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 
 **Configuração:** um único `~/.config/ai-tmux-workspace/settings.json` (`profiles`, `main`, `groups` e `prompts`; modelo em `settings.example.json`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`.
 
-tmux para os repos de `groups` do settings.json. Comando: `workspace` (abre `claude --settings …/settings.claude.json`) ou
-`workspace deepseek` (idem com `settings.deepseek.json`); os perfis estão em `profiles` do settings.json. Cada perfil tem o seu
-servidor tmux (socket `ws-<perfil>`), separado do seu tmux normal.
+tmux para os repos de `groups` do settings.json. Comando: `workspace`. O agente que roda nos painéis do Claude é escolhido em `agent` do settings.json (comandos em `profiles`,
+ex.: `claude` ou `claude --settings ~/.claude/settings.deepseek.json`); troca pelo menu de opções (Ctrl+b o) e reinicia o
+workspace inteiro (`--continue` mantido). O servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
     │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS DIFF GITHUB ... │

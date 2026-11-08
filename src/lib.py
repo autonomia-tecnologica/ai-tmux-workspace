@@ -35,6 +35,28 @@ def ler_config():
         return {}
 
 
+def agent_name():
+    """Chosen agent (settings.json "agent"); falls back to "claude" when unset or not in "profiles"."""
+    profiles = ler_config().get("profiles", {})
+    name = ler_config().get("agent", "claude")
+    return name if name in profiles or name == "claude" else "claude"
+
+
+def agent_command():
+    """Command line of the chosen agent: settings.json["profiles"][agent], else plain `claude`."""
+    return ler_config().get("profiles", {}).get(agent_name(), "") or "claude"
+
+
+def set_agent(name):
+    """Persists the chosen agent in settings.json (all other keys untouched)."""
+    cfg = ler_config()
+    cfg["agent"] = name
+    path = config_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
 def ler_repos():
     """[(grupo, [(nome, caminho), ...]), ...] a partir de settings.json ("groups")."""
     grupos = []
@@ -380,8 +402,8 @@ if __name__ == "__main__":
     import sys
     comando = sys.argv[1]
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
-    if comando == "perfil-cmd":        # bash: the command line of profile PERFIL ("" if unknown)
-        print(ler_config().get("profiles", {}).get(perfil, ""))
+    if comando == "perfil-cmd":        # bash: the command line of the chosen agent
+        print(agent_command())
     elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
         print((ler_principal() or ler_repos()[0][1][0])[1])
     elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all

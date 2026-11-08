@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Options screen (`ctrl+b o`): one popup with every option of the workspace in a single expanded tree.
 
-Built-in folders: "Prompts" (settings.json["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
+Built-in folders: "Agent" (picks the command that runs in the Claude panes, settings.json["agent"]; changing it
+restarts the whole workspace), "Prompts" (settings.json["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
 the prompt into the window's active Claude tab, without submitting) and "Ask Claude" (one-off question to
 `claude -p --model haiku` in the window's repo). settings.json["options"] appends more nodes:
   {"label": "...", "children": [...]}   folder (Enter, Space or the arrows collapse/expand)
@@ -42,6 +43,10 @@ def tree():
          "children": [{"label": " ".join(p.split()), "type": p} for p in prompt_list()]},
         {"label": i18n.t("options.ask"), "children": [{"label": i18n.t("options.ask_haiku"), "ask": "haiku"}]},
     ]
+    agents = sorted(set(lib.ler_config().get("profiles", {})) | {"claude"})
+    current = lib.agent_name()
+    nodes.append({"label": i18n.t("options.agent"), "children": [
+        {"label": ("● " if a == current else "○ ") + a, "agent": a} for a in agents]})
     custom = lib.ler_config().get("options")
     if isinstance(custom, list):
         nodes += custom
@@ -132,11 +137,23 @@ def on_key(v, k):
 
 def repo_and_command(window):
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
-    profile = lib.ler_config().get("profiles", {}).get(tmux.display("#{@ws_perfil}", target=window), "") or "claude"
-    return repo, shlex.split(profile)
+    return repo, shlex.split(lib.agent_command())
+
+
+def switch_agent(name, window):
+    """Saves the agent and restarts the whole workspace (Claude resumes with --continue)."""
+    if name == lib.agent_name():
+        return
+    lib.set_agent(name)
+    env = dict(os.environ, WS_SEM_ANEXAR="1")
+    subprocess.Popen([str(lib.BASE / "bin" / "workspace"), "restart"], env=env, start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def run_leaf(node, window):
+    if "agent" in node:
+        switch_agent(node["agent"], window)
+        return
     if "type" in node:
         subprocess.run([str(lib.BASE / "bin" / "workspace"), "type", window, node["type"]], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # workspace — tmux para os repos de settings.json (~/.config/ai-tmux-workspace/).
-#   workspace [perfil]        abre (ou reanexa) o workspace; perfil em settings.json (padrão: claude)
+#   workspace                 abre (ou reanexa) o workspace; o agente (claude, deepseek...) vem de "agent" no settings.json (Ctrl+b o)
 #   workspace install         links `workspace` into ~/.local/bin
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
 #   workspace restart [perfil] kill the tmux server and start again (Claude resumes with --continue)
@@ -568,5 +568,5 @@ case "${1:-}" in
   mview) shift; mview "$@" ;;
   menu) menu "$2" "$3" ;;
   ""|-*) iniciar claude ;;
-  *) iniciar "$1" ;;
+  *) msg cli.unknown_command command="$1" >&2; exit 2 ;;
 esac
