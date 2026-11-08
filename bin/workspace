@@ -549,7 +549,7 @@ case "${1:-}" in
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" ;;
   type) type_prompt "$2" "$3" ;;
-  prompts) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$AQUI" "python3 $SRC/prompts.py $3" ;;
+  options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$AQUI" "python3 $SRC/options.py $3" ;;
   resume) shift; resume "$@" ;;
   tab-new) tab_new "$2" "${3:-}" ;;
   tab-show) tab_show "$2" "$3" ;;

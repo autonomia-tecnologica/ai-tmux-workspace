@@ -11,6 +11,15 @@
     "Implemente o máximo de tarefas já refinadas que podem ser paralelizadas.",
     "Quero refinar TODAS as tarefas pendentes no backlog. Me pergunte cada coisa em uma enquete separada. Envie por lotes, mas não me espere para enviar cada lote."
   ],
+  "options": [
+    {
+      "label": "Ask Claude",
+      "children": [
+        { "label": "Sonnet", "ask": "sonnet" }
+      ]
+    },
+    { "label": "Git status", "run": "git status -sb" }
+  ],
   "main": "~/Codes/main-repo",
   "groups": {
     "Example": [

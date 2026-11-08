@@ -17,6 +17,7 @@ HELP = lib.BASE / "i18n" / f"HELP.{i18n.LOCALE}.md"
 CODE = "\x1b[38;5;215m"            # inline code: soft orange
 ORANGE = "\x1b[38;5;208m"
 MAX_W = 100                        # text column never gets wider than this
+LIST_ITEM = re.compile(r"(\s{0,3})([-*]|\d+\.)\s+")
 TOKEN = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*)")
 SYMBOL_COLOR = {"verde": VERDE, "amarelo": AMARELO, "vermelho": VERMELHO, "cinza": CINZA, "apagada": DIM}
 SYMBOL_DEFAULT = {"◆": AMARELO, "⊘": AMARELO, "⚠": AMARELO, "✖": VERMELHO, "◌": DIM, "○": CINZA}
@@ -145,6 +146,15 @@ def render(md, cols):
                 out.append(Linha())
             emit([f"{B}{AZUL}▌ {ln[3:]}{R}"])
             i += 1
+        elif ln.lstrip().startswith("```"):          # fenced code block (model answers)
+            i += 1
+            block = []
+            while i < len(lines) and not lines[i].lstrip().startswith("```"):
+                block.append(lines[i])
+                i += 1
+            i += 1
+            emit(code_block(block, w))
+            out.append(Linha())
         elif ln.startswith("    "):
             block = []
             while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
@@ -163,13 +173,18 @@ def render(md, cols):
                 i += 1
             emit(table(rows, w))
             out.append(Linha())
-        elif ln.startswith("- "):
-            while i < len(lines) and lines[i].startswith("- "):
-                emit(wrap(lines[i][2:], w, indent="  ", first=f"{ORANGE}•{R} "))
+        elif ln.startswith("### "):
+            emit([f"{B}{AZUL}{ln[4:]}{R}"])
+            i += 1
+        elif LIST_ITEM.match(ln):
+            while i < len(lines) and LIST_ITEM.match(lines[i]):
+                m = LIST_ITEM.match(lines[i])
+                mark = f"{ORANGE}{m.group(2)}{R} " if m.group(2)[0].isdigit() else f"{ORANGE}•{R} "
+                emit(wrap(lines[i][m.end():], w, indent=" " * (len(m.group(1)) + 2), first=" " * len(m.group(1)) + mark))
                 i += 1
         else:
             para = []
-            while i < len(lines) and lines[i].strip() and not re.match(r"(#|\||- |    )", lines[i]):
+            while i < len(lines) and lines[i].strip() and not re.match(r"(#|\||```|    )", lines[i]) and not LIST_ITEM.match(lines[i]):
                 para.append(lines[i].strip())
                 i += 1
             emit(wrap(" ".join(para), w))

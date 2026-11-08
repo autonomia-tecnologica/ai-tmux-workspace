@@ -63,6 +63,9 @@ def collect(v):
             used += (2 if used else 1) + len(plain)
         body.append(Linha(row))
         body.append(Linha())                                # blank line between counters and tasks
+        body.append(Linha(f" {DIM}{glyphs.arrow(False)}{R} {t('expand_all')}", ("b", CURRENT, "expand")))
+        body.append(Linha(f" {DIM}{glyphs.arrow(True)}{R} {t('collapse_all')}", ("b", CURRENT, "collapse")))
+        body.append(Linha())
         rail = {}                                           # id -> tree prefix for its children/lines
         rows = []                                           # (group header | tree row), grouped by category
         for cat, members in backlog.groups(items):
@@ -124,6 +127,16 @@ def collect(v):
 
 def enter(v, key, k):
     path = key[1]
+    if key[0] == "b":          # expand/collapse all categories (collapse also closes item details)
+        file = os.path.join(CURRENT, "BACKLOG.md")
+        items = backlog.parse(file) if os.path.exists(file) else None
+        if key[2] == "expand":
+            OPEN_GROUPS.update(cat for cat, _ in backlog.groups(items or []))
+        else:
+            OPEN_GROUPS.clear()
+            OPEN.clear()
+        v.recoletar.set()
+        return
     if key[0] == "g":          # category header: Right/Left open and close it
         return
     if key[3] == "cycle":      # invalid until the cycle is undone
