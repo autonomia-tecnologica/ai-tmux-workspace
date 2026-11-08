@@ -13,6 +13,7 @@ import glyphs
 import i18n
 import lib
 import tmux
+from tree_state import Expander
 from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer, ellipsize
 
 
@@ -29,8 +30,8 @@ def effective(i):
         return "cycle"
     return "blocked" if i["blocked"] and i["status"] == "ready" else i["status"]
 CURRENT = lib.repo_atual()
-OPEN = set()    # ids of items whose description is expanded (Right opens, Left closes)
-OPEN_GROUPS = set()    # categories whose items are shown (Right opens, Left closes); closed by default
+ITENS = Expander()    # items whose description is expanded (Right opens, Left closes)
+GRUPOS = Expander()    # categories whose items are shown (Right opens, Left closes); closed by default
 
 
 def collect(v):
@@ -69,12 +70,12 @@ def collect(v):
         rows = []                                           # (group header | tree row), grouped by category
         for cat, members in backlog.groups(items):
             rows.append(("g", cat, members))
-            if cat in OPEN_GROUPS:
+            if GRUPOS.is_open(cat):
                 rows.extend(("i", *r) for r in backlog.tree(members))
         for row in rows:
             if row[0] == "g":
                 _, cat, members = row
-                opened = cat in OPEN_GROUPS
+                opened = GRUPOS.is_open(cat)
                 n_ready = sum(effective(m) == "ready" for m in members)
                 counts = f"{len(members)}" + (f", {n_ready} {t('ready')}" if n_ready else "")
                 name = cat or t("no_category")
@@ -94,7 +95,7 @@ def collect(v):
             if i["typo"] or i["cross"]:
                 dep += f" {glyphs.warn()}"
             pad = len(lead) + 5 + len(str(i["id"]))   # "<lead>▸ ● 12 "
-            opened = i["id"] in OPEN
+            opened = ITENS.is_open(i["id"])
             first = f"{DIM}{lead}{glyphs.arrow(opened)}{R} {glyphs.task_mark(st)} {DIM}{i['id']}{R} "
             if not opened:
                 title = i["title"]
@@ -128,10 +129,13 @@ def enter(v, key, k):
         file = os.path.join(CURRENT, "BACKLOG.md")
         items = backlog.parse(file) if os.path.exists(file) else None
         if key[2] == "expand":
-            OPEN_GROUPS.update(cat for cat, _ in backlog.groups(items or []))
+            for cat, _ in backlog.groups(items or []):
+                GRUPOS.open(cat)
         else:
-            OPEN_GROUPS.clear()
-            OPEN.clear()
+            for cat, _ in backlog.groups(items or []):
+                GRUPOS.close(cat)
+            for i in items or []:
+                ITENS.close(i["id"])
         v.recoletar.set()
         return
     if key[0] == "g":          # category header: Right/Left open and close it
@@ -149,8 +153,7 @@ def on_key(v, k):
     """Right expands the item or category under the cursor, Left collapses it (like the files tree)."""
     if k not in ("left", "right") or not v.chave or v.chave[0] not in ("i", "g"):
         return
-    target = OPEN_GROUPS if v.chave[0] == "g" else OPEN
-    (target.add if k == "right" else target.discard)(v.chave[2])
+    (GRUPOS if v.chave[0] == "g" else ITENS).handle_arrow(k, v.chave[2])
     v.recoletar.set()
 
 

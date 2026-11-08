@@ -21,12 +21,13 @@ import help
 import i18n
 import lib
 import tmux
+from tree_state import Expander
 from viewer import B, DIM, ORANGE, R, Linha, Viewer, close_on_esc, popup_header, term_cols
 
 MAX_W = 100
 TIMEOUT_S = 300
 
-collapsed = set()   # everything starts expanded: all options on one screen
+PASTAS = Expander(padrao_aberto=True)   # everything starts expanded: all options on one screen
 pending = None      # leaf chosen in the tree, run after the viewer closes
 
 
@@ -61,7 +62,7 @@ def flatten(nodes, depth=0, path=()):
             continue
         key = ".".join(map(str, path + (i,)))
         rows.append((key, depth, node))
-        if isinstance(node.get("children"), list) and key not in collapsed:
+        if isinstance(node.get("children"), list) and PASTAS.is_open(key):
             rows += flatten(node["children"], depth + 1, path + (i,))
     return rows
 
@@ -75,7 +76,7 @@ def collect(v):
         folder = isinstance(node.get("children"), list)
         pad = "  " * depth
         if folder:
-            mark = "▸" if key in collapsed else "▾"
+            mark = "▾" if PASTAS.is_open(key) else "▸"
             body.append(Linha(f" {pad}{ORANGE}{B}{mark} {node['label']}{R}", chave=key))
             continue
         num = ""
@@ -95,8 +96,9 @@ def node_of(key):
     return next((n for k, _, n in flatten(tree()) if k == key), None)
 
 
-def set_collapsed(key, value):
-    (collapsed.add if value else collapsed.discard)(key)
+def pai_de(key):
+    """Parent key of a row ("0.1" -> "0"), None at the top level."""
+    return key.rsplit(".", 1)[0] if "." in key else None
 
 
 def on_enter(v, key, k):
@@ -105,7 +107,10 @@ def on_enter(v, key, k):
     if node is None:
         return
     if isinstance(node.get("children"), list):
-        set_collapsed(key, key not in collapsed if k != "l" else False)
+        if k == "l":        # Right opens; Enter and Space toggle
+            PASTAS.open(key)
+        else:
+            PASTAS.toggle(key)
         v.recoletar.set()
     else:
         pending = node
@@ -127,11 +132,11 @@ def on_key(v, k):
         on_enter(v, v.chave, "l")
     elif k == "left" and v.chave is not None:
         node = node_of(v.chave)
-        if node and isinstance(node.get("children"), list) and v.chave not in collapsed:
-            set_collapsed(v.chave, True)
-        elif "." in v.chave:        # leaf or collapsed folder: move up to the parent and collapse it
-            v.chave = v.chave.rsplit(".", 1)[0]
-            set_collapsed(v.chave, True)
+        pasta = isinstance(node, dict) and isinstance(node.get("children"), list)
+        novo = PASTAS.handle_arrow(k, v.chave, pai=pai_de, pasta=pasta)
+        if novo != v.chave:         # leaf or collapsed folder: moved up, and the parent folder collapses
+            PASTAS.close(novo)
+            v.chave = novo
         v.recoletar.set()
 
 
