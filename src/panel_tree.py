@@ -22,27 +22,19 @@ USE_ICONS = icons.enabled()
 
 
 def status_git():
-    rc, out = lib.git(REPO, "status", "--porcelain", "-uall")
-    res = {}
-    if rc == 0:
-        for l in out.splitlines():
-            res[os.path.join(REPO, l[3:].split(" -> ")[-1].strip('"'))] = l[:2]
-    return res
+    st = lib.git_status(REPO) or {}
+    return {os.path.join(REPO, p): xy for p, xy in st.items()}
 
 
 def ignored_names(pasta, itens):
     """Names among `itens` that git ignores (one `git check-ignore` call per folder)."""
     if not itens:
         return set()
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", LC_ALL="C.UTF-8")
-    try:
-        r = subprocess.run(["git", "-C", REPO, "check-ignore", "-z", "--stdin"], capture_output=True,
-                           input="\0".join(e.path for e in itens) + "\0", text=True, timeout=5, env=env)
-    except Exception:
+    rc, out = lib.git(REPO, "check-ignore", "-z", "--stdin",
+                      input="\0".join(e.path for e in itens) + "\0", timeout=5)
+    if rc != 0:   # 1 = nenhum ignorado (saída vazia); erro cai aqui também
         return set()
-    if r.returncode not in (0, 1):
-        return set()
-    return {os.path.basename(x.rstrip("/")) for x in r.stdout.split("\0") if x}
+    return {os.path.basename(x.rstrip("/")) for x in out.split("\0") if x}
 
 
 def listar(pasta):
