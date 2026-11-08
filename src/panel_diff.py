@@ -13,14 +13,10 @@ REPO = lib.repo_atual()
 
 
 def coletar(v):
-    rc, out = lib.git(REPO, "status", "--porcelain", "-uall", "-b")
-    if rc != 0:
+    st = lib.git_status(REPO)
+    if st is None:
         return [], [Linha(f" {DIM}{i18n.t('diff.not_repo')}{R}")]
-    linhas = out.splitlines()
-    ramo = linhas[0][3:].split("...")[0] if linhas else "?"
-    st = {}
-    for l in linhas[1:]:
-        st[l[3:].split(" -> ")[-1].strip('"')] = l[:2]
+    ramo = lib.git_branch(REPO)
     nums = {}
     _, ns = lib.git(REPO, "diff", "HEAD", "--numstat")
     for l in ns.splitlines():

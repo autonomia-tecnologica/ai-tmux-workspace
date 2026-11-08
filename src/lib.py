@@ -131,14 +131,44 @@ def estados_por_repo(repos, agora=None):
     return res
 
 
-def git(repo, *args, timeout=15):
+def git(repo, *args, timeout=15, input=None):
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", LC_ALL="C.UTF-8")
     try:
         r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
-                           timeout=timeout, env=env)
+                           timeout=timeout, env=env, input=input)
         return r.returncode, r.stdout
     except Exception as e:
         return 1, str(e)
+
+
+def git_status(repo, untracked=True):
+    """`git status` como {caminho: xy}, ou None se não for repo. Usa -z: caminho sem aspas,
+    e renomeio/cópia traz o caminho antigo num campo extra, que é pulado."""
+    rc, out = git(repo, "status", "--porcelain", "-z", "-uall" if untracked else "-uno")
+    if rc != 0:
+        return None
+    res = {}
+    campos = out.split("\0")
+    i = 0
+    while i < len(campos):
+        campo = campos[i]
+        i += 1
+        if len(campo) < 4:
+            continue
+        xy = campo[:2]
+        res[campo[3:]] = xy
+        if xy[0] in "RC":
+            i += 1
+    return res
+
+
+def git_branch(repo):
+    """Ramo atual; em HEAD solto, o hash curto."""
+    rc, out = git(repo, "symbolic-ref", "--short", "-q", "HEAD")
+    if rc == 0 and out.strip():
+        return out.strip()
+    rc, out = git(repo, "rev-parse", "--short", "HEAD")
+    return out.strip() if rc == 0 and out.strip() else "?"
 
 
 _GH_CACHE = {}        # repo -> (ts, estado)
