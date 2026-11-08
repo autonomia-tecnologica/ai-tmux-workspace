@@ -151,7 +151,7 @@ def switch_agent(name, window):
         return
     lib.set_agent(name)
     env = dict(os.environ, WS_SEM_ANEXAR="1")
-    subprocess.Popen([str(lib.BASE / "bin" / "workspace"), "restart"], env=env, start_new_session=True,
+    subprocess.Popen([lib.WS, "restart"], env=env, start_new_session=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -160,7 +160,7 @@ def run_leaf(node, window):
         switch_agent(node["agent"], window)
         return
     if "type" in node:
-        subprocess.run([str(lib.BASE / "bin" / "workspace"), "type", window, node["type"]], check=False,
+        subprocess.run([lib.WS, "type", window, node["type"]], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     repo, base = repo_and_command(window)

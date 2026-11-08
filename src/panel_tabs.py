@@ -22,8 +22,6 @@ import tmux
 from colors import R, TAB_ACTIVE, TAB_CURSOR, TAB_IDLE, TAB_NEW
 from viewer import direcao
 
-WS =os.path.join(os.environ.get("WS_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                  "bin", "workspace")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 
 
@@ -143,17 +141,17 @@ def main():
             wid = janela_repo()
             if wid:
                 tmux.run("select-window", "-t", wid)
-                subprocess.Popen([WS, "left", p, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen([lib.WS, "left", p, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if KIND == "repos" and p in ("repos", "sessions"):
-            subprocess.Popen([WS, "left", p, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen([lib.WS, "left", p, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if KIND in ("repos", "tasks"):
             return
         if KIND == "side":
-            cmd = [WS, "side", p, win]
+            cmd = [lib.WS, "side", p, win]
         else:
-            cmd = [WS, "tab-new", win, KIND] if p == "new" else [WS, "tab-show", win, p]
+            cmd = [lib.WS, "tab-new", win, KIND] if p == "new" else [lib.WS, "tab-show", win, p]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     cursor = [cur]

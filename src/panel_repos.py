@@ -68,7 +68,7 @@ def enter(v, chave, tecla):
         GRUPOS.toggle(valor)
         v.recoletar.set()
     else:
-        subprocess.run([str(lib.BASE / "bin" / "workspace"), "open", valor], timeout=20,
+        subprocess.run([lib.WS, "open", valor], timeout=20,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

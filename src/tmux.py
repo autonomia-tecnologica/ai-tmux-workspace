@@ -48,6 +48,11 @@ def message(text, ms=2000):
     run("display-message", "-d", str(ms), text)
 
 
+def popup(cmd, cwd):
+    """Opens `cmd` in a tmux popup at 92%x92% in `cwd`, blocking until the user closes it."""
+    run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", cwd, cmd, timeout=None)
+
+
 def quote_cmd(argv):
     """Quotes a command for a tmux command string: shell-quotes each argument, then wraps the whole
     line in double quotes, escaping \\ " $ and doubling # (tmux expands formats in it)."""

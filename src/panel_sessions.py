@@ -109,7 +109,7 @@ def enter(v, chave, tecla):
             win = wid
             break
     if win:
-        subprocess.run([str(lib.BASE / "bin" / "workspace"), "tab-show", win, pane],
+        subprocess.run([lib.WS, "tab-show", win, pane],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
         tmux.run("select-window", "-t", win)
     else:
