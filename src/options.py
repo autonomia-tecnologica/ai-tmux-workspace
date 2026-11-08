@@ -9,6 +9,7 @@ the prompt into the window's active Claude tab, without submitting) and "Ask Cla
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer
   {"label": "...", "run": "cmd"}        runs a shell command in the repo, shows its output
   {"label": "...", "type": "text"}      types the text into the active Claude tab
+Built-in "Microfone" leaf: records the default mic until you stop talking (mic.py) and types the transcript, no Enter.
 Usage: options.py <window id>
 """
 import os
@@ -48,6 +49,7 @@ def tree():
     current = lib.agent_name()
     nodes.append({"label": i18n.t("options.agent"), "children": [
         {"label": ("● " if a == current else "○ ") + a, "agent": a} for a in agents]})
+    nodes.append({"label": i18n.t("options.general"), "children": [{"label": i18n.t("options.mic"), "mic": True}]})
     custom = lib.ler_config().get("options")
     if isinstance(custom, list):
         nodes += custom
@@ -156,6 +158,10 @@ def switch_agent(name, window):
 
 
 def run_leaf(node, window):
+    if "mic" in node:
+        import mic
+        mic.run(window)
+        return
     if "agent" in node:
         switch_agent(node["agent"], window)
         return
@@ -199,6 +205,6 @@ def show(title, text):
 if __name__ == "__main__":
     WINDOW = sys.argv[1] if len(sys.argv) > 1 else ""
     if WINDOW:
-        Viewer(collect, intervalo=3600, cursor=True, ao_enter=on_enter, ao_tecla=on_key).rodar()
+        Viewer(collect, intervalo=3600, cursor=True, ao_enter=on_enter, ao_tecla=on_key, wrap=True).rodar()
         if pending:
             run_leaf(pending, WINDOW)

@@ -109,8 +109,9 @@ def close_on_esc(v, k):
 
 class Viewer:
     def __init__(self, coletar, intervalo=2.0, cursor=False, ao_enter=None, chave_inicial=None,
-                 ao_tecla=None, ao_perde_foco=None, rodape=None, acoes=None):
+                 ao_tecla=None, ao_perde_foco=None, rodape=None, acoes=None, wrap=False):
         self.coletar, self.intervalo, self.cursor = coletar, intervalo, cursor
+        self.wrap = wrap        # up on the first row goes to the last, down on the last goes to the first
         self.ao_enter, self.ao_tecla, self.ao_perde_foco = ao_enter, ao_tecla, ao_perde_foco
         self.rodape = rodape    # footer(viewer) -> full text of the selection, wrapped on a fixed footer
         self.acoes = acoes      # acoes(viewer, chave) -> [(rotulo, ativa, funcao(viewer, chave))]
@@ -265,7 +266,10 @@ class Viewer:
             self.idx = sel[0] if d == "ini" else sel[-1]
         else:
             pos = min(range(len(sel)), key=lambda k: abs(sel[k] - self.idx))
-            self.idx = sel[max(0, min(len(sel) - 1, pos + d))]
+            if self.wrap and d in (1, -1):
+                self.idx = sel[(pos + d) % len(sel)]
+            else:
+                self.idx = sel[max(0, min(len(sel) - 1, pos + d))]
         self.chave = self.corpo[self.idx].chave
         h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
         self._visivel(h)
