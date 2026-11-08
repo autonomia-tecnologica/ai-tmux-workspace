@@ -5,17 +5,15 @@ Used by `ctrl+b h` (tmux popup). Scroll with arrows/j/k/PgUp/PgDn/g/G/mouse; Esc
 Supports the Markdown subset the help file uses: headings, paragraphs, `-` lists, tables, indented code
 blocks, `inline code` and **bold**.
 """
-import os
 import re
-import sys
 
 import i18n
 import lib
-from viewer import ANSI, AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer, _larg, cortar
+from viewer import (ANSI, AMARELO, AZUL, B, CINZA, DIM, ORANGE, R, VERDE, VERMELHO, Linha, Viewer, _larg,
+                    close_on_esc, cortar, popup_header, term_cols)
 
 HELP = lib.BASE / "i18n" / f"HELP.{i18n.LOCALE}.md"
 CODE = "\x1b[38;5;215m"            # inline code: soft orange
-ORANGE = "\x1b[38;5;208m"
 MAX_W = 100                        # text column never gets wider than this
 LIST_ITEM = re.compile(r"(\s{0,3})([-*]|\d+\.)\s+")
 TOKEN = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*)")
@@ -195,22 +193,15 @@ _cache = {}
 
 
 def collect(v):
-    cols = os.get_terminal_size().columns if sys.stdout.isatty() else 80
+    cols = term_cols()
     try:
         stamp = (HELP.stat().st_mtime, cols)
     except OSError:
         return [], [Linha(f" {VERMELHO}{i18n.t('help.not_found', path=HELP.name)}{R}")]
     if _cache.get("stamp") != stamp:
         _cache["stamp"], _cache["body"] = stamp, render(HELP.read_text(), cols)
-    bar = f"{B}{ORANGE} {i18n.t('help.bar')} {R}{DIM} {i18n.t('help.keys')}{R}"
-    return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")], [Linha()] + _cache["body"]
-
-
-def on_key(v, k):
-    if k in ("esc", "q"):
-        v.parar = True
-        v._acordar()
+    return popup_header(i18n.t('help.bar'), i18n.t('help.keys'), cols), [Linha()] + _cache["body"]
 
 
 if __name__ == "__main__":
-    Viewer(collect, intervalo=1.0, ao_tecla=on_key).rodar()
+    Viewer(collect, intervalo=1.0, ao_tecla=close_on_esc).rodar()

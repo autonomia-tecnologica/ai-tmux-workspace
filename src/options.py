@@ -20,9 +20,8 @@ import help
 import i18n
 import lib
 import tmux
-from viewer import B, DIM, R, Linha, Viewer
+from viewer import B, DIM, ORANGE, R, Linha, Viewer, close_on_esc, popup_header, term_cols
 
-ORANGE = "\x1b[38;5;208m"
 MAX_W = 100
 TIMEOUT_S = 300
 
@@ -63,7 +62,7 @@ def flatten(nodes, depth=0, path=()):
 
 
 def collect(v):
-    cols = os.get_terminal_size().columns if sys.stdout.isatty() else 80
+    cols = term_cols()
     w = min(MAX_W, cols - 4)
     body = [Linha()]
     n_prompt = 0
@@ -84,8 +83,7 @@ def collect(v):
             body.append(Linha(f" {pad}  {head}{ln}", chave=key if i == 0 else None, cont=i > 0))
     if len(body) == 1:
         body.append(Linha(f" {DIM}{i18n.t('options.empty')}{R}"))
-    bar = f"{B}{ORANGE} {i18n.t('options.bar')} {R}{DIM} {i18n.t('options.keys')}{R}"
-    return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")], body
+    return popup_header(i18n.t('options.bar'), i18n.t('options.keys'), cols), body
 
 
 def node_of(key):
@@ -111,10 +109,9 @@ def on_enter(v, key, k):
 
 
 def on_key(v, k):
-    if k in ("esc", "q"):
-        v.parar = True
-        v._acordar()
-    elif len(k) == 1 and k in "123456789":
+    if close_on_esc(v, k):
+        return
+    if len(k) == 1 and k in "123456789":
         typed = [n for _, _, n in flatten(tree()) if "type" in n and _.startswith("0.")]
         if int(k) <= len(typed):
             global pending
@@ -170,17 +167,11 @@ def run_leaf(node, window):
 
 def show(title, text):
     def collect_result(v):
-        cols = os.get_terminal_size().columns if sys.stdout.isatty() else 80
+        cols = term_cols()
         body = [Linha()] + help.render(text, cols)
-        bar = f"{B}{ORANGE} {title} {R}{DIM} {i18n.t('options.result_keys')}{R}"
-        return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")], body
+        return popup_header(title, i18n.t('options.result_keys'), cols), body
 
-    def key(v, k):
-        if k in ("esc", "q"):
-            v.parar = True
-            v._acordar()
-
-    Viewer(collect_result, intervalo=3600, ao_tecla=key).rodar()
+    Viewer(collect_result, intervalo=3600, ao_tecla=close_on_esc).rodar()
 
 
 if __name__ == "__main__":
