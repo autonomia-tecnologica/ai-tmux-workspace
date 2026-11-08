@@ -16,6 +16,8 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import yaml_min  # noqa: E402  (stdlib-only, no lib import)
+
 SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "sessoes"
 
 # Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
@@ -37,11 +39,22 @@ def _one_line(text, n=100):
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
-# Reads settings.json itself rather than through lib; see the note near the top of this file.
+# Reads the config itself rather than through lib; see the note near the top of this file.
+# Same path rules as lib.ler_config: config.yaml, or the old settings.json while it does not exist.
 def _notifications_enabled():
     try:
-        cfg = Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-tmux-workspace" / "settings.json"))
-        return json.loads(cfg.read_text()).get("notifications", True) is not False
+        if "AT_WS_CONFIG" in os.environ:
+            cfg = Path(os.environ["AT_WS_CONFIG"])
+            legado = cfg.with_suffix(".json")
+        else:
+            pasta = Path.home() / ".config" / "ai-tmux-workspace"
+            cfg, legado = pasta / "config.yaml", pasta / "settings.json"
+        arq = cfg if cfg.exists() else legado
+        if arq.suffix == ".json":
+            dados = json.loads(arq.read_text(encoding="utf-8"))
+        else:
+            dados = yaml_min.loads(arq.read_text(encoding="utf-8")) or {}
+        return dados.get("notifications", True) is not False
     except Exception:
         return True
 

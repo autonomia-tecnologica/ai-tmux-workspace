@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Options screen (`ctrl+b o`): one popup with every option of the workspace in a single expanded tree.
 
-Built-in folders: "Agent" (picks the command that runs in the Claude panes, settings.json["agent"]; changing it
-restarts the whole workspace), "Prompts" (settings.json["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
+Built-in folders: "Agent" (picks the command that runs in the Claude panes, config["agent"]; changing it
+restarts the whole workspace), "Prompts" (config["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
 the prompt into the window's active Claude tab, without submitting) and "Ask Claude" (one-off question to
-`claude -p --model haiku` in the window's repo). settings.json["options"] appends more nodes:
+`claude -p --model haiku` in the window's repo). config["options"] appends more nodes:
   {"label": "...", "children": [...]}   folder (Enter, Space or the arrows collapse/expand)
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer
   {"label": "...", "run": "cmd"}        runs a shell command in the repo, shows its output
@@ -40,7 +40,16 @@ def prompt_list():
 
 
 def tree():
-    nodes = [
+    lib.ler_config()     # refreshes lib.ERRO_CONFIG before it is read below
+    nodes = []
+    if lib.ERRO_CONFIG:
+        caminho, linha = lib.ERRO_CONFIG
+        texto = (i18n.t("config.err.read_line", path=caminho, line=linha) if linha
+                 else i18n.t("config.err.read", path=caminho))
+        nodes.append({"label": texto})
+    elif lib.precisa_migrar():
+        nodes.append({"label": i18n.t("options.migrate"), "migrate": True})
+    nodes += [
         {"label": i18n.t("options.prompts"), "prompts": True,
          "children": [{"label": " ".join(p.split()), "type": p} for p in prompt_list()]},
         {"label": i18n.t("options.ask"), "children": [{"label": i18n.t("options.ask_haiku"), "ask": "haiku"}]},
@@ -151,13 +160,25 @@ def switch_agent(name, window):
     """Saves the agent and restarts the whole workspace (Claude resumes with --continue)."""
     if name == lib.agent_name():
         return
-    lib.set_agent(name)
+    try:
+        lib.set_agent(name)
+    except (OSError, ValueError):
+        show(i18n.t("options.agent"), i18n.t("config.err.write"))
+        return
     env = dict(os.environ, WS_SEM_ANEXAR="1")
     subprocess.Popen([lib.WS, "restart"], env=env, start_new_session=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def run_leaf(node, window):
+    if "migrate" in node:
+        try:
+            destino = lib.migrar_config()
+            texto = i18n.t("config.migrated", path=str(destino))
+        except (OSError, ValueError):
+            texto = i18n.t("config.err.migrate")
+        show(node["label"], texto)
+        return
     if "mic" in node:
         import mic
         mic.run(window)

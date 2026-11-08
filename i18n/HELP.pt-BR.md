@@ -26,7 +26,7 @@ Abrir de novo: `ctrl+b h`.
 | `ctrl+b t` | nova aba temporária (Claude ou terminal, conforme o painel em foco) |
 | `ctrl+b n` / `p` | próxima / anterior aba do painel em foco |
 | `ctrl+b z` | zoom do painel em foco |
-| `ctrl+b o` | tela de opções: tudo numa árvore só, já expandida. Prompts salvos (`prompts` no `settings.json`; Enter ou 1-9 digita no Claude ativo, sem enviar) e perguntar ao Haiku (`claude -p`, roda no repo da janela e mostra a resposta). `options` no `settings.json` acrescenta mais |
+| `ctrl+b o` | tela de opções: tudo numa árvore só, já expandida. Prompts salvos (`prompts` no `config.yaml`; Enter ou 1-9 digita no Claude ativo, sem enviar) e perguntar ao Haiku (`claude -p`, roda no repo da janela e mostra a resposta). `options` no `config.yaml` acrescenta mais |
 | `ctrl+b r` | recarrega a config sem sair |
 | `ctrl+b d` | desanexa (o workspace continua rodando) |
 
@@ -46,7 +46,7 @@ Claudes abertos de todos os repos do workspace, agrupados por repo: título, est
 
 ## REPOS
 
-Grupos do `settings.json`. Enter no grupo recolhe/expande (← → também).
+Grupos do `config.yaml`. Enter no grupo recolhe/expande (← → também).
 
 | Marca | Significado |
 |---|---|
