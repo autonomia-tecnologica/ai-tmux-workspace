@@ -29,6 +29,7 @@ FOOTER_ROWS = 3
 R, B, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
 VERDE, AMARELO, VERMELHO, AZUL, CINZA = ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[38;5;75m",
                                           "\x1b[38;5;244m")
+ORANGE = "\x1b[38;5;208m"
 
 
 def _larg(c):
@@ -66,6 +67,26 @@ class Linha:
     def __init__(self, texto="", chave=None, cont=False):
         # cont: continuation of the previous keyed line; not navigable, but highlighted with it
         self.texto, self.chave, self.cont = texto, chave, cont
+
+
+def term_cols(default=80):
+    """Terminal width when stdout is a tty, `default` otherwise."""
+    return os.get_terminal_size().columns if sys.stdout.isatty() else default
+
+
+def popup_header(title, keys, cols):
+    """Two header rows for a popup screen: a bold orange bar (title + dim keys) over a full-width rule."""
+    bar = f"{B}{ORANGE} {title} {R}{DIM} {keys}{R}"
+    return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")]
+
+
+def close_on_esc(v, k):
+    """Standard popup exit: Esc or q stops the viewer. -> True when the key closed it."""
+    if k in ("esc", "q"):
+        v.parar = True
+        v._acordar()
+        return True
+    return False
 
 
 class Viewer:
