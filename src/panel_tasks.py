@@ -14,7 +14,7 @@ import backlog
 import glyphs
 import i18n
 import lib
-from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer
+from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer, ellipsize
 
 
 
@@ -80,8 +80,7 @@ def collect(v):
                 counts = f"{len(members)}" + (f", {n_ready} {t('ready')}" if n_ready else "")
                 name = cat or t("no_category")
                 room = cols - len(counts) - 7
-                if len(name) > room:
-                    name = name[:max(1, room - 1)].rstrip() + "…"
+                name = ellipsize(name, room)
                 body.append(Linha(f" {DIM}{glyphs.arrow(opened)}{R} {B}{name}{R} {DIM}({counts}){R}",
                                   ("g", CURRENT, cat)))
                 continue
@@ -101,8 +100,7 @@ def collect(v):
             if not opened:
                 title = i["title"]
                 room = cols - pad - len(dep) - 1
-                if len(title) > room:
-                    title = title[:max(1, room - 1)].rstrip() + "…"
+                title = ellipsize(title, room)
                 body.append(Linha(f"{first}{title}{DIM}{dep}{R}", key))
                 continue
             # selected item: full title wrapped, plus deps and acceptance
