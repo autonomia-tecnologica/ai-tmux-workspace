@@ -120,9 +120,9 @@ def on_key(v, k):
             pending = typed[int(k) - 1]
             v.parar = True
             v._acordar()
-    elif k in ("\x1b[C", "\x1bOC") and v.chave is not None:
+    elif k == "right" and v.chave is not None:
         on_enter(v, v.chave, "l")
-    elif k in ("h", "\x1b[D", "\x1bOD") and v.chave is not None:
+    elif k == "left" and v.chave is not None:
         node = node_of(v.chave)
         if node and isinstance(node.get("children"), list) and v.chave not in collapsed:
             set_collapsed(v.chave, True)

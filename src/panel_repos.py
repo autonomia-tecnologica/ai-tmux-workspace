@@ -62,10 +62,10 @@ def coletar(v):
 
 def on_key(v, k):
     """Right expands the group under the cursor, Left collapses it (like the files tree)."""
-    if k not in ("\x1b[C", "\x1bOC", "\x1b[D", "\x1bOD") or not v.chave or v.chave[0] != "g":
+    if k not in ("left", "right") or not v.chave or v.chave[0] != "g":
         return
     col = colapsados()
-    right = k in ("\x1b[C", "\x1bOC")
+    right = k == "right"
     if (v.chave[1] in col) != right:
         return
     col ^= {v.chave[1]}
