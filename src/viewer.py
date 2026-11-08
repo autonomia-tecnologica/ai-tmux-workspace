@@ -60,6 +60,15 @@ def _largura(s):
     return sum(_larg(c) for c in ANSI.sub("", s))
 
 
+def ellipsize(s, w):
+    """Fits `s` in `w` visible columns, ending a cut text with "…" (wide chars count as 2)."""
+    if w <= 0:
+        return ""
+    if _largura(s) <= w:
+        return s
+    return cortar(s, w - 1)[0].rstrip() + "…"
+
+
 class Linha:
     __slots__ = ("texto", "chave", "cont")
 
