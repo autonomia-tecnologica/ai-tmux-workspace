@@ -65,39 +65,11 @@ def pasta(cwd):
     return lib.HOME / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
 
-def repo_de(cwd, caminhos):
-    melhor = None
-    for p in caminhos:
-        if (cwd == p or cwd.startswith(p + "/")) and (melhor is None or len(p) > len(melhor)):
-            melhor = p
-    return melhor
-
-
-def ativas(agora, caminhos):
-    """{repo_path: [(sid, state_json, color)]} of live Claude panes inside configured repos, newest first."""
-    vivos = tmux.live_panes()
-    res = {}
-    for f in lib.SESSOES.glob("*.json"):
-        try:
-            d = json.loads(f.read_text())
-            cwd = lib.expandir(d["cwd"])
-        except Exception:
-            continue
-        if not d.get("pane") or (vivos is not None and d["pane"] not in vivos):
-            continue
-        repo = repo_de(cwd, caminhos)
-        if repo:
-            res.setdefault(repo, []).append((f.stem, d, lib.cor_sessao(d, agora)))
-    for v in res.values():
-        v.sort(key=lambda x: x[1].get("ts", 0), reverse=True)
-    return res
-
-
 def coletar(v):
     agora = time.time()
     principal = lib.ler_principal()
     repos = ([principal] if principal else []) + [r for _, rs in lib.ler_repos() for r in rs]
-    por_repo = ativas(agora, [p for _, p in repos])
+    por_repo = lib.live_sessions([p for _, p in repos], agora)
     total = sum(len(x) for x in por_repo.values())
     cab = [Linha(f" {CINZA}{i18n.t('sessions.header', n=total)}{R}"), Linha("")]
     corpo = []

@@ -90,16 +90,28 @@ def cor_sessao(d, agora):
     return c
 
 
-def estados_por_repo(repos, agora=None):
-    """{caminho_do_repo: 'ocioso'|'trabalha'|'espera'|'pergunta'} — vale a pior sessão do repo."""
+def repo_of(cwd, paths):
+    """Longest path in `paths` that contains `cwd`, or None."""
+    melhor = None
+    for p in paths:
+        if (cwd == p or cwd.startswith(p + "/")) and (melhor is None or len(p) > len(melhor)):
+            melhor = p
+    return melhor
+
+
+def live_sessions(paths, agora=None):
+    """{repo_path: [(sid, state_json, color)]} of live Claude sessions inside `paths`, newest first.
+
+    A session file without a pane is dropped, and so is one whose pane is gone; when tmux cannot be
+    queried, only the pane-less files are dropped.
+    """
     agora = agora or time.time()
-    caminhos = [p for _, rs in repos for _, p in rs]
-    res = {}
     try:
         arquivos = list(SESSOES.glob("*.json"))
     except OSError:
-        return res
+        return {}
     vivos = tmux.live_panes()
+    res = {}
     for f in arquivos:
         try:
             d = json.loads(f.read_text())
@@ -107,17 +119,24 @@ def estados_por_repo(repos, agora=None):
         except Exception:
             continue
         # Orphan: pane-less legacy file, or its pane is gone (session died without SessionEnd).
-        if vivos is not None and d.get("pane") not in vivos:
+        if not d.get("pane") or (vivos is not None and d["pane"] not in vivos):
             continue
-        melhor = None
-        for p in caminhos:
-            if (cwd == p or cwd.startswith(p + "/")) and (melhor is None or len(p) > len(melhor)):
-                melhor = p
-        if not melhor:
-            continue
-        c = cor_sessao(d, agora)
-        if PRIO[c] >= PRIO[res.get(melhor, "ocioso")]:
-            res[melhor] = c
+        repo = repo_of(cwd, paths)
+        if repo:
+            res.setdefault(repo, []).append((f.stem, d, cor_sessao(d, agora)))
+    for v in res.values():
+        v.sort(key=lambda x: x[1].get("ts", 0), reverse=True)
+    return res
+
+
+def estados_por_repo(repos, agora=None):
+    """{caminho_do_repo: 'ocioso'|'trabalha'|'espera'|'pergunta'} — vale a pior sessão do repo."""
+    caminhos = [p for _, rs in repos for _, p in rs]
+    res = {}
+    for repo, sessoes in live_sessions(caminhos, agora).items():
+        for _, _, c in sessoes:
+            if PRIO[c] >= PRIO[res.get(repo, "ocioso")]:
+                res[repo] = c
     return res
 
 
