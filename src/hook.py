@@ -11,12 +11,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "sessoes"
 
+# Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
+# light and never fail on import. That is why the settings read in _notifications_enabled
+# duplicates lib's config loader instead of calling it. Keep it that way.
+
 
 def _one_line(text, n=100):
     text = " ".join(str(text or "").split())
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
+# Reads settings.json itself rather than through lib; see the note near the top of this file.
 def _notifications_enabled():
     try:
         cfg = Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-tmux-workspace" / "settings.json"))
