@@ -23,9 +23,9 @@ def _tmux_options():
 
 def _apply_tmux():
     """Sets the tmux.* texts as global user options. Run by tmux.conf with run-shell, before the bars use them."""
-    import subprocess
+    import tmux
     for name, value in _tmux_options().items():
-        subprocess.run(["tmux", "set", "-g", name, value], check=False, stderr=subprocess.DEVNULL)
+        tmux.run("set", "-g", name, value)
 
 
 if __name__ == "__main__":

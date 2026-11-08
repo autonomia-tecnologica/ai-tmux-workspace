@@ -7,13 +7,13 @@ A BACKLOG.md outside the unified format shows as "no format"; Enter on an item s
 import os
 import shlex
 import shutil
-import subprocess
 import textwrap
 
 import backlog
 import glyphs
 import i18n
 import lib
+import tmux
 from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer, ellipsize
 
 
@@ -147,8 +147,7 @@ def enter(v, key, k):
     # tmux command string: double quotes, with \\ " $ escaped and # doubled (format expansion)
     tq = '"' + send.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##") + '"'
     prompt = t("confirm", msg=msg).replace("#", "##")
-    subprocess.run(["tmux", "confirm-before", "-p", prompt, f"run-shell -b {tq}"], timeout=20,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tmux.run("confirm-before", "-p", prompt, f"run-shell -b {tq}", timeout=20)
 
 
 def on_key(v, k):

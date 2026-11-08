@@ -10,6 +10,7 @@ import time
 import glyphs
 import i18n
 import lib
+import tmux
 from viewer import AMARELO, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
 
@@ -74,7 +75,7 @@ def repo_de(cwd, caminhos):
 
 def ativas(agora, caminhos):
     """{repo_path: [(sid, state_json, color)]} of live Claude panes inside configured repos, newest first."""
-    vivos = lib._live_panes()
+    vivos = tmux.live_panes()
     res = {}
     for f in lib.SESSOES.glob("*.json"):
         try:
@@ -125,16 +126,12 @@ def coletar(v):
     return cab, corpo
 
 
-def tm(*args):
-    return subprocess.run(["tmux", *args], capture_output=True, text=True).stdout.strip()
-
-
 def enter(v, chave, tecla):
     """Focus the session's pane: bring it forward in its repo window (it may be a hidden tab)."""
     pane, repo = chave
-    sess = tm("display", "-p", "-t", pane, "#{session_name}")
+    sess = tmux.run("display", "-p", "-t", pane, "#{session_name}")
     win = ""
-    for linha in tm("list-windows", "-t", sess, "-F", "#{window_id}|#{@ws_repo}").splitlines():
+    for linha in tmux.run("list-windows", "-t", sess, "-F", "#{window_id}|#{@ws_repo}").splitlines():
         wid, _, r = linha.partition("|")
         if r == repo:
             win = wid
@@ -142,10 +139,10 @@ def enter(v, chave, tecla):
     if win:
         subprocess.run([str(lib.BASE / "bin" / "workspace"), "tab-show", win, pane],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-        tm("select-window", "-t", win)
+        tmux.run("select-window", "-t", win)
     else:
-        tm("select-window", "-t", pane)
-    tm("select-pane", "-t", pane)
+        tmux.run("select-window", "-t", pane)
+    tmux.run("select-pane", "-t", pane)
 
 
 if __name__ == "__main__":
