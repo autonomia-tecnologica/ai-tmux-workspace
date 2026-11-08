@@ -12,11 +12,13 @@ import lib
 from i18n import t
 import opener
 import tmux
+from tree_state import Expander
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
 REPO = lib.repo_atual()
 IGNORA = {".git", "node_modules", "__pycache__", ".venv", "target", ".mypy_cache", ".pytest_cache"}
-ABERTAS = {REPO}
+ABERTAS = Expander()   # folders expanded by the user (closed by default)
+ABERTAS.open(REPO)
 LIMITE = 400
 USE_ICONS = icons.enabled()
 
@@ -79,7 +81,7 @@ def follow_terminal(v):
         return
     rel = os.path.relpath(cwd, repo).split(os.sep)
     for i in range(len(rel)):       # open the ancestors and the folder itself (its subfolders stay closed)
-        ABERTAS.add(os.path.join(REPO, *rel[:i + 1]))
+        ABERTAS.open(os.path.join(REPO, *rel[:i + 1]))
     v.chave = ("d", os.path.join(REPO, *rel))
     v._acordar()
 
@@ -101,7 +103,7 @@ def coletar(v):
         for e in itens:
             ind = "  " * nivel
             if e.is_dir(follow_symlinks=False):
-                aberta = e.path in ABERTAS
+                aberta = ABERTAS.is_open(e.path)
                 mark = f" {glyphs.dirty_mark()}" if e.path in sujos else ""
                 ic = glyphs.dir_icon(aberta, e.name in ign) if USE_ICONS else ""
                 nome = f"{DIM}{e.name}/{R}" if e.name in ign else f"{AZUL}{e.name}/{R}"
@@ -136,7 +138,7 @@ def editor():
 def enter(v, chave, tecla):
     tipo, caminho = chave
     if tipo == "d":
-        ABERTAS.symmetric_difference_update({caminho})
+        ABERTAS.toggle(caminho)
         v.recoletar.set()
     elif opener.use_system(caminho) and opener.open_system(caminho):
         return
@@ -166,20 +168,20 @@ def acoes(v, chave):
     return [(t("tree.menu_copy"), chave[0] == "f", copiar)]
 
 
+def pai_de(caminho):
+    """Parent folder inside the repo, or None (the repo root is not a row)."""
+    parent = os.path.dirname(caminho)
+    return parent if parent != REPO and parent.startswith(REPO + "/") else None
+
+
 def on_key(v, k):
     """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
     if k not in ("left", "right") or not v.chave:
         return
     tipo, caminho = v.chave
-    if k == "right":
-        if tipo == "d":
-            ABERTAS.add(caminho)
-    elif tipo == "d" and caminho in ABERTAS:
-        ABERTAS.discard(caminho)
-    else:
-        parent = os.path.dirname(caminho)
-        if parent != REPO and parent.startswith(REPO + "/"):
-            v.chave = ("d", parent)
+    novo = ABERTAS.handle_arrow(k, caminho, pai=pai_de, pasta=tipo == "d")
+    if novo != caminho:
+        v.chave = ("d", novo)
     v.recoletar.set()
 
 

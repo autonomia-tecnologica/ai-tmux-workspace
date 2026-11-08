@@ -9,12 +9,12 @@ Ao lado do nome, dois ícones sempre presentes:
   GitHub  = remoto:    esmaecido não está no remoto · normal em dia · amarelo ahead/behind do upstream
                        (fetch a cada 5 min)
 """
-import json
 import subprocess
 import sys
 
 import glyphs
 import lib
+from tree_state import Expander
 from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, VERMELHO, Linha, Viewer
 
 
@@ -25,19 +25,12 @@ def icone_git(repo):
     return glyphs.git_icons(est, sujo)
 
 
-COLAPSADOS = lib.ESTADO / "colapsados.json"
+GRUPOS = Expander(lib.ESTADO / "colapsados.json", padrao_aberto=True)   # groups start open; the file keeps the closed ones
 ATUAL = lib.repo_atual()
 
 
-def colapsados():
-    try:
-        return set(json.loads(COLAPSADOS.read_text()))
-    except Exception:
-        return set()
-
-
 def coletar(v):
-    grupos, est, col = lib.ler_repos(), None, colapsados()
+    grupos, est = lib.ler_repos(), None
     principal = lib.ler_principal()
     est = lib.estados_por_repo(grupos + ([("", [principal])] if principal else []))
     cab = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
@@ -47,12 +40,13 @@ def coletar(v):
         cor = AZUL if p == ATUAL else ""
         corpo.append(Linha(f" {glyphs.dot(est.get(p, 'ocioso'))} {cor}{B}{rnome}{R} {icone_git(p)}", ("r", p)))
     for nome, repos in grupos:
-        seta = "▸" if nome in col else "▾"
+        aberto = GRUPOS.is_open(nome)
+        seta = "▾" if aberto else "▸"
         # a bolinha do grupo fechado mostra o pior estado de dentro
         pior = max((est.get(p, "ocioso") for _, p in repos), key=lib.PRIO.get, default="ocioso")
-        marca = f" {glyphs.dot(pior)}" if nome in col and pior != "ocioso" else ""
+        marca = f" {glyphs.dot(pior)}" if not aberto and pior != "ocioso" else ""
         corpo.append(Linha(f" {CINZA}{seta} {nome.upper()}{R}{marca}", ("g", nome)))
-        if nome in col:
+        if not aberto:
             continue
         for rnome, p in repos:
             sel = f"{AZUL}{B}" if p == ATUAL else ""
@@ -64,23 +58,14 @@ def on_key(v, k):
     """Right expands the group under the cursor, Left collapses it (like the files tree)."""
     if k not in ("left", "right") or not v.chave or v.chave[0] != "g":
         return
-    col = colapsados()
-    right = k == "right"
-    if (v.chave[1] in col) != right:
-        return
-    col ^= {v.chave[1]}
-    lib.ESTADO.mkdir(parents=True, exist_ok=True)
-    COLAPSADOS.write_text(json.dumps(sorted(col)))
+    GRUPOS.handle_arrow(k, v.chave[1])
     v.recoletar.set()
 
 
 def enter(v, chave, tecla):
     tipo, valor = chave
     if tipo == "g":
-        col = colapsados()
-        col ^= {valor}
-        lib.ESTADO.mkdir(parents=True, exist_ok=True)
-        COLAPSADOS.write_text(json.dumps(sorted(col)))
+        GRUPOS.toggle(valor)
         v.recoletar.set()
     else:
         subprocess.run([str(lib.BASE / "bin" / "workspace"), "open", valor], timeout=20,
