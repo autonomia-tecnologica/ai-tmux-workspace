@@ -12,16 +12,33 @@ from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, View
 REPO = lib.repo_atual()
 
 
+def _numstat(saida):
+    """`git diff --numstat -z` como {caminho novo: (+, -)}. Com -z o caminho vem sem aspas;
+    renomeio vem como `a\\td\\t` seguido de `antigo` e `novo` em campos próprios, e a chave
+    é o caminho novo, o mesmo que `git status` usa."""
+    nums = {}
+    campos = saida.split("\0")
+    i = 0
+    while i < len(campos):
+        campo = campos[i]
+        i += 1
+        if not campo:
+            continue
+        a, d, p = campo.split("\t", 2)
+        if not p:
+            p = campos[i + 1]
+            i += 2
+        nums[p] = (a, d)
+    return nums
+
+
 def coletar(v):
     st = lib.git_status(REPO)
     if st is None:
         return [], [Linha(f" {DIM}{i18n.t('diff.not_repo')}{R}")]
     ramo = lib.git_branch(REPO)
-    nums = {}
-    _, ns = lib.git(REPO, "diff", "HEAD", "--numstat")
-    for l in ns.splitlines():
-        a, d, p = l.split("\t", 2)
-        nums[p] = (a, d)
+    _, ns = lib.git(REPO, "diff", "HEAD", "--numstat", "-z")
+    nums = _numstat(ns)
     ta = td = 0
     for a, d in nums.values():
         ta += int(a) if a.isdigit() else 0
