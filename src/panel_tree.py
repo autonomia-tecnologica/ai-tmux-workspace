@@ -11,6 +11,7 @@ import icons
 import lib
 from i18n import t
 import opener
+import tmux
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
 
 REPO = lib.repo_atual()
@@ -56,14 +57,6 @@ def listar(pasta):
 _last_cwd = [None]
 
 
-def _tmux(*args):
-    try:
-        r = subprocess.run(["tmux", *args], capture_output=True, text=True, timeout=3)
-        return r.stdout.strip()
-    except Exception:
-        return ""
-
-
 def follow_terminal(v):
     """When the shell in the active terminal tab changes directory, expand that folder (only it,
     not its children) and move the selection there. Only reacts to a change, so manual navigation
@@ -71,14 +64,14 @@ def follow_terminal(v):
     pane = os.environ.get("TMUX_PANE")
     if not pane:
         return
-    win = _tmux("display", "-p", "-t", pane, "#{window_id}")
-    target = _tmux("show", "-wqv", "-t", win, "@ws_tativo")
+    win = tmux.display("#{window_id}", target=pane)
+    target = tmux.show_w(win, "@ws_tativo")
     if not target:
-        target = _tmux("list-panes", "-t", win, "-F", "#{pane_id}|#{@papel}")
+        target = tmux.run("list-panes", "-t", win, "-F", "#{pane_id}|#{@papel}")
         target = next((l.split("|")[0] for l in target.splitlines() if l.endswith("|terminal")), "")
     if not target:
         return
-    cwd = os.path.realpath(_tmux("display", "-p", "-t", target, "#{pane_current_path}") or REPO)
+    cwd = os.path.realpath(tmux.display("#{pane_current_path}", target=target) or REPO)
     if cwd == _last_cwd[0]:
         return
     _last_cwd[0] = cwd
@@ -156,9 +149,8 @@ def enter(v, chave, tecla):
     elif opener.use_system(caminho) and opener.open_system(caminho):
         return
     else:
-        subprocess.run(["tmux", "display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO,
-                        f"{editor()} {shlex.quote(caminho)}"],
-                       timeout=None)
+        tmux.run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO,
+                 f"{editor()} {shlex.quote(caminho)}", timeout=None)
 
 
 def _copied(path):
@@ -174,8 +166,7 @@ def copiar(v, chave):
         msg = t("tree.copied", name=os.path.basename(chave[1]))
     else:
         msg = t("tree.copy_failed")
-    subprocess.run(["tmux", "display-message", "-d", "2000", msg], check=False, stdin=subprocess.DEVNULL,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tmux.message(msg)
 
 
 def acoes(v, chave):

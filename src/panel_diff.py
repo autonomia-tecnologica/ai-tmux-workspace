@@ -3,10 +3,10 @@
 branch, total +/-, e a lista de arquivos alterados com +linhas/-linhas e status."""
 import os
 import shlex
-import subprocess
 
 import i18n
 import lib
+import tmux
 from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
 
 REPO = lib.repo_atual()
@@ -53,7 +53,7 @@ def enter(v, chave, tecla):
         cmd = f"less -R {shlex.quote(os.path.join(REPO, p))}"
     else:
         cmd = f"git -C {shlex.quote(REPO)} -c color.ui=always diff HEAD -- {shlex.quote(p)} | less -RX"
-    subprocess.run(["tmux", "display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO, cmd])
+    tmux.run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO, cmd, timeout=None)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import textwrap
 import help
 import i18n
 import lib
+import tmux
 from viewer import B, DIM, R, Linha, Viewer
 
 ORANGE = "\x1b[38;5;208m"
@@ -133,11 +134,8 @@ def on_key(v, k):
 
 
 def repo_and_command(window):
-    def tmux(fmt):
-        r = subprocess.run(["tmux", "display", "-p", "-t", window, fmt], capture_output=True, text=True)
-        return r.stdout.strip()
-    repo = tmux("#{@ws_repo}") or os.getcwd()
-    profile = lib.ler_config().get("profiles", {}).get(tmux("#{@ws_perfil}"), "") or "claude"
+    repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
+    profile = lib.ler_config().get("profiles", {}).get(tmux.display("#{@ws_perfil}", target=window), "") or "claude"
     return repo, shlex.split(profile)
 
 

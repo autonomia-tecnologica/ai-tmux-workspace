@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from i18n import t
+import tmux
 
 BASE = Path(__file__).resolve().parent.parent   # raiz do repo
 HOME = Path.home()
@@ -60,10 +61,9 @@ def repo_atual():
     pane = os.environ.get("TMUX_PANE")
     if pane:
         try:
-            r = subprocess.run(["tmux", "display", "-p", "-t", pane, "#{@ws_repo}"],
-                               capture_output=True, text=True, timeout=3)
-            if r.stdout.strip():
-                return r.stdout.strip()
+            repo = tmux.display("#{@ws_repo}", target=pane)
+            if repo:
+                return repo
         except Exception:
             pass
     return os.getcwd()
@@ -90,16 +90,6 @@ def cor_sessao(d, agora):
     return c
 
 
-def _live_panes():
-    """Set of tmux pane ids alive right now, or None when tmux cannot be queried."""
-    try:
-        r = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
-                           capture_output=True, text=True, timeout=3)
-        return set(r.stdout.split()) if r.returncode == 0 else None
-    except Exception:
-        return None
-
-
 def estados_por_repo(repos, agora=None):
     """{caminho_do_repo: 'ocioso'|'trabalha'|'espera'|'pergunta'} — vale a pior sessão do repo."""
     agora = agora or time.time()
@@ -109,7 +99,7 @@ def estados_por_repo(repos, agora=None):
         arquivos = list(SESSOES.glob("*.json"))
     except OSError:
         return res
-    vivos = _live_panes()
+    vivos = tmux.live_panes()
     for f in arquivos:
         try:
             d = json.loads(f.read_text())
