@@ -339,8 +339,19 @@ def carregar_plugin(entrada):
 
 if __name__ == "__main__":
     import sys
-    comando, perfil = sys.argv[1], sys.argv[2]
-    if comando == "plugins":           # bash reads: "@@id<TAB>pasta<TAB>rótulo", then the layout lines
+    comando = sys.argv[1]
+    perfil = sys.argv[2] if len(sys.argv) > 2 else ""
+    if comando == "perfil-cmd":        # bash: the command line of profile PERFIL ("" if unknown)
+        print(ler_config().get("profiles", {}).get(perfil, ""))
+    elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
+        print((ler_principal() or ler_repos()[0][1][0])[1])
+    elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all
+        names = [ler_principal()[0]] if ler_principal() else []
+        names += [n for g, r in ler_repos() for n, p in r]
+        names += ["plugin:" + e["id"] for e in plugins_listados(perfil)
+                  if isinstance(e, dict) and isinstance(e.get("id"), str)]
+        print("\n".join(names))
+    elif comando == "plugins":           # bash reads: "@@id<TAB>pasta<TAB>rótulo", then the layout lines
         for entrada in plugins_listados(perfil):
             try:
                 id_, pasta, rotulo, arvore = carregar_plugin(entrada)

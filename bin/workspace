@@ -17,7 +17,7 @@ export WS_DIR="$AQUI"
 MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
-perfil_cmd() { python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print(lib.ler_config().get('profiles',{}).get(sys.argv[1],''))" "$1"; }
+perfil_cmd() { python3 "$SRC/lib.py" perfil-cmd "$1"; }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
 laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
@@ -102,10 +102,10 @@ construir() { # $1=caminho  $2=-d (não selecionar)
   P="$(tmux display -p -t "$W" '#{pane_id}')"
   tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_perfil "$S"
   tmux set -p -t "$P" @papel claude
-  tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2
+  init_tabs "$W" "$P" c
   build_tree "$W" "$path" "$REPO_TREE"
   T="$(pane_with_role "$W" terminal)"
-  tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2
+  [ -n "$T" ] && init_tabs "$W" "$T" t
   # sempre retoma a sessão mais recente do repo; se não houver, abre uma nova
   # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
   tmux send-keys -t "$P" "cd ${path@Q}; $cmd --continue || $cmd" Enter
@@ -131,6 +131,15 @@ tab_vars() {
   else
     K_TABS=@ws_tabs K_ACT=@ws_ativo K_NEXT=@ws_next K_MAIN=claude K_TMP=tmp K_HID=tab K_STRIP=tabs
   fi
+}
+
+# $1=janela $2=painel principal da tira $3=c|t: registra a aba principal (lista, ativa, próximo número).
+# Só preenche o que falta, então serve a janela nova (construir) e a existente (ensure_window) sem mudar nada.
+init_tabs() {
+  local W="$1" P="$2"
+  tab_vars "$3"
+  [ -n "$(tmux show -wqv -t "$W" $K_TABS)" ] || {
+    tmux set -w -t "$W" $K_TABS "$P"; tmux set -w -t "$W" $K_ACT "$P"; tmux set -w -t "$W" $K_NEXT 2; }
 }
 
 tab_list() { # $1=janela $2=c|t: ids vivos, na ordem
@@ -238,23 +247,23 @@ open_repo() {
 
 side() { # $1=modo $2=janela
   local pane strip
-  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="direita"{print $1}')"
+  pane="$(pane_with_role "$2" direita)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_side "$1"
   tmux respawn-pane -k -t "$pane" "$(laco "$1")"
   # restart the strip so it redraws with the new active tab
-  strip="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="dtabs"{print $1}')"
+  strip="$(pane_with_role "$2" dtabs)"
   [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs side)"
 }
 
 # Left-top panel mode (repos | sessions), next to REPOS in the rtabs strip.
 left() { # $1=repos|sessions $2=window
   local pane strip
-  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="repos"{print $1}')"
+  pane="$(pane_with_role "$2" repos)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_left "$1"
   tmux respawn-pane -k -t "$pane" "$(laco "$1")"
-  strip="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="rtabs"{print $1}')"
+  strip="$(pane_with_role "$2" rtabs)"
   [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs repos)"
   return 0
 }
@@ -297,9 +306,7 @@ resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando
 # Runs on reload, so removing a repo from settings cleans up the rest.
 prune() { # $1=session
   local names id nome base
-  names="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib
-ids = [e['id'] for e in lib.plugins_listados(sys.argv[1]) if isinstance(e, dict) and isinstance(e.get('id'), str)]
-print('\n'.join(([lib.ler_principal()[0]] if lib.ler_principal() else []) + [n for g,r in lib.ler_repos() for n,p in r] + ['plugin:' + i for i in ids]))" "$1")"
+  names="$(python3 "$SRC/lib.py" nomes-janelas "$1")"
   [ -n "$names" ] || return 0   # unreadable/empty settings: never prune
   while IFS='|' read -r id nome; do
     [ "$nome" = boot ] && continue
@@ -459,14 +466,10 @@ plugin_sync() { # $1=perfil: abre ou completa a janela de cada plugin listado (i
 ensure_window() { # $1=janela $2=caminho do repo $3=árvore
   local W="$1" path="$2" P T
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
-  [ -n "$(tmux show -wqv -t "$W" @ws_tabs)" ] || {
-    tmux set -w -t "$W" @ws_tabs "$P"; tmux set -w -t "$W" @ws_ativo "$P"; tmux set -w -t "$W" @ws_next 2; }
+  init_tabs "$W" "$P" c
   build_tree "$W" "$path" "${3-$REPO_TREE}"
   T="$(pane_with_role "$W" terminal)"
-  [ -n "$T" ] && {
-    [ -n "$(tmux show -wqv -t "$W" @ws_ttabs)" ] || {
-      tmux set -w -t "$W" @ws_ttabs "$T"; tmux set -w -t "$W" @ws_tativo "$T"; tmux set -w -t "$W" @ws_tnext 2; }
-  }
+  [ -n "$T" ] && init_tabs "$W" "$T" t
   fit_window "$W"
 }
 
@@ -507,7 +510,7 @@ iniciar() {
     env -u TMUX tmux -L "$sock" set-environment -g WS_PERFIL "$perfil"
     env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$AQUI"
     if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$perfil:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
-      primeiro="$(python3 -c "import sys;sys.path.insert(0,'$SRC');import lib;print((lib.ler_principal() or lib.ler_repos()[0][1][0])[1])")"
+      primeiro="$(python3 "$SRC/lib.py" repo-inicial)"
       env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$primeiro'"
     fi
     env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$perfil'"
