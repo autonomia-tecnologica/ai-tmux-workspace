@@ -1,0 +1,22 @@
+{
+  "notifications": false,
+  "extra_usage": false,
+  "agent": "claude",
+  "profiles": {
+    "claude": "python3 __DEMO_DIR__/fake_claude.py"
+  },
+  "prompts": [],
+  "options": [],
+  "main": "__REPOS_DIR__/lojinha-api",
+  "groups": {
+    "Lojinha": [
+      "__REPOS_DIR__/lojinha-web"
+    ],
+    "Ferramentas": [
+      "__REPOS_DIR__/notas-cli"
+    ]
+  },
+  "plugins": {
+    "claude": []
+  }
+}
