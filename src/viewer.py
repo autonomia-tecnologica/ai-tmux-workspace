@@ -20,6 +20,9 @@ import tty
 import unicodedata
 
 import i18n
+# colors live in colors.py; panels keep importing them from here (re-export)
+from colors import (AMARELO, AZUL, B, BG, CINZA, DIM, MENU_BG, ORANGE, R, REV, VERDE,  # noqa: F401
+                    VERMELHO)
 
 ANSI = re.compile(r"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
@@ -35,13 +38,7 @@ def direcao(k):
     return None
 
 
-BG = "\x1b[48;5;237m"
-MENU_BG = "\x1b[48;5;239m"
 FOOTER_ROWS = 3
-R, B, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
-VERDE, AMARELO, VERMELHO, AZUL, CINZA = ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[38;5;75m",
-                                          "\x1b[38;5;244m")
-ORANGE = "\x1b[38;5;208m"
 
 
 def _larg(c):

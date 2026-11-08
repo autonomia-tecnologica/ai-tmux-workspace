@@ -5,7 +5,7 @@ an emoji set for a terminal without a Nerd Font) is a change in one file. Needs 
 terminal for the git and file icons.
 """
 import icons
-from viewer import AMARELO, CINZA, DIM, R, VERDE, VERMELHO
+from colors import AMARELO, CINZA, DIM, GRAY_DARK, R, VERDE, VERMELHO
 
 # --- status dots (repos, sessions) -------------------------------------------------------------
 _DOT = {"ocioso": (CINZA, "○"), "trabalha": (VERDE, "●"),
@@ -24,7 +24,7 @@ def ci_dot(color):
 
 # --- task markers ------------------------------------------------------------------------------
 _MARK = {"ready": (VERDE, "●"), "refine": (CINZA, "○"), "paused": (DIM, "◌"),
-         "blocked": (AMARELO, "⊘"), "validate": (AMARELO, "◆"), "cycle": ("\x1b[31m", "✖")}
+         "blocked": (AMARELO, "⊘"), "validate": (AMARELO, "◆"), "cycle": (VERMELHO, "✖")}
 
 
 def task_mark(state):
@@ -37,7 +37,7 @@ def warn():
 
 
 def cross():
-    return f"\x1b[31m✖{R}"
+    return f"{VERMELHO}✖{R}"
 
 
 def arrow(opened):
@@ -51,7 +51,7 @@ def dirty_mark():
 # --- git icons (repos panel) -------------------------------------------------------------------
 def git_icons(est, dirty):
     """est: None (no git) | "local" | "dessinc" | other (in sync with the remote)."""
-    dim = "\x1b[38;5;238m"
+    dim = GRAY_DARK
     gh, br = "", ""
     if est is None:
         return f"{dim}{br} {gh}{R}"
