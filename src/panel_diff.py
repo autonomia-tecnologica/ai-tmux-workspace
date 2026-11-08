@@ -66,7 +66,7 @@ def enter(v, chave, tecla):
         cmd = f"less -R {shlex.quote(os.path.join(REPO, p))}"
     else:
         cmd = f"git -C {shlex.quote(REPO)} -c color.ui=always diff HEAD -- {shlex.quote(p)} | less -RX"
-    tmux.run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO, cmd, timeout=None)
+    tmux.popup(cmd, REPO)
 
 
 if __name__ == "__main__":

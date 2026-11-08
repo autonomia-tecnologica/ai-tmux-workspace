@@ -12,6 +12,7 @@ from i18n import t
 import tmux
 
 BASE = Path(__file__).resolve().parent.parent   # raiz do repo
+WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # the `workspace` script
 HOME = Path.home()
 ESTADO = Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace"))
 SESSOES = ESTADO / "sessoes"

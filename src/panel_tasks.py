@@ -146,7 +146,7 @@ def enter(v, key, k):
     # check; anything else (to refine, paused) -> refine
     kinds = {"ready": "ready", "blocked": "blocked", "validate": "validate"}
     msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
-    tmux.confirm_then(t("confirm", msg=msg), [str(lib.BASE / "bin" / "workspace"), "send", path, msg])
+    tmux.confirm_then(t("confirm", msg=msg), [lib.WS, "send", path, msg])
 
 
 def on_key(v, k):

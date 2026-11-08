@@ -143,8 +143,7 @@ def enter(v, chave, tecla):
     elif opener.use_system(caminho) and opener.open_system(caminho):
         return
     else:
-        tmux.run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", REPO,
-                 f"{editor()} {shlex.quote(caminho)}", timeout=None)
+        tmux.popup(f"{editor()} {shlex.quote(caminho)}", REPO)
 
 
 def _copied(path):
