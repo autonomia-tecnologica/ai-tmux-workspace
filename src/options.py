@@ -8,8 +8,10 @@ the prompt into the window's active Claude tab, without submitting), "Ask Claude
 repo plus its config siblings, or a picker of the workspace repos; both create the conference and
 open the conversation screen with a message box in the footer (Enter sends, Ctrl+X stops). Every
 answer comes from an isolated headless Claude, never from the window's session; each participant
-answers only about its own repo (silent when the message is not its subject), may read the sibling
-repos for the cross-validation, reads the repo's harness and may change only its `BACKLOG.md`).
+answers only about its own repo (silent when the message is not its subject or is addressed to
+another participant), may read the sibling repos for the cross-validation, reads the repo's harness
+and is read-only; a hook caps its files read and tool steps, and it then answers with what it
+knows).
 config["options"] appends more nodes:
   {"label": "...", "children": [...]}   folder (Enter, Space or the arrows collapse/expand)
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer

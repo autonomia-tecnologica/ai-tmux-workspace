@@ -8,16 +8,19 @@ paragraph of the answer and appends it to the shared log.
 
 The run speaks only about its own repo, but may read the sibling repos: the conference is a
 cross-validation between repos. When the message is not its subject, the model answers with the
-`NO_ANSWER` sentinel and nothing is written to the log (and no backlog item is created): not every
-participant has to say something. While the run works, its tool steps update the repo's `status` in
-the active state, which the conference screen shows in the header ("analisando…", "lendo docs/x.md",
-"buscando conflito").
+`NO_ANSWER` sentinel and nothing is written to the log: not every participant has to say something.
+While the run works, its tool steps update the repo's `status` in the active state, which the
+conference screen shows in the header ("analisando…", "lendo docs/x.md", "buscando conflito").
 
-In this mode the agent may change only the repo's own `BACKLOG.md`: every other edit would need a
-permission that headless mode denies, Bash/NotebookEdit/Task are disallowed outright, and sessions
-are not persisted (they must not show up in the session panel). The prompt carries only Rafael's
-message, never the previous ones: there is no history to read. Never raises: a failed run still
-clears the waiting mark and leaves a visible note in the log.
+The run is read-only: Edit/Write are disallowed outright, so nothing — not even the `BACKLOG.md` —
+is changed by the conference; the backlog is only what Rafael decides. Bash/NotebookEdit/Task are
+also disallowed, and sessions are not persisted (they must not show up in the session panel). The
+prompt carries only Rafael's message, never the previous ones: there is no history to read. The
+workspace hook (`hook.py`, registered in the user's Claude Code settings) reads the run's
+environment and caps tool steps and distinct files read (`conference_budget.py`); when the budget
+runs out the agent is told to answer with what it knows, and `--max-turns` stays above that budget
+only as a last-resort exit. Never raises: a failed run still clears the waiting mark and leaves a
+visible note in the log.
 """
 import json
 import os
@@ -37,13 +40,14 @@ import conference  # noqa: E402  (stdlib-only at import time, by design)
 
 TIMEOUT_S = 300
 NO_ANSWER = conference.NO_ANSWER      # the prompt's sentinel: the message is not about this repo
+MAX_TURNS = conference.MAX_TOOL_STEPS + 4     # last-resort exit; the hook budget comes first
 
-# Everything not listed here needs a permission request, which a headless run denies. Edit and Write
-# are allowed only for the repo's own BACKLOG.md; deny rules win over any allow rule from the user's
-# settings, so Bash and the tools that can change files indirectly are blocked outright.
-ALLOWED_TOOLS = ("Read,Grep,Glob,"
-                 "Edit(./BACKLOG.md),Write(./BACKLOG.md),Edit(BACKLOG.md),Write(BACKLOG.md)")
-DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,WebFetch,WebSearch"
+# Everything not listed here needs a permission request, which a headless run denies. The run is
+# read-only: deny rules win over any allow rule from the user's settings, so Edit/Write (and the
+# tools that can change files indirectly) are blocked outright, never just left out of the allow
+# list.
+ALLOWED_TOOLS = "Read,Grep,Glob"
+DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,Edit,Write,WebFetch,WebSearch"
 
 
 def answer_command(others=None):
@@ -58,7 +62,7 @@ def answer_command(others=None):
     system = _t("conference.system_prompt", no_answer=NO_ANSWER)
     dirs = "".join(f"--add-dir {shlex.quote(str(p))} " for p in (others or []))
     return (f"{lib.agent_launch_command()} -p --output-format stream-json --verbose "
-            f"--no-session-persistence --permission-mode default {dirs}"
+            f"--no-session-persistence --permission-mode default --max-turns {MAX_TURNS} {dirs}"
             f"--append-system-prompt {shlex.quote(system)} "
             f"--allowedTools {shlex.quote(ALLOWED_TOOLS)} "
             f"--disallowedTools {shlex.quote(DISALLOWED_TOOLS)}")
@@ -91,8 +95,6 @@ def _status_label(repo, name, data):
         return _t("conference.status.searching", pattern=_clip(data.get("pattern")))
     if name == "Glob":
         return _t("conference.status.looking", pattern=_clip(data.get("pattern")))
-    if name in ("Edit", "Write") and "backlog" in str(data.get("file_path") or "").lower():
-        return _t("conference.status.backlog")
     return ""
 
 
@@ -140,31 +142,59 @@ def _stream_answer(stream, repo, on_status=None):
     return final
 
 
+def _budget_state():
+    """Fresh state-file path for one run; the hook creates it on the first counted step."""
+    folder = conference.estado_dir() / "budget"
+    folder.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(dir=str(folder), prefix="run-", suffix=".json")
+    os.close(fd)
+    os.unlink(path)
+    return path
+
+
 def _execute(cmd, repo, prompt, on_status=None):
     """(answer, stderr, returncode) of the headless run; the prompt comes from stdin.
 
     A watchdog kills the whole process group at TIMEOUT_S. stderr goes to a temporary file so a
-    talkative child cannot fill the pipe while stdout is being read."""
-    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as err_file:
-        proc = subprocess.Popen(cmd, shell=True, cwd=repo, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=err_file, text=True,
-                                start_new_session=True)
-        timer = threading.Timer(TIMEOUT_S, _kill_group, args=(proc,))
-        timer.start()
-        try:
+    talkative child cannot fill the pipe while stdout is being read. The budget state file goes in
+    the child's environment, so the PreToolUse hook sees it, and is removed afterwards."""
+    try:
+        budget = _budget_state()
+    except OSError:
+        budget = None
+    env = None
+    if budget:
+        env = dict(os.environ, WS_CONFERENCE_BUDGET=budget,
+                   WS_CONFERENCE_MAX_STEPS=str(conference.MAX_TOOL_STEPS),
+                   WS_CONFERENCE_MAX_FILES=str(conference.MAX_FILES_READ))
+    try:
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as err_file:
+            proc = subprocess.Popen(cmd, shell=True, cwd=repo, stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=err_file, text=True,
+                                    env=env, start_new_session=True)
+            timer = threading.Timer(TIMEOUT_S, _kill_group, args=(proc,))
+            timer.start()
             try:
-                proc.stdin.write(prompt)
-                proc.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
-            out = _stream_answer(proc.stdout, repo, on_status)
-            code = proc.wait()
-            err_file.seek(0)
-            err = err_file.read()
-        finally:
-            timer.cancel()
-            if proc.poll() is None:      # an unexpected failure must not leave the child running
-                _kill_group(proc)
+                try:
+                    proc.stdin.write(prompt)
+                    proc.stdin.close()
+                except (BrokenPipeError, OSError):
+                    pass
+                out = _stream_answer(proc.stdout, repo, on_status)
+                code = proc.wait()
+                err_file.seek(0)
+                err = err_file.read()
+            finally:
+                timer.cancel()
+                if proc.poll() is None:      # an unexpected failure must not leave the child running
+                    _kill_group(proc)
+    finally:
+        if budget:
+            for path in (budget, budget + ".lock"):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
     return out, err, code
 
 
@@ -200,7 +230,7 @@ def answer(repo, prompt, message_id, created, execute=None, others=None):
     answer was written.
 
     `others` are the sibling repos the run may read for the cross-validation. A `NO_ANSWER` output
-    means the message is not about this repo: nothing is appended and no backlog item is expected.
+    means the message is not about this repo: nothing is appended and the run is read-only anyway.
     An answer is only written while that same conference is still active: a late worker must not
     fall into a conference started after this one. A failed run writes a visible note instead of
     leaving Rafael waiting; the details go to errors.log, never into the log that feeds the next

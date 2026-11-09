@@ -147,18 +147,29 @@ class ConferenceTest(unittest.TestCase):
         self.assertEqual(conference.read_active()["status"],
                          {self.repos[0]: i18n.t("conference.status.thinking"),
                           self.repos[1]: i18n.t("conference.status.thinking")})
-        prompt = i18n.t("conference.prompt", text="minha mensagem",
-                        no_answer=conference.NO_ANSWER)
-        self.assertEqual(calls[0][1], prompt)
+        participants = ", ".join(f"{conference._sender(p)} ({p})" for p in self.repos)
+        expected = dict(text="minha mensagem", no_answer=conference.NO_ANSWER,
+                        participants=participants, max_files=conference.MAX_FILES_READ,
+                        max_steps=conference.MAX_TOOL_STEPS)
+        self.assertEqual(calls[0][1], i18n.t(
+            "conference.prompt", you=conference._sender(self.repos[0]), **expected))
+        self.assertEqual(calls[1][1], i18n.t(
+            "conference.prompt", you=conference._sender(self.repos[1]), **expected))
         self.assertIn("um parágrafo", calls[0][1])
         self.assertIn("minha mensagem", calls[0][1])
-        self.assertIn("BACKLOG.md", calls[0][1])           # the only file this mode may change
         self.assertIn("conferência", calls[0][1])           # not long work
         self.assertIn("apenas sobre este repo", calls[0][1])
         self.assertIn("leia o harness", calls[0][1])
         self.assertIn("validação cruzada", calls[0][1])
         self.assertIn("repos irmãos", calls[0][1])
         self.assertIn("análise mais profunda", calls[0][1])
+        self.assertIn("dirigida a outro participante", calls[0][1])
+        self.assertIn(f"{conference.MAX_FILES_READ} arquivos", calls[0][1])
+        self.assertIn(f"{conference.MAX_TOOL_STEPS} passos", calls[0][1])
+        self.assertNotIn("registre no BACKLOG", calls[0][1])   # the backlog is Rafael's call
+        self.assertIn("somente leitura", calls[0][1])
+        for repo in self.repos:                            # every participant is named
+            self.assertIn(f"{conference._sender(repo)} ({repo})", calls[0][1])
         self.assertIn(conference_worker.NO_ANSWER, calls[0][1])
         self.assertNotIn("independente do assunto", calls[0][1])
         self.assertNotIn(str(conference.log_path()), calls[0][1])   # no read outside the repo
@@ -230,7 +241,7 @@ class ConferenceTest(unittest.TestCase):
 
 
 class WorkerTest(unittest.TestCase):
-    """The isolated Claude run: one per participant, read-only except for BACKLOG.md."""
+    """The isolated Claude run: one per participant, read-only and bounded by the budget hook."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -359,11 +370,6 @@ class WorkerTest(unittest.TestCase):
                 {"type": "tool_use", "name": "Grep", "input": {"pattern": "conflito"}}]}},
             {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "name": "Glob", "input": {"pattern": "**/*.md"}}]}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Write",
-                 "input": {"file_path": str(Path(self.repos[0]) / "BACKLOG.md")}}]}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}},
             {"type": "result", "subtype": "success", "result": "resposta final"},
         ]
         statuses = []
@@ -376,7 +382,6 @@ class WorkerTest(unittest.TestCase):
             i18n.t("conference.status.reading", path="docs/x.md"),
             i18n.t("conference.status.searching", pattern="conflito"),
             i18n.t("conference.status.looking", pattern="**/*.md"),
-            i18n.t("conference.status.backlog"),
         ])
 
     def test_an_error_result_is_not_an_answer(self):
@@ -386,7 +391,7 @@ class WorkerTest(unittest.TestCase):
             io.StringIO("\n".join(json.dumps(line) for line in lines)), self.repos[0])
         self.assertEqual(out, "")
 
-    def test_the_run_is_headless_isolated_and_may_change_only_the_backlog(self):
+    def test_the_run_is_headless_isolated_read_only_and_budgeted(self):
         cmd = conference_worker.answer_command([self.repos[1]])
         self.assertIn("-p ", cmd + " ")
         self.assertIn("--add-dir", cmd)              # siblings are readable for cross-validation
@@ -397,12 +402,110 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("--permission-mode default", cmd)
         self.assertIn("--append-system-prompt", cmd)
         self.assertIn(conference_worker.NO_ANSWER, cmd)
-        self.assertIn("Edit(./BACKLOG.md)", cmd)
-        self.assertIn("Write(./BACKLOG.md)", cmd)
-        self.assertIn("Write(BACKLOG.md)", cmd)
-        self.assertIn("Bash", cmd.split("--disallowedTools", 1)[1])
+        self.assertIn("--max-turns", cmd)            # last-resort exit above the hook budget
+        self.assertNotIn("--settings", cmd)          # never override the profile's settings
+        self.assertIn("Read,Grep,Glob", cmd)         # the only allowed tools
+        denied = cmd.split("--disallowedTools", 1)[1]
+        for tool in ("Bash", "Task", "Edit", "Write", "WebFetch", "WebSearch"):
+            self.assertIn(tool, denied)              # read-only: nothing is written
         self.assertNotIn("--resume", cmd)
         self.assertNotIn("--continue", cmd)
+
+
+BUDGET_HOOK = SRC / "conference_budget.py"
+
+
+class BudgetHookTest(unittest.TestCase):
+    """The PreToolUse hook that turns the conference budget into a mechanism, not a prompt request."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.state = self.tmp / "budget.json"
+
+    def hook(self, tool="Read", file_path=None, max_steps=20, max_files=12, with_state=True,
+             tool_use_id=None):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {}}
+        if file_path is not None:
+            payload["tool_input"]["file_path"] = file_path
+        if tool_use_id is not None:
+            payload["tool_use_id"] = tool_use_id
+        env = dict(os.environ, WS_CONFERENCE_MAX_STEPS=str(max_steps),
+                   WS_CONFERENCE_MAX_FILES=str(max_files))
+        if with_state:
+            env["WS_CONFERENCE_BUDGET"] = str(self.state)
+        proc = subprocess.run([sys.executable, str(BUDGET_HOOK)], input=json.dumps(payload),
+                              capture_output=True, text=True, env=env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        return out.get("hookSpecificOutput") or {}
+
+    def test_a_file_counts_once_and_a_new_file_is_denied_past_the_limit(self):
+        self.assertEqual(self.hook(file_path="/x/a.md", max_files=2), {})
+        self.assertEqual(self.hook(file_path="/x/a.md", max_files=2), {})   # already read
+        self.assertEqual(self.hook(file_path="/x/b.md", max_files=2), {})
+        denied = self.hook(file_path="/x/c.md", max_files=2)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.budget.files", max_files=2),
+                      denied.get("permissionDecisionReason"))
+
+    def test_the_step_budget_denies_more_tools_and_asks_for_an_answer(self):
+        self.assertEqual(self.hook(tool="Grep", max_steps=2), {})
+        self.assertEqual(self.hook(tool="Grep", max_steps=2), {})
+        denied = self.hook(tool="Glob", max_steps=2)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.budget.steps", max_steps=2),
+                      denied.get("permissionDecisionReason"))
+        self.assertIn("responda agora", denied.get("permissionDecisionReason"))
+
+    def test_the_same_event_counted_twice_charges_one_step(self):
+        self.assertEqual(self.hook(tool="Grep", max_steps=1, tool_use_id="tool-1"), {})
+        self.assertEqual(self.hook(tool="Grep", max_steps=1, tool_use_id="tool-1"), {})  # duplicate
+        denied = self.hook(tool="Grep", max_steps=1, tool_use_id="tool-2")   # a real second step
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+
+    def test_uncounted_tools_and_a_run_without_state_are_not_blocked(self):
+        self.assertEqual(self.hook(tool="Bash"), {})
+        self.assertEqual(self.hook(file_path="/x/a.md", with_state=False), {})
+        self.assertFalse(self.state.exists())
+
+    def test_a_broken_state_file_does_not_block_the_run(self):
+        self.state.write_text("not json", encoding="utf-8")
+        self.assertEqual(self.hook(file_path="/x/a.md", max_files=1), {})
+        self.assertEqual(json.loads(self.state.read_text(encoding="utf-8"))["files"], ["/x/a.md"])
+
+    def test_the_workspace_hook_applies_the_budget_to_a_conference_run(self):
+        payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
+                   "tool_name": "Read", "tool_input": {"file_path": "/x/a.md"}}
+        env = dict(os.environ, WS_ESTADO=str(self.tmp), WS_CONFERENCE_BUDGET=str(self.state),
+                   WS_CONFERENCE_MAX_STEPS="20", WS_CONFERENCE_MAX_FILES="1")
+
+        def run_hook():
+            proc = subprocess.run([sys.executable, str(SRC / "hook.py")],
+                                  input=json.dumps(payload), capture_output=True, text=True,
+                                  env=env, check=False)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+        self.assertEqual(run_hook(), {})                       # first file: allowed
+        self.assertEqual(run_hook(), {})                       # same file: not charged again
+        payload["tool_input"]["file_path"] = "/x/b.md"
+        denied = run_hook()["hookSpecificOutput"]              # second file: over the limit
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.budget.files", max_files=1),
+                      denied.get("permissionDecisionReason"))
+
+    def test_the_workspace_hook_ignores_runs_without_a_conference_budget(self):
+        payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
+                   "tool_name": "Read", "tool_input": {"file_path": "/x/a.md"}}
+        env = dict(os.environ, WS_ESTADO=str(self.tmp))
+        env.pop("WS_CONFERENCE_BUDGET", None)
+        proc = subprocess.run([sys.executable, str(SRC / "hook.py")],
+                              input=json.dumps(payload), capture_output=True, text=True,
+                              env=env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "")
 
 
 class FakeViewer:

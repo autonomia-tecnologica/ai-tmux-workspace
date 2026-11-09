@@ -360,6 +360,19 @@ def _valid_session_id(sid):
     return isinstance(sid, str) and bool(sid) and sid not in (".", "..") and not any(c in sid for c in "/\\\0")
 
 
+def _conference_budget(d):
+    """PreToolUse of a conference run: its tool/file budget, set only by the worker's environment."""
+    if not os.environ.get("WS_CONFERENCE_BUDGET"):
+        return
+    try:
+        import conference_budget
+        reason = conference_budget.check(d)
+    except Exception:
+        return      # fail open, like everything else in this hook
+    if reason:
+        conference_budget.deny(reason)
+
+
 def main():
     d = json.load(sys.stdin)
     if not isinstance(d, dict):
@@ -367,6 +380,8 @@ def main():
     ev, sid = d.get("hook_event_name"), d.get("session_id")
     if not isinstance(ev, str) or ev not in EVENTS or not _valid_session_id(sid):
         return
+    if ev == "PreToolUse":
+        _conference_budget(d)
     if ev == "SessionEnd":
         _record_permission_mode(d)
         _end_session(sid)

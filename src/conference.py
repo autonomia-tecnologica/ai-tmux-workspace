@@ -8,16 +8,19 @@ the config; sharing a `groups` folder alone is not enough). Closing the screen e
 (Ctrl+X explicitly, Esc by leaving the screen), and there is no persistence: the next conference
 starts with an empty log. `say` appends Rafael's message and starts, for every participant, a
 separate headless Claude (`conference_worker.py`) in that repo: the window's interactive session is
-never touched, and each answer goes straight into the log. In that mode the agent is read-only except
-for the repo's own `BACKLOG.md`, and it answers in at most one paragraph. Each participant receives
-only Rafael's message, never the previous ones, but may read the sibling repos for the
-cross-validation between repos.
+never touched, and each answer goes straight into the log. In that mode the agent is read-only, and
+it answers in at most one paragraph. Each participant receives only Rafael's message, never the
+previous ones, but may read the sibling repos for the cross-validation between repos.
 
-Participants answer only about their own repo: a message that is not theirs gets no log entry and
-no backlog item (the worker replies with the `NO_ANSWER` sentinel). The conference is a quick
-analysis, not long work; a deeper analysis becomes a backlog item of that repo. While a participant
-works, the screen header shows what it is doing (`status` in the active state: "analisando…",
-"lendo docs/x.md", "buscando conflito").
+Participants answer only about their own repo: a message that is not theirs or is addressed to
+another participant gets no log entry (the worker replies with the `NO_ANSWER` sentinel). The prompt
+lists the participants and tells each run which one it is. The conference is a quick analysis, not
+long work: a tool budget (`MAX_TOOL_STEPS`, `MAX_FILES_READ`, enforced by the workspace hook
+`hook.py` through `conference_budget.py`) stops the run from turning into a long analysis, and the
+agent then answers with what it already knows and says a deeper analysis needs more time. The
+backlog is never written here: it is only what Rafael decides. While a participant works, the
+screen header shows what it is doing (`status` in the active state: "analisando…", "lendo
+docs/x.md", "buscando conflito").
 
 This module is stdlib-only at import time: it is imported by the worker itself. The heavier modules
 (lib, help, viewer, i18n) are imported inside the screen and command functions only.
@@ -40,6 +43,9 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
 
 BASE = Path(__file__).resolve().parent.parent
 NO_ANSWER = "<<SEM_RESPOSTA>>"      # worker stdout sentinel: the message is not about that repo
+MAX_TOOL_STEPS = 20                 # tool steps one participant may take before it must answer
+MAX_FILES_READ = 12                 # distinct files one participant may read in a run
+COUNTED_TOOLS = ("Read", "Grep", "Glob")     # the tools the budget counts as a step
 
 
 def estado_dir():
@@ -265,10 +271,16 @@ def say(text, launch=None):
         active["status"] = status
         _write_active(active)
 
-    prompt = _t("conference.prompt", text=text, no_answer=NO_ANSWER)   # only Rafael's message, no history
     spawner = launch or _launch_answer
+    participants = ", ".join(f"{_sender(p)} ({p})" for p in repos)
     failed = []
     for repo in repos:
+        # Only Rafael's message, no history; each run is told who the participants are and which one
+        # it is, so it can stay silent when the message is addressed to another participant. The
+        # budget is also in the prompt, but the hook is what enforces it.
+        prompt = _t("conference.prompt", text=text, no_answer=NO_ANSWER,
+                    participants=participants, you=_sender(repo),
+                    max_files=MAX_FILES_READ, max_steps=MAX_TOOL_STEPS)
         try:
             ok = spawner(repo, prompt, message_id, created, others=repos)
         except Exception:

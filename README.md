@@ -106,11 +106,13 @@ existe. Cada participante é um **Claude isolado** (`claude -p`, um processo por
 principal da janela não é usada nem alterada, por isso a conferência não depende de os painéis estarem livres. Cada
 um fala **só do próprio repo**, mas pode ler os irmãos — a conferência é uma **validação cruzada entre repos**, e
 ler os irmãos é recomendado — e, antes de responder, lê o harness (o `CLAUDE.md`/`.claude/CLAUDE.md` e o que ele
-mandar ler). Se a mensagem não for do repo, ele **não responde**: nem linha no log, nem backlog. A conferência é
-análise rápida, não trabalho longo: a resposta vem em um parágrafo curto; se exigir análise mais profunda, a
-análise vira item no `BACKLOG.md` daquele repo, nunca mudança de código na hora. Nesse modo só o `BACKLOG.md` do
-próprio repo pode ser alterado; editar outro arquivo é negado, e Bash, subagentes e ferramentas de rede ficam
-desligados. As respostas aparecem no log conforme cada Claude termina (o topo mostra quem ainda está aguardando e
+mandar ler). Se a mensagem não for do repo, ou for dirigida a outro participante pelo nome do repo, ele **não
+responde**: nem linha no log. O prompt lista os participantes e diz a cada um qual é o seu. A conferência é
+análise rápida, não trabalho longo: a resposta vem em um parágrafo curto e o run tem um **orçamento** imposto pelo
+hook do workspace (12 arquivos lidos e 20 passos de ferramenta); quando ele acaba, o participante responde com o que já sabe e
+diz que uma análise mais profunda precisa de mais tempo. Nesse modo o run é **somente leitura**: `Edit`/`Write`
+são negados (nem o `BACKLOG.md` muda), e Bash, subagentes e ferramentas de rede ficam desligados. O backlog é só
+o que você mandar virar backlog. As respostas aparecem no log conforme cada Claude termina (o topo mostra quem ainda está aguardando e
 o passo atual). Não há comando de conferência na CLI: a CLI do `workspace` é para instalação e ações
 administrativas, nunca para o uso do tmux.
 
