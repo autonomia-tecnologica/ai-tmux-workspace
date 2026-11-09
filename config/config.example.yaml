@@ -7,9 +7,30 @@ extra_usage: false
 icons: true
 agent: claude
 
+# Perfis. O valor pode ser a linha de comando (formato antigo, ex. `claude`) ou um mapa com
+# `command` e `settings`. O workspace gera a settings de cada perfil e sobe o `claude` com
+# `--settings`: a base traz os hooks e o `deny` do harness; `settings` traz só a parte do perfil
+# (URL, modelos, flags, apiKeyHelper). Chave de acesso nunca entra aqui nem na settings gerada:
+# use um comando de cofre em `apiKeyHelper` (o Claude Code executa na hora de subir).
 profiles:
   claude: claude
-  deepseek: claude --settings ~/.claude/settings.deepseek.json
+  deepseek:
+    command: claude
+    settings:
+      env:
+        ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+        ANTHROPIC_MODEL: deepseek-flash
+        ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-flash
+        ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-flash
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-flash
+        CLAUDE_CODE_SUBAGENT_MODEL: deepseek-flash
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000"
+        DISABLE_TELEMETRY: "1"
+        DISABLE_ERROR_REPORTING: "1"
+      model: deepseek-flash
+      apiKeyHelper: "pass show deepseek/api-key"   # exemplo: aponte para o seu cofre
+      permissions:
+        defaultMode: bypassPermissions
 
 prompts:
   - "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos?"

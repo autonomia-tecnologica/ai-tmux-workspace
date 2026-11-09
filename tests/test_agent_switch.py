@@ -39,15 +39,20 @@ class OpeningCommandTest(unittest.TestCase):
 
     @property
     def launch(self):
-        """Command line the workspace actually runs: non-Claude profiles disable tool search (D9) and
-        open in bypassPermissions, since the classifier does not run there; the claude profile opens
-        in acceptEdits (D10)."""
-        base = self.command if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {self.command}"
+        """Command line the workspace actually runs: every profile gets the workspace-generated
+        settings (`--settings`), except a legacy string command that already passes its own; non-Claude
+        profiles disable tool search (D9) and open in bypassPermissions, since the classifier does not
+        run there; the claude profile opens in acceptEdits (D10)."""
+        cmd = self.command
+        if "--settings" not in cmd:
+            cmd = f"{cmd} --settings {shlex.quote(str(self.state / 'settings' / f'{self.agent}.json'))}"
+        base = cmd if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
         mode = "acceptEdits" if self.agent == "claude" else "bypassPermissions"
         return f"{base} --permission-mode {mode}"
 
     def opening(self, repo=None):
-        env = dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state), AT_WS_CONFIG=str(self.config))
+        env = dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state), AT_WS_CONFIG=str(self.config),
+                   AT_HARNESS_DIR=str(self.root / "no-harness"))
         proc = subprocess.run([sys.executable, str(LIB), "opening-command", str(repo or self.repo)],
                               env=env, capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)

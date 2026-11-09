@@ -13,9 +13,9 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 **Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
 
 tmux para os repos de `groups` do config.yaml. Comando: `workspace`. O agente que roda nos painéis do Claude é escolhido em `agent` do config.yaml (comandos em `profiles`,
-ex.: `claude` ou `claude --settings ~/.claude/settings.deepseek.json`); troca pelo menu de opções (Ctrl+b o) e reinicia o
+ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"); troca pelo menu de opções (Ctrl+b o) e reinicia o
 workspace inteiro. Cada repo lembra a linha de comando do agente com que foi aberto por último: a mesma linha retoma a
-sessão com `--continue`; uma linha diferente (ou a primeira abertura depois desta mudança) abre sessão nova. Na primeira
+sessão com `--continue`; uma linha diferente (ou a primeira abertura depois desta mudança) abre sessão nova. No formato de mapa, o nome do perfil entra na identidade: dois perfis com o mesmo comando `claude` continuam sendo ambientes diferentes. Na primeira
 vez que o ambiente muda, o primeiro repo aberto com transcrição anterior recebe um prompt para relê-la e não perder o
 contexto; os demais abrem a sessão nova sem repetir o aviso (vale para qualquer perfil ou config editada à mão). O
 servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
@@ -32,11 +32,36 @@ Proporção 2:7:3. A coluna esquerda tem os repos (metade de cima) e as tarefas 
 O repo principal (`main` no config.yaml) fica fora dos grupos, sempre no topo da lista, em laranja (azul quando é o repo da janela).
 Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
+## Settings gerada do agente
+
+Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `harness/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
+
+`profiles` aceita o formato antigo (linha de comando, ex. `claude`) e o novo:
+
+```yaml
+profiles:
+  claude: claude
+  deepseek:
+    command: claude
+    settings:
+      env:
+        ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+        ANTHROPIC_MODEL: deepseek-flash
+      model: deepseek-flash
+      apiKeyHelper: "pass show deepseek/api-key"
+```
+
+Uma linha de comando que já passa `--settings` continua como está: é o formato antigo, e o arquivo continua sendo seu. Para migrar, leve o conteúdo não secreto para `settings` e troque a chave por `apiKeyHelper`, um comando que imprime a chave na hora de subir. A chave de acesso nunca entra no `config.yaml`, na settings gerada nem no ambiente: a settings só aponta para o cofre, e o Claude Code executa o helper no launch. O arquivo gerado fica com modo 0600 e o workspace recusa gerar se encontrar valor literal em `ANTHROPIC_AUTH_TOKEN`, `*_API_KEY`, `*_ACCESS_TOKEN` ou algo com cara de chave.
+
+O `settings.json` da pessoa e as settings gerenciadas da empresa continuam valendo: o `--settings` é uma camada a mais, e o workspace não controla a precedência. No teste local, uma chave repetida no `--settings` venceu a do `settings.json` da pessoa; as gerenciadas da empresa ficam acima das duas pela documentação do Claude Code (não exercitamos uma gerenciada aqui). `workspace reload` regenera os arquivos: sessões abertas depois dele usam a settings nova; o Claude Code também observa os settings e reaplica a maioria sem reiniciar (documentação dele; não testamos o hot reload aqui).
+
+Enquanto o harness instalado não existir (item 33), a base vem do `harness/settings.json` versionado neste repo e o hook aponta para o `harness/harness.py` do repo; quando o harness instalado existir, a base é montada do `forcado.yaml` instalado e o hook aponta para o script instalado quando ele existe (senão, para o do repo).
+
 ## Compatibilidade com modelos não-Claude
 
 Perfis que não são o `claude` (DeepSeek, OpenRouter, Qwen, Strata...) sobem com o *tool search* do Claude Code desligado (`ENABLE_TOOL_SEARCH=false`). O motivo é de compatibilidade: o Claude Code grava o estado do tool search no transcript como blocos `tool_addition`/`tool_definition`, e os endpoints compatíveis com a Anthropic desses provedores recusam esse variant (422 em `messages[1].content`), o que quebra o `--continue`. Desligado por padrão, a sessão nova já nasce compatível e a troca de perfil deixa de produzir esse erro. O perfil `claude` não muda.
 
-O modo de permissão segue a mesma regra de troca: o `claude` abre em `acceptEdits` e um perfil não-Claude abre em `bypassPermissions` — sem o classifier, `acceptEdits` pararia cada comando de Bash num prompt. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior, e `auto` nunca é aplicado a um perfil não-Claude. Os settings de cada perfil não-Claude também declaram `permissions.defaultMode: bypassPermissions`, para sessões abertas fora do workspace.
+O modo de permissão segue a mesma regra de troca: o `claude` abre em `acceptEdits` e um perfil não-Claude abre em `bypassPermissions` — sem o classifier, `acceptEdits` pararia cada comando de Bash num prompt. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior, e `auto` nunca é aplicado a um perfil não-Claude. O perfil não-Claude pode declarar `permissions.defaultMode: bypassPermissions` no `settings` dele, para sessões abertas fora do workspace.
 
 Sessões antigas abertas no perfil `claude` ainda não são retomadas no perfil novo: elas abrem uma sessão nova com o prompt de migração (uma vez só). Retomar o transcript antigo de verdade é item de backlog, não um passo escondido no launcher. A medida vale enquanto a ferramenta de harness não for trocada; quando o at-harness entrar, a decisão é revista. Ela não é uma barreira de segurança.
 
