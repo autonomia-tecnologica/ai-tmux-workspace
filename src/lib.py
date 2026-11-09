@@ -1,6 +1,8 @@
 """Base comum dos painéis do workspace: lista de repos, estado dos agentes, repo da janela."""
+import copy
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -33,6 +35,10 @@ def expandir(p):
 
 class ErroConfig(ValueError):
     """The config file exists but cannot be read, so nothing may be written over it."""
+
+
+class ErroSettings(ValueError):
+    """The workspace-generated settings for a profile cannot be built safely (literal key, bad shape, I/O)."""
 
 
 def config_path():
@@ -102,19 +108,234 @@ def agent_name():
     return name if name in profiles or name == "claude" else "claude"
 
 
+def _profile_value(name):
+    """Raw value of a profile in config.yaml: a command string (legacy) or a mapping."""
+    profiles = ler_config().get("profiles", {})
+    return profiles.get(name) if isinstance(profiles, dict) else None
+
+
+def profile_command(name=None):
+    """Command line of a profile. A mapping uses its `command` (default `claude`); a string is the command."""
+    value = _profile_value(name or agent_name())
+    if isinstance(value, dict):
+        command = value.get("command")
+        return command if isinstance(command, str) and command.strip() else "claude"
+    return value if isinstance(value, str) and value.strip() else "claude"
+
+
+def profile_settings(name=None):
+    """Extra settings of a profile (the `settings` map of a mapping profile).
+
+    None means a legacy string profile: its command owns `--settings`, so the workspace does not generate
+    one. {} means a profile with no extra settings (the harness base is still generated)."""
+    value = _profile_value(name or agent_name())
+    if not isinstance(value, dict):
+        return None
+    settings = value.get("settings")
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict):
+        raise ErroSettings(t("settings.err.profile", profile=str(name or agent_name())))
+    return settings
+
+
 def agent_command():
-    """Command line of the chosen agent: config.yaml["profiles"][agent], else plain `claude`."""
-    return ler_config().get("profiles", {}).get(agent_name(), "") or "claude"
+    """Command line of the chosen agent: config.yaml["profiles"][agent] (string or mapping), else `claude`."""
+    return profile_command(agent_name())
+
+
+def agent_identity():
+    """Recorded identity of the chosen profile for `--continue` and permission-mode decisions.
+
+    A mapping profile can use the same `claude` command as another profile, so the profile name is part
+    of the identity; otherwise switching between two mapping profiles would look like the same
+    environment and reapply the previous profile's mode/session. String profiles keep the old identity
+    (their command line), which is what the recorded state already holds."""
+    name = agent_name()
+    command = agent_command()
+    return f"{command} [{name}]" if isinstance(_profile_value(name), dict) else command
+
+
+# --- workspace-generated settings -------------------------------------------------------------
+# The workspace launches Claude Code with one generated settings file per profile: the harness hooks and
+# deny rules from forcado.yaml (or the committed harness/settings.json until item 33 installs the
+# harness), plus the profile's own `settings` map (URL, models, flags, apiKeyHelper). Access keys never
+# enter this file: an env key with a literal value is refused and the credential must come from
+# apiKeyHelper, which Claude Code runs at launch (F08 in the harness secrets rules).
+
+HARNESS_PY = BASE / "harness" / "harness.py"
+HARNESS_SETTINGS = BASE / "harness" / "settings.json"
+
+_SETTINGS_FLAG = re.compile(r"(?:^|\s)--settings(?:=|\s|$)")
+_SECRET_ENV = re.compile(
+    r"(?i)(?:^|_)(?:API_KEY|AUTH_TOKEN|ACCESS_TOKEN|SESSION_TOKEN|REFRESH_TOKEN|TOKEN"
+    r"|SECRET(?:_ACCESS)?_KEY|CLIENT_SECRET|SECRET|PASSWORD)(?:$|_)")
+_KEY_LITERAL = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{10,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{24,})")
+
+
+def settings_dir():
+    """Directory of the generated per-profile settings. Read at call time, like the other state under
+    WS_ESTADO, so a caller that changes it (tests, a different state dir) gets its own files."""
+    return Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace")) / "settings"
+
+
+def _has_settings_flag(command):
+    """True when the command already passes `--settings` (a legacy profile that owns its file)."""
+    return bool(_SETTINGS_FLAG.search(command))
+
+
+def _harness_module():
+    """Load harness/harness.py without importing from src/ (the file is installed on its own)."""
+    spec = importlib.util.spec_from_file_location("ws_harness_render", HARNESS_PY)
+    if spec is None or spec.loader is None:
+        raise ErroSettings(t("settings.err.base", path=str(HARNESS_PY), error="module not found"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _harness_hook_command(installed):
+    """Script of the harness hook: the installed one when it exists, else this repo's copy. The installed
+    harness is absent until item 33; pointing at a missing script would make Claude Code block every
+    prompt (a non-zero hook aborts UserPromptSubmit), so the repo copy is the explicit fallback."""
+    script = Path(installed) / "harness.py"
+    return f'python3 "{script if script.is_file() else HARNESS_PY}"'
+
+
+def _set_hook_command(settings, command):
+    """Every harness hook uses the same command; rewrite it to the script that actually exists."""
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return settings
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            entries = group.get("hooks")
+            for hook in entries if isinstance(entries, list) else []:
+                if isinstance(hook, dict) and hook.get("type") == "command":
+                    hook["command"] = command
+    return settings
+
+
+def harness_base_settings():
+    """Hooks + deny of the forced harness. The installed harness is used when it has a forcado.yaml;
+    until item 33 installs it, the committed harness/settings.json is the explicit fallback."""
+    installed = Path(os.environ.get(
+        "AT_HARNESS_DIR", HOME / ".local" / "share" / "ai-tmux-workspace" / "harness")).expanduser()
+    command = _harness_hook_command(installed)
+    if (installed / "forcado.yaml").is_file():
+        try:
+            module = _harness_module()
+            return _set_hook_command(module.build_settings(module.load_rules(installed)), command)
+        except ErroSettings:
+            raise
+        except Exception as error:
+            raise ErroSettings(t("settings.err.render_harness", path=str(installed), error=str(error)))
+    try:
+        base = json.loads(HARNESS_SETTINGS.read_text(encoding="utf-8"))
+        if not isinstance(base, dict):
+            raise ValueError("settings root is not a mapping")
+        return _set_hook_command(base, command)
+    except (OSError, ValueError) as error:
+        raise ErroSettings(t("settings.err.base", path=str(HARNESS_SETTINGS), error=str(error)))
+
+
+def _merge_settings(base, profile):
+    """Base first, profile on top. Harness hooks always win and `permissions.deny` is a union, so the
+    forced part survives; every other profile key (env, model, apiKeyHelper, flags) is applied."""
+    merged = copy.deepcopy(base)
+    for key, value in profile.items():
+        if key == "hooks":
+            continue
+        if key == "permissions" and isinstance(value, dict):
+            permissions = merged.get("permissions")
+            if not isinstance(permissions, dict):
+                permissions = merged["permissions"] = {}
+            for pkey, pvalue in value.items():
+                if pkey == "deny":
+                    if isinstance(pvalue, list):
+                        deny = permissions.get("deny") if isinstance(permissions.get("deny"), list) else []
+                        permissions["deny"] = deny + [item for item in pvalue if item not in deny]
+                    continue
+                if isinstance(pvalue, dict) and isinstance(permissions.get(pkey), dict):
+                    permissions[pkey] = _merge_settings(permissions[pkey], pvalue)
+                else:
+                    permissions[pkey] = copy.deepcopy(pvalue)
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_settings(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _check_secrets(value, path="settings"):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "env" and isinstance(item, dict):
+                for name, val in item.items():
+                    if isinstance(val, str) and val and _SECRET_ENV.search(str(name)):
+                        raise ErroSettings(t("settings.err.secret", name=f"{path}.env.{name}"))
+            _check_secrets(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _check_secrets(item, f"{path}[{index}]")
+    elif isinstance(value, str) and _KEY_LITERAL.search(value):
+        raise ErroSettings(t("settings.err.secret_value", path=path))
+
+
+def validate_settings(settings, profile=""):
+    """Refuse a generated settings that carries a literal access key (F08)."""
+    _check_secrets(settings, f"settings[{profile}]" if profile else "settings")
+
+
+def _safe_profile_name(name):
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(name or "claude"))
+    return "claude" if safe in ("", ".", "..") else safe
+
+
+def ensure_profile_settings(name=None):
+    """Write the profile's generated settings and return its path. None means a legacy string profile
+    that already owns `--settings`. Raises ErroSettings when the settings cannot be generated safely."""
+    name = name or agent_name()
+    if _has_settings_flag(profile_command(name)):
+        return None
+    settings = _merge_settings(harness_base_settings(), profile_settings(name) or {})
+    validate_settings(settings, name)
+    directory = settings_dir()
+    path = directory / f"{_safe_profile_name(name)}.json"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(settings, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+                             encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except OSError as error:
+        raise ErroSettings(t("settings.err.write", path=str(path), error=str(error)))
+    return path
 
 
 def agent_launch_command(mode=""):
-    """Command line that actually launches the agent. Profiles other than `claude` run with tool search
-    off: their Anthropic-compatible endpoints reject the `tool_definition` blocks Claude Code stores for
-    tool search, which breaks `--continue` (decision D9 in the harness record). The recorded agent
-    identity is still `agent_command()`; the env prefix and the permission mode are launch details, not a
-    profile change. `mode` is omitted when the caller does not have a repo to read it from."""
+    """Command line that actually launches the agent. Every profile runs with the workspace-generated
+    settings (`--settings`); a legacy string profile that already passes `--settings` keeps its own file.
+    Profiles other than `claude` run with tool search off: their Anthropic-compatible endpoints reject
+    the `tool_definition` blocks Claude Code stores for tool search, which breaks `--continue` (decision
+    D9 in the harness record). The recorded agent identity is `agent_identity()`; the env prefix, the
+    generated settings and the permission mode are launch details, not a profile change. `mode` is
+    omitted when the caller does not have a repo to read it from."""
+    name = agent_name()
     cmd = agent_command()
-    launch = cmd if agent_name() == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
+    if _KEY_LITERAL.search(cmd):
+        # a key in the command would travel in argv; F08 forbids it
+        raise ErroSettings(t("settings.err.secret_value", path=f"profiles[{name}].command"))
+    if not _has_settings_flag(cmd):
+        settings_path = ensure_profile_settings(name)
+        if settings_path is not None:
+            cmd = f"{cmd} --settings {shlex.quote(str(settings_path))}"
+    launch = cmd if name == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
     return f"{launch} --permission-mode {shlex.quote(mode)}" if mode else launch
 
 
@@ -196,10 +417,10 @@ def opening_command(repo):
     the new session silently. The command is recorded before the launch, so the prompt is never repeated
     for the same repo and change."""
     repo = expandir(repo)
-    cmd = agent_command()
+    cmd = agent_identity()
     mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+    launch = agent_launch_command(mode)     # may raise ErroSettings: do not record a launch that did not happen
     permission_state.record_launch(repo, cmd, mode)
-    launch = agent_launch_command(mode)
     state = _read_agent_state()
     previous = state.get(repo)
     prev_cmd = previous.get("command") if isinstance(previous, dict) else previous   # old format: the command
@@ -728,15 +949,36 @@ if __name__ == "__main__":
     perfil = sys.argv[2] if len(sys.argv) > 2 else ""
     if comando == "perfil-cmd":        # bash: the command line of the chosen agent (mode per repo when given)
         repo = expandir(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
-        if repo:
-            cmd = agent_command()
-            mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
-            permission_state.record_launch(repo, cmd, mode)
-            print(agent_launch_command(mode))
-        else:
-            print(agent_launch_command())
+        try:
+            if repo:
+                cmd = agent_identity()
+                mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+                launch = agent_launch_command(mode)
+                permission_state.record_launch(repo, cmd, mode)
+                print(launch)
+            else:
+                print(agent_launch_command())
+        except ErroSettings as error:
+            print(error, file=sys.stderr)
+            sys.exit(2)
+    elif comando == "ensure-settings":   # bash reload: generate a profile's settings without launching
+        try:
+            path = ensure_profile_settings(perfil or agent_name())
+        except ErroSettings as error:
+            print(error, file=sys.stderr)
+            sys.exit(2)
+        if path:
+            print(path)
+    elif comando == "profile-names":     # bash reload: every profile whose generated settings must be refreshed
+        profiles = ler_config().get("profiles", {})
+        names = sorted(set(profiles) | {agent_name()}) if isinstance(profiles, dict) else [agent_name()]
+        print("\n".join(names))
     elif comando == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
-        print(opening_command(sys.argv[2]))
+        try:
+            print(opening_command(sys.argv[2]))
+        except ErroSettings as error:
+            print(error, file=sys.stderr)
+            sys.exit(2)
     elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
         print((ler_principal() or ler_repos()[0][1][0])[1])
     elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all

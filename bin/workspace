@@ -18,6 +18,13 @@ MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one 
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
 perfil_cmd() { python3 "$SRC/lib.py" perfil-cmd "$1" "${2:-}"; }
+# Gera as settings de todos os perfis sem subir o agente (reload). Erro de config não derruba o reload:
+# a mensagem específica sai no stderr e os outros perfis continuam.
+settings_refresh() { python3 "$SRC/lib.py" ensure-settings "${1:-}" >/dev/null || true; }
+settings_refresh_all() {
+  local p
+  while read -r p; do [ -n "$p" ] && settings_refresh "$p"; done < <(python3 "$SRC/lib.py" profile-names)
+}
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
 laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
@@ -96,7 +103,7 @@ build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
 # Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   ~22% : rest : ~19% (clamped)
 construir() { # $1=caminho  $2=-d (não selecionar)
   local path="$1" d="${2:-}" S nome W P cmd linha T
-  S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S" "$path")"
+  S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S" "$path")" || return 1
   nome="$(basename "$path")"
   W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
   P="$(tmux display -p -t "$W" '#{pane_id}')"
@@ -242,7 +249,7 @@ open_repo() {
     mobile_apply "$ja"
     return
   fi
-  construir "$path"
+  construir "$path" || return 1        # erro na settings do perfil: a mensagem já saiu no stderr
   # a janela de partida ("boot") some quando já há repo aberto
   tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' '$2=="boot"{print $1}' |
     while read -r w; do tmux kill-window -t "$w"; done
@@ -302,7 +309,7 @@ type_prompt() { # $1=window id $2=text
 resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando essa sessão
   local pane cmd path
   path="$(tmux display -p -t "$2" '#{@ws_repo}')"
-  cmd="$(perfil_cmd "$(env_global WS_PERFIL)" "$path")"
+  cmd="$(perfil_cmd "$(env_global WS_PERFIL)" "$path")" || return 1
   tab_show "$2" "$(tab_list "$2" | head -1)"      # retoma sempre no Claude principal
   pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
   [ -n "$pane" ] || return 1
@@ -514,6 +521,7 @@ reload() {
   tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { msg cli.no_workspace profile="$perfil" >&2; exit 1; }
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PERFIL="$perfil"
+  settings_refresh_all
   tmux source-file "$AQUI/config/tmux.conf"
   prune "$perfil"
   while IFS='|' read -r W path; do
@@ -526,7 +534,7 @@ reload() {
 
 iniciar() {
   local perfil="${1:-claude}" cmd sock primeiro
-  cmd="$(perfil_cmd "$perfil")"
+  cmd="$(perfil_cmd "$perfil")" || exit 2
   [ -n "$cmd" ] || { msg cli.unknown_profile profile="$perfil" >&2; exit 2; }
   sock="ws-$perfil"
   if ! env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then

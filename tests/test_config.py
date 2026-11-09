@@ -29,7 +29,13 @@ EXAMPLE = Path(__file__).resolve().parent.parent / "config" / "config.example.ya
 class YamlMinTest(unittest.TestCase):
     def test_example_config_loads_and_roundtrips(self):
         cfg = yaml_min.loads(EXAMPLE.read_text(encoding="utf-8"))
-        self.assertEqual(cfg["profiles"]["deepseek"], "claude --settings ~/.claude/settings.deepseek.json")
+        self.assertEqual(cfg["profiles"]["claude"], "claude")
+        deepseek = cfg["profiles"]["deepseek"]
+        self.assertEqual(deepseek["command"], "claude")
+        self.assertEqual(deepseek["settings"]["env"]["ANTHROPIC_MODEL"], "deepseek-flash")
+        self.assertEqual(deepseek["settings"]["apiKeyHelper"], "pass show deepseek/api-key")
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", deepseek["settings"]["env"])
+        self.assertNotIn("ANTHROPIC_API_KEY", deepseek["settings"]["env"])
         self.assertEqual(cfg["groups"]["Example"][1]["siblings"], ["~/Codes/some-repo"])
         self.assertEqual(yaml_min.loads(yaml_min.dumps(cfg)), cfg)
 

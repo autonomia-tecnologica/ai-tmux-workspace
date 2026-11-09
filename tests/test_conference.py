@@ -7,6 +7,7 @@ injected: no subprocess and no tmux needed.
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -252,9 +253,10 @@ class WorkerTest(unittest.TestCase):
         self.a.mkdir()
         self.b.mkdir()
         self.repos = [str(self.a.resolve()), str(self.b.resolve())]
-        cfg = self.tmp / "config.yaml"
-        cfg.write_text("profiles:\n  claude: claude\nagent: claude\n", encoding="utf-8")
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.tmp), "AT_WS_CONFIG": str(cfg)})
+        self.cfg = self.tmp / "config.yaml"
+        self.cfg.write_text("profiles:\n  claude: claude\nagent: claude\n", encoding="utf-8")
+        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.tmp), "AT_WS_CONFIG": str(self.cfg),
+                                           "AT_HARNESS_DIR": str(self.tmp / "no-harness")})
         env.start()
         self.addCleanup(env.stop)
 
@@ -403,13 +405,53 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("--append-system-prompt", cmd)
         self.assertIn(conference_worker.NO_ANSWER, cmd)
         self.assertIn("--max-turns", cmd)            # last-resort exit above the hook budget
-        self.assertNotIn("--settings", cmd)          # never override the profile's settings
+        argv = shlex.split(cmd)
+        self.assertIn("--settings", argv)            # the generated settings carries the profile env
+        settings_path = Path(argv[argv.index("--settings") + 1])
+        self.assertEqual(settings_path, self.tmp / "settings" / "claude.json")
+        self.assertTrue(settings_path.is_file())
         self.assertIn("Read,Grep,Glob", cmd)         # the only allowed tools
         denied = cmd.split("--disallowedTools", 1)[1]
         for tool in ("Bash", "Task", "Edit", "Write", "WebFetch", "WebSearch"):
             self.assertIn(tool, denied)              # read-only: nothing is written
         self.assertNotIn("--resume", cmd)
         self.assertNotIn("--continue", cmd)
+
+    def test_mapping_profile_env_and_model_reach_the_conference_run(self):
+        """A mapping profile keeps its URL, model and apiKeyHelper in the generated settings; without
+        `--settings` the worker would fall back to the person's Anthropic settings and have no key."""
+        self.cfg.write_text(
+            "agent: deepseek\n"
+            "profiles:\n"
+            "  deepseek:\n"
+            "    command: claude\n"
+            "    settings:\n"
+            "      env:\n"
+            "        ANTHROPIC_BASE_URL: https://example.invalid/anthropic\n"
+            "        ANTHROPIC_MODEL: deepseek-flash\n"
+            "      model: deepseek-flash\n"
+            "      apiKeyHelper: \"printf from-vault\"\n"
+            "      permissions:\n"
+            "        defaultMode: bypassPermissions\n",
+            encoding="utf-8")
+        cmd = conference_worker.answer_command([self.repos[1]])
+        argv = shlex.split(cmd)
+        self.assertIn("--settings", argv)
+        settings_path = Path(argv[argv.index("--settings") + 1])
+        self.assertEqual(settings_path, self.tmp / "settings" / "deepseek.json")
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], "https://example.invalid/anthropic")
+        self.assertEqual(settings["env"]["ANTHROPIC_MODEL"], "deepseek-flash")
+        self.assertEqual(settings["model"], "deepseek-flash")
+        self.assertEqual(settings["apiKeyHelper"], "printf from-vault")
+
+        # the harness base still comes along; the command keeps the read-only controls
+        self.assertIn("Bash(sudo:*)", settings["permissions"]["deny"])
+        self.assertIn("--permission-mode default", cmd)
+        self.assertIn("Read,Grep,Glob", cmd)
+        denied = cmd.split("--disallowedTools", 1)[1]
+        for tool in ("Bash", "Edit", "Write"):
+            self.assertIn(tool, denied)
 
 
 BUDGET_HOOK = SRC / "conference_budget.py"
