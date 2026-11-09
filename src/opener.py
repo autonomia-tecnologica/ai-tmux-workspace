@@ -30,12 +30,12 @@ SYSTEM_EXTENSIONS = {
 BLENDER_EXTENSIONS = {"ifc", "ifczip"}
 IFC_EXTENSIONS = {"ifc", "ifczip"}
 
-# Prose types get the prose editor list (Dawn first by default); everything else is code.
+# Prose types get the prose editor list (micro first by default); everything else is code.
 PROSE_EXTENSIONS = {"md", "markdown", "mdx", "rst", "txt"}
 
 # Used when the `editor` key/type is absent or has no command available.
 EDITOR_FALLBACKS = {
-    "prose": [("Dawn", "dawn-writer", True), ("nvim", "nvim", False)],
+    "prose": [("micro", "micro", True), ("nvim", "nvim", False)],
     "code": [("nvim", "nvim", False), ("micro", "micro", False)],
 }
 EDITOR_TAIL = ("nvim", "vim", "vi")

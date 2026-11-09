@@ -41,27 +41,27 @@ class ChoicesTest(unittest.TestCase):
 
     def test_config_drives_the_list_and_keeps_order(self):
         config = {"editor": {
-            "prose": [{"name": "Dawn", "command": "dawn-writer", "fullscreen": True},
+            "prose": [{"name": "micro", "command": "micro", "fullscreen": True},
                       {"name": "nvim", "command": "nvim"}],
             "code": [{"name": "nvim", "command": "nvim"},
                      {"name": "micro", "command": "micro"}],
         }}
-        prose = self.choices("/tmp/a.md", config, {"dawn-writer", "nvim", "micro"})
-        self.assertEqual([e["command"] for e in prose], ["dawn-writer", "nvim"])
+        prose = self.choices("/tmp/a.md", config, {"micro", "nvim"})
+        self.assertEqual([e["command"] for e in prose], ["micro", "nvim"])
         self.assertTrue(prose[0]["fullscreen"])
-        code = self.choices("/tmp/a.py", config, {"dawn-writer", "nvim", "micro"})
+        code = self.choices("/tmp/a.py", config, {"micro", "nvim"})
         self.assertEqual([e["command"] for e in code], ["nvim", "micro"])
         self.assertFalse(code[0]["fullscreen"])
 
     def test_missing_command_is_filtered_out(self):
-        config = {"editor": {"code": [{"name": "Dawn", "command": "dawn-writer", "fullscreen": True},
+        config = {"editor": {"code": [{"name": "micro", "command": "micro", "fullscreen": True},
                                       {"name": "nvim", "command": "nvim"}]}}
         code = self.choices("/tmp/a.py", config, {"nvim"})
         self.assertEqual(code, [{"name": "nvim", "command": "nvim", "fullscreen": False}])
 
-    def test_prose_fallback_is_dawn_then_nvim(self):
-        result = self.choices("/tmp/a.md", {}, {"dawn-writer", "nvim", "vim", "vi"})
-        self.assertEqual([e["name"] for e in result], ["Dawn", "nvim", "vim", "vi"])
+    def test_prose_fallback_is_micro_then_nvim(self):
+        result = self.choices("/tmp/a.md", {}, {"micro", "nvim", "vim", "vi"})
+        self.assertEqual([e["name"] for e in result], ["micro", "nvim", "vim", "vi"])
         self.assertTrue(result[0]["fullscreen"])
 
     def test_code_fallback_is_nvim_then_micro(self):
@@ -81,8 +81,8 @@ class ChoicesTest(unittest.TestCase):
 
     def test_default_choice_is_the_first_one(self):
         with mock.patch.object(opener.lib, "read_config", return_value={}), \
-                mock.patch.object(opener.shutil, "which", side_effect=which_for("dawn-writer", "nvim")):
-            self.assertEqual(opener.default_choice("/tmp/a.md")["name"], "Dawn")
+                mock.patch.object(opener.shutil, "which", side_effect=which_for("micro", "nvim")):
+            self.assertEqual(opener.default_choice("/tmp/a.md")["name"], "micro")
 
     def test_no_editor_available_returns_empty(self):
         result = self.choices("/tmp/a.py", {}, set())

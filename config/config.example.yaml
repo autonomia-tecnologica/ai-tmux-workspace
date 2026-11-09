@@ -10,11 +10,11 @@ agent: claude
 # Editores do menu ao abrir um arquivo pelo painel. O tipo vem da extensão: prosa (md, markdown,
 # mdx, rst, txt) e código (todo o resto). Só entram os comandos que existem no PATH.
 # `fullscreen: true` abre o popup em 100%x100%; sem a chave, 92%x92%.
-# Sem esta chave: prosa usa Dawn e nvim; código usa nvim e micro.
+# Sem esta chave: prosa usa micro e nvim; código usa nvim e micro.
 editor:
   prose:
-    - name: Dawn
-      command: dawn-writer
+    - name: micro
+      command: micro
       fullscreen: true
     - name: nvim
       command: nvim

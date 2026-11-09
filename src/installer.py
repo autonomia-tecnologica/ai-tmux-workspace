@@ -41,16 +41,16 @@ POLICY_SOURCES = (
 )
 CLI_DIR = Path(".local", "bin")
 REQUIRED = ("tmux", "python3", "git", "claude")
-OPTIONAL = ("gh", "nvim")
+OPTIONAL = ("gh", "nvim", "micro")
 MANIFEST_VERSION = 1
 
 # Package names per manager; only shown to the person, never executed by the assistant.
 PACKAGE_NAMES = {
-    "pacman": {"tmux": "tmux", "git": "git", "python3": "python", "gh": "github-cli", "nvim": "neovim"},
-    "apt-get": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim"},
-    "dnf": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim"},
-    "zypper": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim"},
-    "brew": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim"},
+    "pacman": {"tmux": "tmux", "git": "git", "python3": "python", "gh": "github-cli", "nvim": "neovim", "micro": "micro"},
+    "apt-get": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "dnf": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "zypper": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "brew": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
 }
 CLAUDE_INSTALLER = "curl -fsSL https://claude.ai/install.sh | bash"
 

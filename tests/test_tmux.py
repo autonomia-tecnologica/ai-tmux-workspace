@@ -52,19 +52,19 @@ class PopupTest(unittest.TestCase):
 
     def test_fullscreen_size_is_100_percent(self):
         with mock.patch("tmux.run") as run:
-            tmux.popup("dawn x", "/repo", size="100%")
+            tmux.popup("micro x", "/repo", size="100%")
         run.assert_called_once_with("display-popup", "-E", "-w", "100%", "-h", "100%", "-d",
-                                    "/repo", "dawn x", timeout=None)
+                                    "/repo", "micro x", timeout=None)
 
 
 class MenuTest(unittest.TestCase):
     def test_builds_one_display_menu_call(self):
-        items = [("Dawn", "1", "display-popup -E -w 100% -h 100% -d /r 'dawn x'"),
+        items = [("micro", "1", "display-popup -E -w 100% -h 100% -d /r 'micro x'"),
                  ("nvim", "2", "display-popup -E -w 92% -h 92% -d /r 'nvim x'")]
         with mock.patch("tmux.run") as run:
             tmux.menu("Open x with:", items)
         run.assert_called_once_with("display-menu", "-T", "Open x with:",
-                                    "Dawn", "1", items[0][2],
+                                    "micro", "1", items[0][2],
                                     "nvim", "2", items[1][2], timeout=None)
 
     def test_hashes_in_title_and_label_are_escaped(self):
