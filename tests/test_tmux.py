@@ -43,5 +43,36 @@ class ConfirmThenTest(unittest.TestCase):
         self.assertEqual(command, 'run-shell -b "/bin/ws send \'a\\"b\\$c##d\'"')
 
 
+class PopupTest(unittest.TestCase):
+    def test_default_size_is_92_percent(self):
+        with mock.patch("tmux.run") as run:
+            tmux.popup("nvim x", "/repo")
+        run.assert_called_once_with("display-popup", "-E", "-w", "92%", "-h", "92%", "-d",
+                                    "/repo", "nvim x", timeout=None)
+
+    def test_fullscreen_size_is_100_percent(self):
+        with mock.patch("tmux.run") as run:
+            tmux.popup("dawn x", "/repo", size="100%")
+        run.assert_called_once_with("display-popup", "-E", "-w", "100%", "-h", "100%", "-d",
+                                    "/repo", "dawn x", timeout=None)
+
+
+class MenuTest(unittest.TestCase):
+    def test_builds_one_display_menu_call(self):
+        items = [("Dawn", "1", "display-popup -E -w 100% -h 100% -d /r 'dawn x'"),
+                 ("nvim", "2", "display-popup -E -w 92% -h 92% -d /r 'nvim x'")]
+        with mock.patch("tmux.run") as run:
+            tmux.menu("Abrir x com:", items)
+        run.assert_called_once_with("display-menu", "-T", "Abrir x com:",
+                                    "Dawn", "1", items[0][2],
+                                    "nvim", "2", items[1][2], timeout=None)
+
+    def test_hashes_in_title_and_label_are_escaped(self):
+        with mock.patch("tmux.run") as run:
+            tmux.menu("a#b", [("c#d", "1", "cmd")])
+        self.assertEqual(run.call_args.args[:5], ("display-menu", "-T", "a##b", "c##d", "1"))
+        self.assertEqual(run.call_args.args[5], "cmd")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,6 @@
 """Árvore de arquivos do repo da janela. Enter abre/fecha pasta ou abre o arquivo no editor."""
 import os
 import shlex
-import shutil
 import subprocess
 
 import clipboard
@@ -121,18 +120,37 @@ def coletar(v):
     return cab, corpo
 
 
+RENAME = {"ativo": False, "chave": None, "nome": ""}
+
+
 def footer(v):
-    """Full name of the selected entry (the row itself is cut at the pane width)."""
+    """Full name of the selected entry (the row itself is cut at the pane width). While renaming,
+    shows the prompt and the inline buffer with a block cursor."""
+    if RENAME["ativo"]:
+        return f"{B}{t('tree.rename_prompt')}{R} {RENAME['nome']}█"
     if not v.chave or v.chave[1] == REPO:
         return ""
     return os.path.relpath(v.chave[1], REPO) + ("/" if v.chave[0] == "d" else "")
 
 
-def editor():
-    for c in ("nvim", "vim", "vi"):
-        if c and shutil.which(c.split()[0]):
-            return c
-    return "vi"
+def _popup_command(choice, caminho):
+    """tmux command string that opens `caminho` in `choice` (fullscreen gives a 100%x100% popup)."""
+    size = "100%" if choice.get("fullscreen") else "92%"
+    line = f"{choice['command']} {shlex.quote(caminho)}"
+    command = (f"display-popup -E -w {size} -h {size} -d {shlex.quote(REPO)} "
+               f"{shlex.quote(line)}")
+    return command.replace("#", "##")     # tmux expands formats in the command string
+
+
+def abrir_com_editor(caminho):
+    """Editor menu for the file type: the configured entries that exist, or the fallback chain."""
+    escolhas = opener.choices(caminho)
+    if not escolhas:
+        tmux.message(t("editor.none"))
+        return
+    itens = [(e["name"], str(i + 1), _popup_command(e, caminho))
+             for i, e in enumerate(escolhas)]
+    tmux.menu(t("editor.menu_title", name=os.path.basename(caminho)), itens)
 
 
 def enter(v, chave, tecla):
@@ -143,7 +161,91 @@ def enter(v, chave, tecla):
     elif opener.use_system(caminho) and opener.open_system(caminho):
         return
     else:
-        tmux.popup(f"{editor()} {shlex.quote(caminho)}", REPO)
+        abrir_com_editor(caminho)
+
+
+def _state(v):
+    return getattr(v, "recoletar", None)
+
+
+def _renomear_erro(nome):
+    """i18n message for an invalid new name, or "" when it is acceptable."""
+    if not nome:
+        return t("tree.rename_empty")
+    if os.path.isabs(nome) or "/" in nome or "\\" in nome or nome in (".", ".."):
+        return t("tree.rename_invalid")
+    return ""
+
+
+def renomear_para(v, chave, nome):
+    """Renames the file in `chave` to `nome` (same folder). Returns True on success and moves the
+    cursor to the new path; on any failure shows an i18n message and keeps the old path."""
+    tipo, atual = chave
+    if tipo != "f":
+        return False
+    erro = _renomear_erro(nome)
+    if erro:
+        tmux.message(erro)
+        return False
+    novo = os.path.join(os.path.dirname(atual), nome)
+    if os.path.normpath(novo) == os.path.normpath(atual):   # Enter without editing: nothing to do
+        return True
+    if os.path.lexists(novo):
+        tmux.message(t("tree.rename_exists", name=nome))
+        return False
+    rel_old, rel_new = os.path.relpath(atual, REPO), os.path.relpath(novo, REPO)
+    if lib.git(REPO, "ls-files", "--error-unmatch", rel_old)[0] == 0:
+        ok = lib.git(REPO, "mv", "--", rel_old, rel_new)[0] == 0
+    else:
+        try:
+            os.rename(atual, novo)
+            ok = True
+        except OSError:
+            ok = False
+    if ok:
+        v.chave = ("f", novo)
+        evento = _state(v)
+        if evento:
+            evento.set()
+        tmux.message(t("tree.renamed", name=nome))
+    else:
+        tmux.message(t("tree.rename_failed", name=nome))
+    return ok
+
+
+def renomear(v, chave):
+    """Starts the inline text input with the current basename: the main Viewer's `entrada` callback
+    consumes the keys until Enter (commit) or Esc (cancel)."""
+    if chave[0] != "f":
+        return
+    RENAME.update(ativo=True, chave=chave, nome=os.path.basename(chave[1]))
+    v.recoletar.set()
+
+
+def on_input(v, k):
+    """Inline rename editor. Returns True while it consumes the key, so navigation is blocked."""
+    if not RENAME["ativo"]:
+        return False
+    if k == "esc":
+        RENAME.update(ativo=False, chave=None, nome="")
+        v.recoletar.set()
+        return True
+    if k.startswith("\x1b"):        # arrows and other escape sequences do not edit or cancel
+        return True
+    if k in ("\r", "\n"):
+        chave, nome = RENAME["chave"], RENAME["nome"]
+        RENAME.update(ativo=False, chave=None, nome="")
+        renomear_para(v, chave, nome)
+        v.recoletar.set()
+        return True
+    if k in ("\x7f", "\x08"):       # Backspace
+        RENAME["nome"] = RENAME["nome"][:-1]
+        v.recoletar.set()
+        return True
+    if k.isprintable():
+        RENAME["nome"] += k
+        v.recoletar.set()
+    return True
 
 
 def _copied(path):
@@ -163,8 +265,10 @@ def copiar(v, chave):
 
 
 def acoes(v, chave):
-    """Context menu (Espaço or right click). On a folder the action is shown but unavailable."""
-    return [(t("tree.menu_copy"), chave[0] == "f", copiar)]
+    """Context menu (Espaço or right click). On a folder the actions are shown but unavailable."""
+    arquivo = chave[0] == "f"
+    return [(t("tree.menu_copy"), arquivo, copiar),
+            (t("tree.menu_rename"), arquivo, renomear)]
 
 
 def pai_de(caminho):
@@ -186,4 +290,4 @@ def on_key(v, k):
 
 if __name__ == "__main__":
     Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO), rodape=footer,
-           acoes=acoes).rodar()
+           acoes=acoes, entrada=on_input).rodar()

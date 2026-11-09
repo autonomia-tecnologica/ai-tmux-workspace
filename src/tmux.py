@@ -68,9 +68,18 @@ def message(text, ms=2000):
     run("display-message", "-d", str(ms), text)
 
 
-def popup(cmd, cwd):
-    """Opens `cmd` in a tmux popup at 92%x92% in `cwd`, blocking until the user closes it."""
-    run("display-popup", "-E", "-w", "92%", "-h", "92%", "-d", cwd, cmd, timeout=None)
+def popup(cmd, cwd, size="92%"):
+    """Opens `cmd` in a tmux popup at `size`x`size` in `cwd`, blocking until the user closes it."""
+    run("display-popup", "-E", "-w", size, "-h", size, "-d", cwd, cmd, timeout=None)
+
+
+def menu(title, items):
+    """Shows a tmux menu until a choice or Esc. `items` is [(label, key, command)], where command is
+    a tmux command string run on selection (unique keys, e.g. "1", "2")."""
+    args = ["display-menu", "-T", title.replace("#", "##")]
+    for label, key, command in items:
+        args += [label.replace("#", "##"), key, command]
+    run(*args, timeout=None)
 
 
 def quote_cmd(argv):

@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 
+import lib
+
 SYSTEM_EXTENSIONS = {
     # documents
     "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp", "epub", "mobi",
@@ -27,6 +29,88 @@ SYSTEM_EXTENSIONS = {
 # Extensions opened in Blender (the OS has no sensible default for them).
 BLENDER_EXTENSIONS = {"ifc", "ifczip"}
 IFC_EXTENSIONS = {"ifc", "ifczip"}
+
+# Prose types get the prose editor list (Dawn first by default); everything else is code.
+PROSE_EXTENSIONS = {"md", "markdown", "mdx", "rst", "txt"}
+
+# Used when the `editor` key/type is absent or has no command available.
+EDITOR_FALLBACKS = {
+    "prose": [("Dawn", "dawn", True), ("nvim", "nvim", False)],
+    "code": [("nvim", "nvim", False), ("micro", "micro", False)],
+}
+EDITOR_TAIL = ("nvim", "vim", "vi")
+
+
+def is_prose(path):
+    """True when the file extension is a prose one (md, markdown, mdx, rst, txt)."""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    return ext in PROSE_EXTENSIONS
+
+
+def _command_exists(command):
+    first = command.split()[0] if command and command.strip() else ""
+    return bool(first) and bool(shutil.which(first))
+
+
+def _entry(item):
+    """Normalized {name, command, fullscreen} from a config item, or None when it has no command."""
+    if not isinstance(item, dict):
+        return None
+    command = item.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    name = item.get("name")
+    return {"name": str(name) if name else command.split()[0],
+            "command": command,
+            "fullscreen": bool(item.get("fullscreen", False))}
+
+
+def _from_config(kind):
+    """Configured editors of `kind` whose command exists, or None when the key/type is absent."""
+    config = lib.ler_config().get("editor")
+    if not isinstance(config, dict):
+        return None
+    raw = config.get(kind)
+    if not isinstance(raw, list):
+        return None
+    entries = [_entry(item) for item in raw]
+    return [e for e in entries if e and _command_exists(e["command"])]
+
+
+def _fallback(kind):
+    """Default order: prose/code editors, then $VISUAL/$EDITOR, then nvim/vim/vi."""
+    items = [{"name": name, "command": command, "fullscreen": fullscreen}
+             for name, command, fullscreen in EDITOR_FALLBACKS.get(kind, EDITOR_FALLBACKS["code"])]
+    for var in ("VISUAL", "EDITOR"):
+        command = os.environ.get(var, "")
+        if command.strip():
+            items.append({"name": command.split()[0], "command": command, "fullscreen": False})
+    items += [{"name": command, "command": command, "fullscreen": False} for command in EDITOR_TAIL]
+    return [e for e in items if _command_exists(e["command"])]
+
+
+def choices(path):
+    """Editors offered for `path`, in order, as dicts with name/command/fullscreen.
+
+    The configured list for the file type wins when present; otherwise the fallback chain runs.
+    Only entries whose command exists in PATH are returned; duplicates keep the first one.
+    """
+    kind = "prose" if is_prose(path) else "code"
+    entries = _from_config(kind)
+    if not entries:
+        entries = _fallback(kind)
+    seen, out = set(), []
+    for entry in entries:
+        if entry["command"] not in seen:
+            seen.add(entry["command"])
+            out.append(entry)
+    return out
+
+
+def default_choice(path):
+    """First editor offered for `path`, or None when none is available."""
+    entries = choices(path)
+    return entries[0] if entries else None
 
 
 def find_blender(which=shutil.which, environ=os.environ):
