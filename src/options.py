@@ -172,12 +172,14 @@ def repo_and_command(window):
 
 def confirm_security(name):
     """Before switching to a non-Claude profile, shows what security is lost and asks for an explicit
-    confirmation. Non-Claude profiles lose the Claude auto classifier and run under bypassPermissions;
-    the full list is one key away, on the same screen. Returns True to continue."""
-    if name == "claude":
+    confirmation. A non-Claude Claude-harness profile loses the auto classifier and runs under
+    bypassPermissions; an OpenCode profile runs under OpenCode's own approvals. The full list is one
+    key away, on the same screen. Returns True to continue."""
+    if name == "claude" and lib.is_claude_harness(name):
         return True
-    title = i18n.t("options.agent.security.title", profile=name)
-    show(title, i18n.t("options.agent.security.summary", profile=name))
+    key = "options.agent.security" if lib.is_claude_harness(name) else "options.agent.opencode"
+    title = i18n.t(f"{key}.title", profile=name)
+    show(title, i18n.t(f"{key}.summary", profile=name))
     while True:
         try:
             answer = input(f" {ORANGE}{i18n.t('options.agent.security.confirm')}{R} ").strip().lower()
@@ -186,7 +188,7 @@ def confirm_security(name):
         if answer in i18n.t("options.answer.yes").split():
             return True
         if answer in i18n.t("options.answer.details").split():
-            show(title, i18n.t("options.agent.security.details", profile=name))
+            show(title, i18n.t(f"{key}.details", profile=name))
             continue
         return False
 
@@ -306,9 +308,15 @@ def choose_repos(window_repo):
 
 def run_conference(node, window):
     """Conference leaves: start with the window repo plus its config siblings, or with the workspace
-    repos chosen on the picker; both open the conversation screen right after the start."""
+    repos chosen on the picker; both open the conversation screen right after the start. The
+    conference is a Claude-only surface: an OpenCode profile gets a clear refusal, not a broken run."""
     import conference
 
+    if not lib.is_claude_harness():
+        show(i18n.t("options.conference"),
+             i18n.t("agent.opencode_only", profile=lib.agent_name(),
+                    surface=i18n.t("agent.surface.conference")))
+        return
     action = node["conference"]
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
     if action == "selected":
@@ -346,6 +354,10 @@ def run_leaf(node, window):
     if "type" in node:
         subprocess.run([lib.WS, "type", window, node["type"]], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    if "ask" in node and not lib.is_claude_harness():
+        show(node["label"], i18n.t("agent.opencode_only", profile=lib.agent_name(),
+                                   surface=i18n.t("agent.surface.ask")))
         return
     repo, base = repo_and_command(window)
     label = node["label"]

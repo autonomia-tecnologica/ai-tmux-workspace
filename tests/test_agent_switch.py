@@ -37,6 +37,15 @@ class OpeningCommandTest(unittest.TestCase):
         self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: command}}), encoding="utf-8")
         self.command = command
 
+    def set_opencode(self, config="~/oc.json", command="opencode", agent="oc"):
+        """An OpenCode profile: the workspace must not add any Claude launch detail."""
+        profile = {"harness": "opencode", "command": command}
+        if config:
+            profile["config"] = config
+        self.agent = agent
+        self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: profile}}), encoding="utf-8")
+        self.command = command
+
     @property
     def launch(self):
         """Command line the workspace actually runs: every profile gets the workspace-generated
@@ -194,6 +203,43 @@ class OpeningCommandTest(unittest.TestCase):
             encoding="utf-8")
         self.set_command("claude --settings ~/.claude/settings.b.json")
         self.assertEqual(self.opening(), self.launch)
+
+    # --- OpenCode harness ------------------------------------------------------------------
+    def test_opencode_profile_runs_without_any_claude_flag(self):
+        self.set_opencode()
+        out = self.opening()
+        self.assertEqual(out, f"env OPENCODE_CONFIG={self.home / 'oc.json'} opencode")
+        for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, out)
+        self.assertFalse((self.state / "settings").exists())
+
+    def test_opencode_profile_without_config_runs_the_command_as_written(self):
+        self.set_opencode(config="")
+        self.assertEqual(self.opening(), "opencode")
+
+    def test_opencode_never_resumes_nor_sends_the_migration_prompt(self):
+        self.set_opencode()
+        first = self.opening()
+        self.transcript()                       # a Claude transcript exists for this repo
+        second = self.opening()
+        self.assertEqual(first, second)
+        self.assertNotIn("--continue", second)
+        self.assertNotIn("migrado", second)
+
+    def test_opencode_command_and_profile_are_recorded(self):
+        self.set_opencode()
+        self.opening()
+        self.assertEqual(self.saved()[str(self.repo)]["command"], "opencode [oc]")
+        self.assertFalse((self.state / "permission.json").exists())   # no Claude mode is recorded
+
+    def test_switching_from_claude_to_opencode_does_not_reuse_the_claude_session(self):
+        self.opening()
+        self.transcript()
+        self.set_opencode()
+        out = self.opening()
+        self.assertNotIn("--continue", out)
+        self.assertNotIn("migrado", out)
+        self.assertIn("OPENCODE_CONFIG", out)
 
 
 if __name__ == "__main__":

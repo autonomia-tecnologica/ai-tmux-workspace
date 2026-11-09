@@ -33,7 +33,8 @@ class ConferenceTest(unittest.TestCase):
         self.a.mkdir()
         self.b.mkdir()
         self.repos = [str(self.a.resolve()), str(self.b.resolve())]
-        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.tmp)})
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.tmp),
+                                           "AT_WS_CONFIG": str(self.tmp / "config.yaml")})
         env.start()
         self.addCleanup(env.stop)
 

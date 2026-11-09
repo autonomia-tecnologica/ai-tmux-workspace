@@ -186,6 +186,9 @@ def start(repos=None, repo=None, screen=None):
     it goes away, the conference ends with it."""
     import lib
 
+    if not lib.is_claude_harness():
+        print(_t("conference.opencode", profile=lib.agent_name()), file=sys.stderr)
+        return 2
     want = [lib.expand_path(p) for p in (repos or [])]
     if not want:
         want = _default_repos(lib, repo)

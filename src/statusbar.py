@@ -279,6 +279,12 @@ def main():
             for i, p in enumerate(tabs, 1)) if len(tabs) > 1 else ""
         print(f"#[fg=colour75,bold] {(os.path.basename(repo) or repo).replace('#', '##')}#[default]{marks}")
         return
+    if not lib.is_claude_harness():
+        # OpenCode keeps no Claude transcript: show the repo and the profile, not Claude model/usage.
+        name = (os.path.basename(repo) or repo).replace("#", "##")
+        print(f"#[fg=colour75,bold] {name}#[nobold]#[fg=colour240] • "
+              f"#[fg=colour250]{i18n.t('status.opencode', profile=profile)}#[default]")
+        return
     lim = limits()
     poll_extra_usage()
     usd = extra_usage_txt()

@@ -134,6 +134,30 @@ class OptionsConferenceTest(unittest.TestCase):
         paths = [path for _, repos in entries for _, path in repos]
         self.assertEqual(paths, self.paths(self.repo, self.sibling))
 
+    # --- OpenCode harness: Claude-only surfaces degrade with a warning ----------------------
+    def opencode_workspace(self):
+        self.cfg.write_text(
+            "profiles:\n  opencode:\n    harness: opencode\nagent: opencode\n", encoding="utf-8")
+
+    def test_conference_degrades_on_an_opencode_profile(self):
+        self.opencode_workspace()
+        with mock.patch.object(options, "show") as show, \
+                mock.patch.object(options, "choose_repos") as pick:
+            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+        show.assert_called_once()
+        self.assertIn(i18n.t("agent.surface.conference"), show.call_args[0][1])
+        pick.assert_not_called()
+        self.assertEqual(conference.read_active(), {})
+
+    def test_ask_degrades_on_an_opencode_profile(self):
+        self.opencode_workspace()
+        with mock.patch.object(options, "show") as show, \
+                mock.patch.object(options, "repo_and_command") as repo_and_command:
+            options.run_leaf({"label": "Haiku", "ask": "haiku"}, "%1")
+        show.assert_called_once()
+        self.assertIn(i18n.t("agent.surface.ask"), show.call_args[0][1])
+        repo_and_command.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

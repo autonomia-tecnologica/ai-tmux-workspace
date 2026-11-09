@@ -114,13 +114,55 @@ def _profile_value(name):
     return profiles.get(name) if isinstance(profiles, dict) else None
 
 
-def profile_command(name=None):
-    """Command line of a profile. A mapping uses its `command` (default `claude`); a string is the command."""
+HARNESSES = ("claude", "opencode")
+HARNESS_CLAUDE = "claude"
+HARNESS_OPENCODE = "opencode"
+
+
+def profile_harness(name=None):
+    """Harness of a profile: "claude" (default) or "opencode".
+
+    A string profile is always the legacy Claude command line. A mapping declares the harness with
+    the `harness` key; unknown values fall back to "claude" (the command line still decides what
+    actually runs)."""
     value = _profile_value(name or agent_name())
     if isinstance(value, dict):
+        harness = value.get("harness")
+        if isinstance(harness, str) and harness.strip() in HARNESSES:
+            return harness.strip()
+    return HARNESS_CLAUDE
+
+
+def is_claude_harness(name=None):
+    """True when the profile runs Claude Code (the surface that owns settings/hooks/transcripts)."""
+    return profile_harness(name) == HARNESS_CLAUDE
+
+
+def profile_command(name=None):
+    """Command line of a profile. A mapping uses its `command`; a string is the command.
+
+    The default follows the harness: `claude` for the Claude harness, `opencode` for the OpenCode
+    one. A string profile keeps the historical `claude` default."""
+    name = name or agent_name()
+    default = "opencode" if profile_harness(name) == HARNESS_OPENCODE else "claude"
+    value = _profile_value(name)
+    if isinstance(value, dict):
         command = value.get("command")
-        return command if isinstance(command, str) and command.strip() else "claude"
-    return value if isinstance(value, str) and value.strip() else "claude"
+        return command if isinstance(command, str) and command.strip() else default
+    return value if isinstance(value, str) and value.strip() else default
+
+
+def profile_config(name=None):
+    """OpenCode config file declared by the profile (`config`), expanded; "" when not set.
+
+    The workspace does not read or generate this file: it only exports its path as
+    `OPENCODE_CONFIG`, the OpenCode switch for a config outside the global one."""
+    value = _profile_value(name or agent_name())
+    if isinstance(value, dict):
+        config = value.get("config")
+        if isinstance(config, str) and config.strip():
+            return os.path.realpath(os.path.expanduser(config.strip()))
+    return ""
 
 
 def profile_settings(name=None):
@@ -297,9 +339,13 @@ def _safe_profile_name(name):
 
 
 def ensure_profile_settings(name=None):
-    """Write the profile's generated settings and return its path. None means a legacy string profile
-    that already owns `--settings`. Raises SettingsError when the settings cannot be generated safely."""
+    """Write the profile's generated settings and return its path. None means the profile has no
+    workspace-generated settings: a legacy string profile that already owns `--settings`, or an
+    OpenCode profile (its config comes from `OPENCODE_CONFIG`). Raises SettingsError when the
+    settings cannot be generated safely."""
     name = name or agent_name()
+    if not is_claude_harness(name):
+        return None
     if _has_settings_flag(profile_command(name)):
         return None
     settings = _merge_settings(harness_base_settings(), profile_settings(name) or {})
@@ -319,18 +365,26 @@ def ensure_profile_settings(name=None):
 
 
 def agent_launch_command(mode=""):
-    """Command line that actually launches the agent. Every profile runs with the workspace-generated
-    settings (`--settings`); a legacy string profile that already passes `--settings` keeps its own file.
-    Profiles other than `claude` run with tool search off: their Anthropic-compatible endpoints reject
-    the `tool_definition` blocks Claude Code stores for tool search, which breaks `--continue` (decision
-    D9 in the harness record). The recorded agent identity is `agent_identity()`; the env prefix, the
-    generated settings and the permission mode are launch details, not a profile change. `mode` is
-    omitted when the caller does not have a repo to read it from."""
+    """Command line that actually launches the agent.
+
+    Claude harness: every profile runs with the workspace-generated settings (`--settings`); a legacy
+    string profile that already passes `--settings` keeps its own file. Profiles other than `claude`
+    run with tool search off: their Anthropic-compatible endpoints reject the `tool_definition`
+    blocks Claude Code stores for tool search, which breaks `--continue` (decision D9 in the harness
+    record). `mode` is omitted when the caller does not have a repo to read it from.
+
+    OpenCode harness: none of the Claude flags apply. The profile may declare a `config` file, which
+    is exported as `OPENCODE_CONFIG`; the command runs exactly as written (a profile switch never
+    carries settings, permission mode or tool search from Claude). The recorded identity is
+    `agent_identity()` in both harnesses."""
     name = agent_name()
     cmd = agent_command()
     if _KEY_LITERAL.search(cmd):
         # a key in the command would travel in argv; F08 forbids it
         raise SettingsError(t("settings.err.secret_value", path=f"profiles[{name}].command"))
+    if not is_claude_harness(name):
+        config = profile_config(name)
+        return f"env OPENCODE_CONFIG={shlex.quote(config)} {cmd}" if config else cmd
     if not _has_settings_flag(cmd):
         settings_path = ensure_profile_settings(name)
         if settings_path is not None:
@@ -410,14 +464,26 @@ def previous_transcript(repo):
 
 
 def opening_command(repo):
-    """Command line that opens the repo's Claude pane. Same agent command as the last opening: today's
-    `--continue` (new session when there is none). Different or not recorded yet: new session. When the
-    environment changes, only the first repo opened with a previous transcript gets the i18n migration
-    prompt (the "__notice__" key remembers that this command was already announced); the other repos start
-    the new session silently. The command is recorded before the launch, so the prompt is never repeated
-    for the same repo and change."""
+    """Command line that opens the repo's agent pane.
+
+    Claude harness: same agent command as the last opening keeps today's `--continue` (new session
+    when there is none). Different or not recorded yet: new session. When the environment changes,
+    only the first repo opened with a previous transcript gets the i18n migration prompt (the
+    "__notice__" key remembers that this command was already announced); the other repos start the
+    new session silently. The command is recorded before the launch, so the prompt is never repeated
+    for the same repo and change.
+
+    OpenCode harness: the launch line only. OpenCode owns its own sessions, so the workspace never
+    passes `--continue` and never sends the Claude migration prompt; the command is still recorded so
+    a profile switch is visible to the panels."""
     repo = expand_path(repo)
     cmd = agent_identity()
+    if not is_claude_harness():
+        launch = agent_launch_command()     # may raise SettingsError: do not record a launch that did not happen
+        state = _read_agent_state()
+        state[repo] = {"command": cmd}
+        _write_agent_state(state)
+        return launch
     mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
     launch = agent_launch_command(mode)     # may raise SettingsError: do not record a launch that did not happen
     permission_state.record_launch(repo, cmd, mode)
@@ -957,7 +1023,7 @@ if __name__ == "__main__":
     if command == "profile-cmd":        # bash: the command line of the chosen agent (mode per repo when given)
         repo = expand_path(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
         try:
-            if repo:
+            if repo and is_claude_harness():
                 cmd = agent_identity()
                 mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
                 launch = agent_launch_command(mode)
@@ -980,6 +1046,8 @@ if __name__ == "__main__":
         profiles = read_config().get("profiles", {})
         names = sorted(set(profiles) | {agent_name()}) if isinstance(profiles, dict) else [agent_name()]
         print("\n".join(names))
+    elif command == "agent-harness":     # bash: "claude" or "opencode", the harness of the chosen agent
+        print(profile_harness())
     elif command == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
         try:
             print(opening_command(sys.argv[2]))

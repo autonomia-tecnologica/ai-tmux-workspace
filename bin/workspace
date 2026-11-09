@@ -118,9 +118,12 @@ build_window() { # $1=path  $2=-d (do not select)
   [ -n "$T" ] && init_tabs "$W" "$T" t
   # same agent that opened the repo last: resumes the newest session (`--continue`, else a new one).
   # a different agent: a new session, already with the migration prompt when there is a previous transcript (lib.py).
+  # an OpenCode profile: the plain launch line, since OpenCode owns its own sessions (no `--continue`).
   # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
   line="$(python3 "$SRC/lib.py" opening-command "$path")"
-  [ -n "$line" ] || line="$cmd --continue || $cmd"
+  if [ -z "$line" ]; then
+    if [ "$(python3 "$SRC/lib.py" agent-harness)" = claude ]; then line="$cmd --continue || $cmd"; else line="$cmd"; fi
+  fi
   tmux send-keys -t "$P" "cd ${path@Q}; $line" Enter
   tmux select-pane -t "$P"
   mobile_apply "$W"

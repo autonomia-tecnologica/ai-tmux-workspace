@@ -232,6 +232,44 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("--permission-mode acceptEdits", second.stdout)     # the old profile's mode is not reapplied
 
+    # --- OpenCode harness ------------------------------------------------------------------
+    def opencode_profile(self, **extra):
+        profile = {"harness": "opencode", "command": "opencode",
+                   "config": "~/.config/ai-tmux-workspace/opencode.json"}
+        profile.update(extra)
+        self.configure({"agent": "opencode", "profiles": {"opencode": profile}})
+
+    def test_opencode_launch_exports_the_config_and_adds_no_claude_flag(self):
+        self.opencode_profile()
+        proc = self.run_lib("profile-cmd", "opencode")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout.strip()
+        self.assertEqual(out, "env OPENCODE_CONFIG=" +
+                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode.json") + " opencode")
+        for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, out)
+
+    def test_opencode_profile_defaults_to_the_opencode_command(self):
+        self.configure({"agent": "opencode", "profiles": {"opencode": {"harness": "opencode"}}})
+        proc = self.run_lib("profile-cmd", "opencode")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "opencode")
+
+    def test_opencode_profile_generates_no_settings(self):
+        self.opencode_profile()
+        proc = self.ensure("opencode")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "")
+        self.assertFalse((self.state / "settings" / "opencode.json").exists())
+
+    def test_agent_harness_reports_the_chosen_profile_harness(self):
+        self.opencode_profile()
+        proc = self.run_lib("agent-harness")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "opencode")
+        self.configure({"agent": "claude", "profiles": {"claude": "claude"}})
+        self.assertEqual(self.run_lib("agent-harness").stdout.strip(), "claude")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -109,6 +109,10 @@ def transcript_of(entry, sid):
 
 
 def collect(v):
+    if not lib.is_claude_harness():
+        # The session list reads Claude Code transcripts; an OpenCode profile has none to show.
+        return ([Row(f" {GRAY}{i18n.t('sessions.title')}{R}"), Row("")],
+                [Row(), Row(f" {DIM}{i18n.t('sessions.opencode', profile=lib.agent_name())}{R}")])
     now = time.time()
     main = lib.read_main()
     repos = ([main] if main else []) + [r for _, rs in lib.read_repos() for r in rs]

@@ -78,6 +78,27 @@ O modo de permissão segue a mesma regra de troca: o `claude` abre em `acceptEdi
 
 Sessões antigas abertas no perfil `claude` ainda não são retomadas no perfil novo: elas abrem uma sessão nova com o prompt de migração (uma vez só). Retomar o transcript antigo de verdade é item de backlog, não um passo escondido no launcher. A medida vale enquanto a ferramenta de harness não for trocada; quando o at-harness entrar, a decisão é revista. Ela não é uma barreira de segurança.
 
+## OpenCode
+
+Um perfil com `harness: opencode` sobe o OpenCode no lugar do Claude Code:
+
+```yaml
+profiles:
+  opencode:                                # API do DeepSeek
+    harness: opencode
+    command: opencode                      # opcional: é o padrão do harness
+    config: ~/.config/ai-tmux-workspace/opencode.json
+  opencode-free:                           # provedor `opencode`, modelos free
+    harness: opencode
+    config: ~/.config/ai-tmux-workspace/opencode-free.json
+```
+
+Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH`, não gera settings e não usa `--continue`: as sessões pertencem ao OpenCode. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
+
+A credencial do provider fica no próprio OpenCode (`opencode auth login`, gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). No arquivo de config do perfil, `model` escolhe o modelo: `deepseek/deepseek-flash` para a API do DeepSeek e `opencode/deepseek-v4.1-flash-free` para o modelo free do provedor `opencode`.
+
+As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. A política central e o hook do workspace ainda não estão ligados ao plugin do OpenCode (backlog, itens 64 e 71); as aprovações são as do próprio OpenCode.
+
 ## Platforms (Windows)
 Decision: Windows is supported only through WSL2, plus the system toast notification (see Notificações). There is no tmux clone and no custom multiplexer for native Windows.
 

@@ -32,6 +32,12 @@ editor:
 # `--settings`: a base traz os hooks e o `deny` do harness; `settings` traz só a parte do perfil
 # (URL, modelos, flags, apiKeyHelper). Chave de acesso nunca entra aqui nem na settings gerada:
 # use um comando de cofre em `apiKeyHelper` (o Claude Code executa na hora de subir).
+#
+# `harness: opencode` sobe o `opencode` em vez do Claude Code, sem nenhuma flag/settings/hook do
+# Claude. `command` é opcional (padrão `opencode`). `config` é o arquivo do OpenCode daquele perfil,
+# exportado como `OPENCODE_CONFIG` (o OpenCode mescla com a config global). Sem `--continue`: as
+# sessões são do OpenCode. Conferência, «Perguntar ao Claude», painel SESSÕES e métricas do status
+# bar degradam com aviso nesse harness.
 profiles:
   claude: claude
   deepseek:
@@ -52,6 +58,14 @@ profiles:
       apiKeyHelper: "pass show deepseek/api-key"   # exemplo: aponte para o seu cofre
       permissions:
         defaultMode: bypassPermissions
+  opencode:
+    harness: opencode
+    config: ~/.config/ai-tmux-workspace/opencode.json
+  # mesmo harness, outro arquivo de config: o provedor `opencode` tem modelos free (ex.:
+  # `opencode/deepseek-v4.1-flash-free`); o arquivo acima aponta para a API do DeepSeek.
+  opencode-free:
+    harness: opencode
+    config: ~/.config/ai-tmux-workspace/opencode-free.json
 
 prompts:
   - "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos?"
