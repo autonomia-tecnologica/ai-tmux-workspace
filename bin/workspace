@@ -6,6 +6,7 @@
 #   workspace restart [perfil] kill the tmux server and start again (Claude resumes with --continue)
 #   workspace fit [perfil]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
 #   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
+#   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace stop [perfil]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
 #   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <perfil>
@@ -253,6 +254,19 @@ open_repo() {
   # a janela de partida ("boot") some quando já há repo aberto
   tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' '$2=="boot"{print $1}' |
     while read -r w; do tmux kill-window -t "$w"; done
+}
+
+# Creates a worktree, prepares it from .workspace.yaml and opens its window through open_repo, so the
+# window identity is the worktree path (@ws_repo) and a second call just selects the existing window.
+worktree_cmd() { # $1=new|list|remove|merge ...
+  local sub="${1:-}" path
+  shift || true
+  if [ "$sub" = new ]; then
+    path="$(python3 "$SRC/worktrees.py" new "$@")" || exit $?
+    [ -n "$path" ] && open_repo "$path"
+  else
+    python3 "$SRC/worktrees.py" "$sub" "$@"
+  fi
 }
 
 side() { # $1=modo $2=janela
@@ -620,6 +634,7 @@ PY
 case "${1:-}" in
   open) shift; open_repo "$@" ;;
   side) shift; side "$@" ;;
+  worktree) shift; worktree_cmd "$@" ;;
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" "${4:-1}" ;;
   type) type_prompt "$2" "$3" ;;
