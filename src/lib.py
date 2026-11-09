@@ -707,14 +707,21 @@ def estados_por_repo(repos, agora=None):
     return res
 
 
-def git(repo, *args, timeout=15, input=None):
+def git_full(repo, *args, timeout=15, input=None):
+    """(rc, stdout, stderr) of `git -C repo *args`; exceptions become rc 1 with the message in stderr."""
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", LC_ALL="C.UTF-8")
     try:
         r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
                            timeout=timeout, env=env, input=input)
-        return r.returncode, r.stdout
+        return r.returncode, r.stdout, r.stderr
     except Exception as e:
-        return 1, str(e)
+        # stdout keeps the old git() contract (the message); stderr makes it available to git_full().
+        return 1, str(e), str(e)
+
+
+def git(repo, *args, timeout=15, input=None):
+    rc, out, _ = git_full(repo, *args, timeout=timeout, input=input)
+    return rc, out
 
 
 def git_status(repo, untracked=True):
@@ -982,8 +989,10 @@ if __name__ == "__main__":
     elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
         print((ler_principal() or ler_repos()[0][1][0])[1])
     elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all
+        from worktrees import all_window_names   # lazy: worktrees imports lib
         names = [ler_principal()[0]] if ler_principal() else []
         names += [n for g, r in ler_repos() for n, p in r]
+        names += all_window_names()              # worktree windows: window_name is the path's basename
         names += ["plugin:" + e["id"] for e in plugins_listados(perfil)
                   if isinstance(e, dict) and isinstance(e.get("id"), str)]
         print("\n".join(names))
