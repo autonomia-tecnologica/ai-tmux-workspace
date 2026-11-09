@@ -97,6 +97,6 @@ Clique na aba, ou foque a barra (`ctrl+b ↑`) e use ←→ + Enter.
 
 ## Comandos (shell)
 
-`workspace [perfil]` · `restart [perfil]` · `stop [perfil]` · `install` · `install-hooks`
+`workspace [perfil]` · `restart [perfil]` · `stop [perfil]` · `install` · `install-hooks` · `doctor`
 
 `restart` só é preciso depois de mudar hooks do Claude ou plugins; o resto o `ctrl+b r` resolve.

@@ -158,7 +158,7 @@ para o uso do tmux. O desenho aprovado para a próxima versão — persistência
 escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, item 70.
 
 ## Comandos
-`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks`.
+`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica).
 
 ## Persistência
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
@@ -167,7 +167,9 @@ migração aparece uma vez só por mudança; ver acima). O resto vem do `config.
 O estado de runtime fica em `~/.cache/workspace` (`WS_ESTADO`). O desenho aprovado separa
 config/estado em `~/.config/ai-tmux-workspace` (`state/`, `conference/`) do código e do
 `HARNESS.md` em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`), com escopo por
-repo/home/conferência; está no `BACKLOG.md`, item 72.
+repo/home/conferência; está no `BACKLOG.md`, item 72. O harness instalado guarda um `source.json`
+lateral com a fonte, o commit e os sha256 do `HARNESS.md`; `workspace doctor` compara esse registro
+com a cópia instalada e a fonte canônica, e o `reload` mostra o aviso sem abortar.
 
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·

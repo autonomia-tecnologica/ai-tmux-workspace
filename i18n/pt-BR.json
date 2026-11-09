@@ -327,5 +327,18 @@
   "policy.reason.workspace_read": "Leitura do código do workspace permitida: {capability}.",
   "policy.reason.workspace_write": "Escrita no código do workspace negada fora da sessão de dev: {capability}.",
   "policy.reason.workspace_self": "Sessão de dev do workspace; escrita no próprio código permitida: {capability}.",
-  "policy.reason.error": "Falha ao avaliar a política; negado por padrão."
+  "policy.reason.error": "Falha ao avaliar a política; negado por padrão.",
+  "doctor.ok": "doctor: harness consistente ({path})",
+  "doctor.note": "doctor: {message}",
+  "doctor.warn": "doctor: aviso: {message}",
+  "doctor.fail": "doctor: falha: {message}",
+  "doctor.usage": "uso: workspace doctor [--warn]",
+  "doctor.installed_edited": "a cópia instalada do HARNESS.md foi editada; o sha256 difere do source.json e regra nova ali não vale, vira proposta ao ambiente-de-trabalho",
+  "doctor.installed_missing": "HARNESS.md instalado não encontrado em {path}",
+  "doctor.canonical_changed": "HARNESS.md canônico difere do source.json; reinstale o harness para atualizar a cópia",
+  "doctor.commit_changed": "commit da fonte difere do source.json ({expected} -> {current}); reinstale o harness",
+  "doctor.source_missing": "fonte canônica não encontrada em {path}; só a cópia instalada foi conferida",
+  "doctor.source_json_missing": "source.json não encontrado em {path}; reinstale o harness",
+  "doctor.source_json_invalid": "source.json inválido em {path}: {error}",
+  "doctor.path_missing": "caminho citado no HARNESS.md não existe em nenhum root: {path}"
 }

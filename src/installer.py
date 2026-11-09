@@ -11,6 +11,7 @@ Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` keys).
 Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_ESTADO,
 AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE and SHELL.
 """
+import hashlib
 import json
 import os
 import shlex
@@ -27,6 +28,7 @@ HOME = Path(os.environ.get("HOME") or Path.home())
 BASH = "/bin/bash" if os.path.exists("/bin/bash") else (shutil.which("bash") or "bash")
 CLONE_URL = "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
 HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
+SOURCE_FILE = "source.json"
 COMPLETION_DIR = Path(".local", "share", "ai-tmux-workspace", "completions")
 # Installed next to harness.py: the policy/config pair and the two adapters' shared engine. The
 # source tree (ambiente-de-trabalho) is copied first; these come from this repository.
@@ -675,6 +677,10 @@ class Assistant:
             self.ui.warn(t("installer.harness.render_failed",
                            path=display(target / "settings.json"),
                            error=(rendered.stderr or "").strip() or str(rendered.returncode)))
+        self.write(target / SOURCE_FILE,
+                   json.dumps(source_record(source, target), indent=2, ensure_ascii=False) + "\n")
+        if (target / "HARNESS.md").is_file():
+            os.chmod(target / "HARNESS.md", 0o444)
         self.ui.ok(t("installer.harness.installed", path=display(target)))
 
     def install_hooks(self):
@@ -816,6 +822,41 @@ def install_policy_files(target):
         shutil.copy2(source, target / destination)
         installed.append(destination)
     return installed
+
+
+def sha256_file(path):
+    """sha256 of a file, or None when it does not exist (the record keeps it explicit)."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_commit(path):
+    """HEAD of the git worktree containing path, or None when the source is not a git repo."""
+    git = shutil.which("git")
+    if not git:
+        return None
+    try:
+        result = subprocess.run([git, "-C", str(path), "rev-parse", "HEAD"],
+                                capture_output=True, text=True)
+    except OSError:
+        return None
+    return (result.stdout.strip() or None) if result.returncode == 0 else None
+
+
+def source_record(source, target):
+    """The lateral source.json: canonical source, its commit and both HARNESS.md hashes."""
+    return {
+        "source": str(Path(source).resolve()),
+        "commit": git_commit(source),
+        "source_sha256": sha256_file(Path(source) / "HARNESS.md"),
+        "installed_sha256": sha256_file(Path(target) / "HARNESS.md"),
+    }
 
 
 def harness_files(source):

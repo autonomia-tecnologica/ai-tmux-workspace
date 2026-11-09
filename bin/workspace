@@ -6,6 +6,7 @@
 #   workspace restart [perfil] kill the tmux server and start again (Claude resumes with --continue)
 #   workspace fit [perfil]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
 #   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
+#   workspace doctor          conferência de drift do harness instalado (--warn: só avisa, usado pelo reload)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace stop [perfil]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
@@ -27,6 +28,7 @@ settings_refresh_all() {
   while read -r p; do [ -n "$p" ] && settings_refresh "$p"; done < <(python3 "$SRC/lib.py" profile-names)
 }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
+doctor() { python3 "$SRC/drift.py" "$@"; }
 laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
 }
@@ -543,6 +545,7 @@ reload() {
   done < <(tmux list-windows -t "$perfil:" -F '#{window_id}|#{@ws_repo}')
   plugin_sync "$perfil"
   panels "$perfil"
+  doctor --warn >&2 || true   # drift warning: never fails the reload
   tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$perfil"
 }
 
@@ -647,6 +650,7 @@ case "${1:-}" in
   plugins-sync) plugin_sync "${2:-claude}" ;;
   install) install ;;
   install-hooks) install_hooks ;;
+  doctor) shift; doctor "$@" ;;
   stop) tmux -L "ws-${2:-claude}" kill-server ;;
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;

@@ -103,9 +103,11 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(Path(os.readlink(link)), ROOT / "bin" / "workspace")
         self.assertTrue((self.home / ".config" / "ai-tmux-workspace" / "config.yaml").is_file())
         harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
-        for name in ("forcado.yaml", "harness.py", "HARNESS.md", "CLAUDE.md", "regras/agents.md"):
+        for name in ("forcado.yaml", "harness.py", "HARNESS.md", "CLAUDE.md", "regras/agents.md",
+                     "source.json"):
             self.assertTrue((harness / name).is_file(), f"missing harness file: {name}")
         self.assertTrue((harness / "settings.json").is_file())
+        self.assertEqual(stat.S_IMODE((harness / "HARNESS.md").stat().st_mode), 0o444)
         self.assertIn(">>> ai-tmux-workspace >>>", (self.home / ".zshrc").read_text(encoding="utf-8"))
         completions = self.home / ".local" / "share" / "ai-tmux-workspace" / "completions"
         self.assertTrue((completions / "workspace.zsh").is_file())
@@ -273,6 +275,41 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("nada a remover", result.stdout)
 
     # 13 --------------------------------------------------------------------------------------
+    def test_install_records_source_json_and_locks_the_harness_copy(self):
+        installed = self.install()
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
+        record = json.loads((harness / "source.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["source"], str(self.source.resolve()))
+        self.assertIsNone(record["commit"])
+        self.assertEqual(record["source_sha256"],
+                         hashlib.sha256((self.source / "HARNESS.md").read_bytes()).hexdigest())
+        self.assertEqual(record["installed_sha256"],
+                         hashlib.sha256((harness / "HARNESS.md").read_bytes()).hexdigest())
+        self.assertEqual(stat.S_IMODE((harness / "HARNESS.md").stat().st_mode), 0o444)
+
+    # 14 --------------------------------------------------------------------------------------
+    def test_install_records_the_source_commit_when_it_is_a_git_repo(self):
+        git = shutil.which("git")
+        if not git:
+            self.skipTest("git not available to create the canonical repository")
+        subprocess.run([git, "init", "-q", str(self.source)], check=True)
+        subprocess.run([git, "-C", str(self.source), "add", "."], check=True)
+        subprocess.run([git, "-C", str(self.source), "-c", "user.name=Test", "-c",
+                        "user.email=test@example.com", "commit", "--no-verify", "-qm", "source"],
+                       check=True)
+        head = subprocess.run([git, "-C", str(self.source), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        # The fixture PATH starts with a fake git for the dependency check; the real one comes
+        # first here so the installer can read the commit.
+        path = str(Path(git).parent) + os.pathsep + self.env()["PATH"]
+        installed = self.install(PATH=path)
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
+        record = json.loads((harness / "source.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["commit"], head)
+
+    # 15 --------------------------------------------------------------------------------------
     def test_every_literal_i18n_key_exists(self):
         source = INSTALLER.read_text(encoding="utf-8")
         strings = json.loads((ROOT / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
