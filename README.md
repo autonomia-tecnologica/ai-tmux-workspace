@@ -8,6 +8,18 @@
 
 Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma abordagem específica (um repo por janela, agente Claude Code ao lado).
 
+## Instalação
+
+Formato padrão, de uma linha, sem clonar o repo na mão:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/autonomia-tecnologica/ai-tmux-workspace/main/install.sh | sh
+```
+
+O script baixa o código para `~/.local/share/ai-tmux-workspace/app`, cria o comando `workspace` em `~/.local/bin` e roda o assistente: dependências, autocomplete, `config.yaml` inicial, harness e hooks do Claude Code. Ele não usa `sudo`/`pkexec`; quando falta um pacote, só mostra o comando para você rodar.
+
+Desfazer: `bash ~/.local/share/ai-tmux-workspace/app/remove.sh` (restaura o que o instalador mudou; a pasta do clone fica para reinstalar). Quem desenvolve roda `./install.sh` do próprio clone; é o mesmo assistente, sem baixar nada.
+
 A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/filosofia.md`) e vale sobre este repo. O manifesto da Autonomia Tecnológica mora primariamente no site (`site/i18n/pt_BR.json`).
 
 **Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
@@ -152,9 +164,10 @@ escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, ite
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
 agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
 migração aparece uma vez só por mudança; ver acima). O resto vem do `config.yaml` e dos arquivos do repo.
-O estado de runtime fica em `~/.cache/workspace` (`WS_ESTADO`). O desenho aprovado para unificar
-estado, harness instalado e conferência em `~/.config/ai-tmux-workspace`, com a separação de
-escopo por repo/home/conferência, está no `BACKLOG.md`, item 72.
+O estado de runtime fica em `~/.cache/workspace` (`WS_ESTADO`). O desenho aprovado separa
+config/estado em `~/.config/ai-tmux-workspace` (`state/`, `conference/`) do código e do
+`HARNESS.md` em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`), com escopo por
+repo/home/conferência; está no `BACKLOG.md`, item 72.
 
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
@@ -165,7 +178,9 @@ escopo por repo/home/conferência, está no `BACKLOG.md`, item 72.
 
 A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
 
-**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a política central existe mas não está ativa para sessões normais (falta `WS_SESSION_ROLE`/`WS_SESSION_ROOT`); não há sandbox de SO nem usuário dedicado; o papel `home` ainda permite escrita ampla; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
+O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo; escrevê-lo só a sessão de dev, cujo `WS_SESSION_ROOT` está dentro dessa raiz. A home também é negada, e o caminho não entra na config nem em `siblings`.
+
+**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a política central existe mas não está ativa para sessões normais (falta `WS_SESSION_ROLE`/`WS_SESSION_ROOT`); não há sandbox de SO nem usuário dedicado; a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
 
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 

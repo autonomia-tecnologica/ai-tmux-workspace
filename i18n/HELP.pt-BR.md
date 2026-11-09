@@ -68,7 +68,7 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam p
 
 | Marca | Significado |
 |---|---|
-| `●` verde | refinada, pronta para despachar |
+| `●` verde | refinada, despachável (não concluída) |
 | `○` cinza | a refinar |
 | `◆` amarelo | a validar (só você confere) |
 | `◌` apagada | pausada (título com `PAUSADA` entre parênteses) |
@@ -77,7 +77,7 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam p
 | `⚠` | id de dependência >= próximo id (provável erro de digitação) ou dependência de outra categoria (inválida) |
 
 - `→` expande o grupo ou o item (título completo, dependências, aceite); `←` recolhe. Enter no grupo não faz nada.
-- Enter pede confirmação (y/n) e manda a mensagem para o Claude: pronta = implementar, a refinar/pausada = refinar, a validar = "o que preciso validar?". Bloqueada e ciclo não despacham.
+- Enter pede confirmação (y/n) e manda a mensagem para o Claude: refinada = implementar, a refinar/pausada = refinar, a validar = "o que preciso validar?". Bloqueada e ciclo não despacham.
 - "sem formato" = o `BACKLOG.md` não segue o formato padrão. "nenhum backlog encontrado" = não existe o arquivo.
 
 ## CLAUDE e TERMINAL

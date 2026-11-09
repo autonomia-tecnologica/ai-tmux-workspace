@@ -4,7 +4,8 @@
 Hook mode (no arguments) reads the hook JSON from stdin and never breaks the session: any error,
 invalid input or missing session id exits 0 with no decision (fail open). Events handled:
 
-- SessionStart: injects the installed harness texts (CLAUDE.md and regras/*.md).
+- SessionStart: injects the installed harness text (HARNESS.md; the old CLAUDE.md + regras/*.md
+  layout is still read when HARNESS.md is absent).
 - UserPromptSubmit: injects a short reminder derived from item F07 of forcado.yaml.
 - PostToolUse (Read): records that a file of the harness was read in this session.
 - PreToolUse (Write, Edit, NotebookEdit): denies the write until the harness was read.
@@ -309,12 +310,17 @@ def _one_line(value, limit=300):
 def session_context(directory):
     directory = Path(directory)
     files = []
-    entry = directory / "CLAUDE.md"
+    entry = directory / "HARNESS.md"
     if entry.is_file():
         files.append(entry)
-    rules = directory / "regras"
-    if rules.is_dir():
-        files.extend(sorted(path for path in rules.glob("*.md") if path.is_file()))
+    else:
+        # Legacy layout: the entry point plus the per-category files.
+        entry = directory / "CLAUDE.md"
+        if entry.is_file():
+            files.append(entry)
+        rules = directory / "regras"
+        if rules.is_dir():
+            files.extend(sorted(path for path in rules.glob("*.md") if path.is_file()))
     sections = []
     for path in files:
         try:

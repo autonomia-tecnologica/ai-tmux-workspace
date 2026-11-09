@@ -142,6 +142,16 @@ class HarnessTest(unittest.TestCase):
         self.assertIn("## CLAUDE.md", context)
         self.assertIn("## regras/agents.md", context)
 
+    def test_session_start_prefers_harness_md(self):
+        (self.harness / "HARNESS.md").write_text("# HARNESS.md\n\nSingle file rule.\n",
+                                                 encoding="utf-8")
+        _, output = self.hook_output(self.session_start())
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("## HARNESS.md", context)
+        self.assertIn("Single file rule.", context)
+        self.assertNotIn("## CLAUDE.md", context)
+        self.assertNotIn("## regras/agents.md", context)
+
     # 2 ---------------------------------------------------------------------------------------
     def test_user_prompt_submit_injects_reminder_from_f07(self):
         _, output = self.hook_output(self.prompt())

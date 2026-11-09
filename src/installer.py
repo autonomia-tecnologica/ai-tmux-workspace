@@ -644,13 +644,15 @@ class Assistant:
                 raise Aborted()
         self.ui.line(t("installer.harness.source", path=display(source)))
         self.ui.line(t("installer.harness.files", files=", ".join(harness_files(source))))
-        entry = source / "CLAUDE.md"
+        entry = source / "HARNESS.md"
+        if not entry.is_file():
+            entry = source / "CLAUDE.md"
         if entry.is_file():
             text = entry.read_text(encoding="utf-8", errors="replace")
             lines = text.splitlines()
             if len(lines) > 60:
                 text = "\n".join(lines[:60]) + "\n…"
-            self.ui.line(t("installer.harness.content", file="CLAUDE.md", text=text))
+            self.ui.line(t("installer.harness.content", file=entry.name, text=text))
         self.ui.confirm("installer.harness.confirm_want")
         self.ui.confirm("installer.harness.confirm_agree")
         target = HOME / HARNESS_DIR
@@ -817,7 +819,7 @@ def install_policy_files(target):
 
 def harness_files(source):
     source = Path(source)
-    names = [name for name in ("CLAUDE.md", "forcado.yaml", "ORIGEM.md")
+    names = [name for name in ("HARNESS.md", "CLAUDE.md", "forcado.yaml", "ORIGEM.md")
              if (source / name).is_file()]
     rules = source / "regras"
     if rules.is_dir():

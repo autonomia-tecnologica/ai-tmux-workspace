@@ -7,6 +7,11 @@
 # `subagent` does not own capabilities: it inherits the parent role and may only tighten an entry.
 # An inherited value more permissive than the parent's is ignored by the engine.
 #
+# `workspace.read`/`workspace.write` are the workspace's own code (the clone or installed copy at
+# WS_DIR). The engine resolves them before this table: reading is allowed for every role; writing is
+# denied for repo/home/sibling and allowed only when the session box (WS_SESSION_ROOT) is inside the
+# workspace root. The values below are the declared defaults, not the decision.
+#
 # Decisions: allow runs without asking; ask waits for the person; deny never runs. `auto` (read
 # from WS_POLICY_AUTO or the event permission_mode) only turns `ask` into `allow` for path-scoped
 # capabilities whose target is inside the box, and never touches `deny`.
@@ -17,6 +22,8 @@ roles:
     repo.read: allow
     repo.write: allow
     repo.outside: deny
+    workspace.read: allow
+    workspace.write: deny
     vcs.read: allow
     vcs.write: allow
     vcs.remote: ask
@@ -33,6 +40,8 @@ roles:
     repo.read: allow
     repo.write: allow
     repo.outside: allow
+    workspace.read: allow
+    workspace.write: deny
     vcs.read: allow
     vcs.write: allow
     vcs.remote: ask

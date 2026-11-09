@@ -60,6 +60,7 @@ class InstallerTest(unittest.TestCase):
         self.state.mkdir()
         self.bin.mkdir()
         (self.source / "regras").mkdir(parents=True)
+        (self.source / "HARNESS.md").write_text("# HARNESS\n\nRead the rules.\n", encoding="utf-8")
         (self.source / "CLAUDE.md").write_text("# Harness\n\nRead the rules.\n", encoding="utf-8")
         (self.source / "forcado.yaml").write_text("versao: 1\nitens: []\n", encoding="utf-8")
         (self.source / "ORIGEM.md").write_text("origin\n", encoding="utf-8")
@@ -102,7 +103,7 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(Path(os.readlink(link)), ROOT / "bin" / "workspace")
         self.assertTrue((self.home / ".config" / "ai-tmux-workspace" / "config.yaml").is_file())
         harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
-        for name in ("forcado.yaml", "harness.py", "CLAUDE.md", "regras/agents.md"):
+        for name in ("forcado.yaml", "harness.py", "HARNESS.md", "CLAUDE.md", "regras/agents.md"):
             self.assertTrue((harness / name).is_file(), f"missing harness file: {name}")
         self.assertTrue((harness / "settings.json").is_file())
         self.assertIn(">>> ai-tmux-workspace >>>", (self.home / ".zshrc").read_text(encoding="utf-8"))

@@ -34,6 +34,7 @@ EXPECTED_CAPABILITIES = {
     "vcs.read", "vcs.write", "vcs.remote",
     "test.run", "net", "install", "admin",
     "config.read", "config.write", "tmp", "secrets", "session.external",
+    "workspace.read", "workspace.write",
 }
 
 ENV_KEYS = (
@@ -214,6 +215,61 @@ class PolicyTest(unittest.TestCase):
                     result = policy.check_event(event)
                     self.assertEqual(result["capability"], capability)
                     self.assertEqual(result["decision"], decision)
+
+    # --- workspace code protection (item 79) ---------------------------------------------------
+    def test_workspace_code_is_protected_before_the_role_table(self):
+        clone = self.root / "workspace-code"
+        installed = self.home / ".local" / "share" / "ai-tmux-workspace" / "app"
+        for folder in (clone / "src", installed / "src"):
+            folder.mkdir(parents=True)
+            (folder / "policy.py").write_text("x", encoding="utf-8")
+        for code in (clone, installed):
+            with self.subTest(code=code):
+                for role, root in (("repo", self.repo), ("home", self.home)):
+                    with patched_env(WS_DIR=str(code), WS_SESSION_ROLE=role,
+                                     WS_SESSION_ROOT=str(root)):
+                        read = policy.check_event(self.read(code / "src" / "policy.py"))
+                        self.assertEqual((read["decision"], read["capability"]),
+                                         ("allow", "workspace.read"))
+                        for event in (self.write(code / "src" / "policy.py"),
+                                      self.bash(f"echo x > {code}/src/policy.py")):
+                            result = policy.check_event(event)
+                            self.assertEqual(
+                                (result["decision"], result["capability"]),
+                                ("deny", "workspace.write"))
+                with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="repo",
+                                 WS_SESSION_ROOT=str(code)):
+                    for event in (self.write(code / "src" / "policy.py"),
+                                  self.bash(f"echo x > {code}/src/policy.py")):
+                        result = policy.check_event(event)
+                        self.assertEqual(
+                            (result["decision"], result["capability"]),
+                            ("allow", "workspace.write"))
+                        self.assertEqual(result["reason"], "policy.reason.workspace_self")
+
+    def test_workspace_protection_resolves_symlinks_and_relative_paths(self):
+        code = self.root / "workspace-code"
+        code.mkdir()
+        target = code / "policy.py"
+        target.write_text("x", encoding="utf-8")
+        link = self.repo / "link.py"
+        link.symlink_to(target)
+        with patched_env(WS_DIR=str(code)):
+            for value in (link, os.path.relpath(target, self.repo)):
+                with self.subTest(path=value):
+                    result = policy.check_event(self.write(value))
+                    self.assertEqual((result["decision"], result["capability"]),
+                                     ("deny", "workspace.write"))
+
+    def test_workspace_root_falls_back_to_the_policy_file_location(self):
+        with patched_env(WS_DIR=None):
+            self.assertEqual(policy._workspace_root(), str(ROOT))
+            write = policy.check_event(self.write(ROOT / "src" / "policy.py"))
+            self.assertEqual((write["decision"], write["capability"]),
+                             ("deny", "workspace.write"))
+            read = policy.check_event(self.read(ROOT / "src" / "policy.py"))
+            self.assertEqual((read["decision"], read["capability"]),
+                             ("allow", "workspace.read"))
 
     # --- fail closed ---------------------------------------------------------------------------
     def test_unknown_and_ambiguous_actions_fail_closed(self):
@@ -644,6 +700,8 @@ class PolicyTest(unittest.TestCase):
             (self.write(self.home / ".config" / "x"), self.owrite(self.home / ".config" / "x")),
             (self.write("/tmp/policy-battery.txt"), self.owrite("/tmp/policy-battery.txt")),
             (self.write(self.repo / ".env"), self.owrite(self.repo / ".env")),
+            (self.read(ROOT / "src" / "policy.py"), self.oread(ROOT / "src" / "policy.py")),
+            (self.write(ROOT / "src" / "policy.py"), self.owrite(ROOT / "src" / "policy.py")),
             (self.bash("git status"), self.obash("git status")),
             (self.bash("git commit -m x"), self.obash("git commit -m x")),
             (self.bash("git push"), self.obash("git push")),

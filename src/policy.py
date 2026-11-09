@@ -16,6 +16,11 @@ The role comes from `WS_SESSION_ROLE` (`repo`, `home` or `subagent`) and the box
 role is a deny for this CLI (fail closed); the adapters deliberately skip the policy when no role
 was declared, so sessions opened before the launcher sets the role keep working.
 
+The workspace's own code is a protected path checked before the role table: `WS_DIR` when the
+launcher exported it, else this file's code root. Every role may read it; only a session whose
+`WS_SESSION_ROOT` is inside that root may write it (the dev session that edits the workspace). The
+`home` role is denied too, with no exception.
+
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
@@ -45,6 +50,7 @@ CAPABILITIES = (
     "vcs.read", "vcs.write", "vcs.remote",
     "test.run", "net", "install", "admin",
     "config.read", "config.write", "tmp", "secrets", "session.external",
+    "workspace.read", "workspace.write",
 )
 ROLES = ("repo", "home", "subagent")
 DECISIONS = ("allow", "ask", "deny")
@@ -303,6 +309,25 @@ def _config_roots():
     return (home / ".config", home / ".claude", home / ".local" / "share" / "ai-tmux-workspace")
 
 
+def _workspace_root():
+    """The workspace's own code: `WS_DIR` when exported, else this file's code root.
+
+    A checkout keeps this module under `src/` and an installed harness under `harness/`; in both
+    the code root is the parent directory, which is the clone (dev or installed) being protected.
+    """
+    value = os.environ.get("WS_DIR")
+    if isinstance(value, str) and value.strip():
+        try:
+            return os.path.realpath(os.path.normpath(
+                os.path.abspath(os.path.expanduser(value.strip()))))
+        except (OSError, ValueError):
+            return None
+    try:
+        return os.path.realpath(str(Path(__file__).resolve().parent.parent))
+    except (OSError, RuntimeError):
+        return None
+
+
 def _tmp_roots():
     """The only global area of the box is /tmp (and its realpath on systems that symlink it).
 
@@ -372,6 +397,9 @@ def _resolve(value, root):
 def _path_capability(path, root, write):
     if _is_secret(path):
         return "secrets"
+    workspace = _workspace_root()
+    if workspace and _inside(path, workspace):
+        return "workspace.write" if write else "workspace.read"
     for config_root in _config_roots():
         if _inside(path, config_root):
             return "config.write" if write else "config.read"
@@ -388,6 +416,22 @@ def _inside_box(path, root):
     if not path or not root:
         return False
     return _inside(path, root) or any(_inside(path, temporary) for temporary in _tmp_roots())
+
+
+def _protected_decision(capability, root, declared):
+    """Decision for a protected workspace path, before the role table.
+
+    Reading the workspace code is always allowed (the agent may inspect the code it runs). Writing
+    it is allowed only when a declared session box (`WS_SESSION_ROOT`) is inside the protected
+    root, which is the dev session that edits the workspace; repo, home and sibling sessions are
+    denied. Without a declared box the allow has no anchor, so writes fail closed.
+    """
+    if capability == "workspace.read":
+        return "allow", "policy.reason.workspace_read"
+    workspace = _workspace_root()
+    if declared and workspace and root and _inside(root, workspace):
+        return "allow", "policy.reason.workspace_self"
+    return "deny", "policy.reason.workspace_write"
 
 
 # --- classification ----------------------------------------------------------------------------
@@ -1200,6 +1244,8 @@ def check_event(event):
     for finding in findings:
         if finding.capability is None:
             decision, reason = "allow", "policy.reason.inert"
+        elif finding.capability in ("workspace.read", "workspace.write"):
+            decision, reason = _protected_decision(finding.capability, root, root_declared)
         else:
             decision = capabilities.get(finding.capability, "deny")
             reason = "policy.reason." + decision
