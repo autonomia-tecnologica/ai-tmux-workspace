@@ -14,7 +14,7 @@ import i18n
 import lib
 import tmux
 from tree_state import Expander
-from viewer import AZUL, B, CINZA, DIM, R, VERDE, AMARELO, Linha, Viewer, ellipsize
+from viewer import AZUL, B, CINZA, DIM, R, VERDE, VERMELHO, AMARELO, Linha, Viewer, ellipsize
 
 
 
@@ -29,6 +29,18 @@ def effective(i):
     if i["cycle"]:
         return "cycle"
     return "blocked" if i["blocked"] and i["status"] == "ready" else i["status"]
+
+
+def buckets(eff):
+    """Counter buckets for the header; paused items get their own bucket (not "refine")."""
+    ready = eff.count("ready")
+    blocked = sum(e in ("blocked", "cycle") for e in eff)
+    validate = eff.count("validate")
+    paused = eff.count("paused")
+    refine = len(eff) - ready - blocked - validate - paused
+    return {"ready": ready, "refine": refine, "validate": validate, "blocked": blocked, "paused": paused}
+
+
 CURRENT = lib.repo_atual()
 ITENS = Expander()    # items whose description is expanded (Right opens, Left closes)
 GRUPOS = Expander()    # categories whose items are shown (Right opens, Left closes); closed by default
@@ -45,15 +57,13 @@ def collect(v):
         body.append(Linha(f" {DIM}{t('no_format')}{R}"))
     else:
         eff = [effective(i) for i in items]
-        ready, blocked = eff.count("ready"), sum(e in ("blocked", "cycle") for e in eff)
-        validate = eff.count("validate")
-        refine = len(items) - ready - blocked - validate
+        c = buckets(eff)
         cols = shutil.get_terminal_size((80, 24))[0]
-        parts = [(VERDE, ready, "ready"), (CINZA, refine, "refine"), (AMARELO, validate, "validate"),
-                 (AMARELO, blocked, "blocked")]
+        parts = [(VERDE, c["ready"], "ready"), (CINZA, c["paused"], "paused"), (CINZA, c["refine"], "refine"),
+                 (AMARELO, c["validate"], "validate"), (AMARELO, c["blocked"], "blocked")]
         row, used = "", 0                                   # pack the counters, wrapping when they don't fit
         for color, n, key in parts:
-            if key in ("validate", "blocked") and not n:
+            if key in ("paused", "validate", "blocked") and not n:
                 continue
             plain = f"{n} {t(key)}"
             if used and used + 2 + len(plain) + 1 > cols:
@@ -67,6 +77,7 @@ def collect(v):
         body.append(Linha(f" {DIM}{glyphs.arrow(True)}{R} {t('collapse_all')}", ("b", CURRENT, "collapse")))
         body.append(Linha())
         rail = {}                                           # id -> tree prefix for its children/lines
+        parallel = set(backlog.parallel_ids(items))         # ready items with disjoint paths
         rows = []                                           # (group header | tree row), grouped by category
         for cat, members in backlog.groups(items):
             rows.append(("g", cat, members))
@@ -95,8 +106,23 @@ def collect(v):
             if i["typo"] or i["cross"]:
                 dep += f" {glyphs.warn()}"
             pad = len(lead) + 5 + len(str(i["id"]))   # "<lead>▸ ● 12 "
+            badge_plain, badge = "", ""
+            priority = i.get("priority", "P2")
+            if priority in ("P0", "P1"):               # P2 is the default, so it stays implicit
+                label = t("priority", p=priority)
+                badge_plain += label + " "
+                badge += f"{VERMELHO if priority == 'P0' else AMARELO}{label}{R} "
+            if i.get("unblocks"):
+                label = t("unblocks", n=i["unblocks"])
+                badge_plain += label + " "
+                badge += f"{DIM}{label}{R} "
+            if i["id"] in parallel:
+                label = t("parallel")
+                badge_plain += label + " "
+                badge += f"{VERDE}{label}{R} "
+            pad += len(badge_plain)
             opened = ITENS.is_open(i["id"])
-            first = f"{DIM}{lead}{glyphs.arrow(opened)}{R} {glyphs.task_mark(st)} {DIM}{i['id']}{R} "
+            first = f"{DIM}{lead}{glyphs.arrow(opened)}{R} {glyphs.task_mark(st)} {DIM}{i['id']}{R} {badge}"
             if not opened:
                 title = i["title"]
                 room = cols - pad - len(dep) - 1

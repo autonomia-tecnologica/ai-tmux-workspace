@@ -4,12 +4,26 @@ from pathlib import Path
 
 ITEM = re.compile(r"^###\s+(\d+)\.\s*(.*?)\s*$")
 SECTIONS = {"refinadas": "ready", "a refinar": "refine", "a validar": "validate"}
+PRIORITIES = ("P0", "P1", "P2")
+DEFAULT_PRIORITY = "P2"
+
+
+def _paths(text):
+    """`Caminhos` as a list: backticks stripped, split on commas and whitespace, empties dropped."""
+    return [p for p in re.split(r"[,\s]+", text.replace("`", "")) if p]
+
+
+def _priority(text):
+    """Explicit priority P0/P1/P2 (case-insensitive); absent or invalid is P2."""
+    value = text.strip().upper()
+    return value if value in PRIORITIES else DEFAULT_PRIORITY
 
 
 def parse(path):
     """-> None if the file has no recognizable sections, else a list of
     {"id", "title", "category": str ("" if missing), "status": ready|refine|validate|paused, "deps": [int],
-    "accept": str, "blocked": bool, "cycle": bool, "typo": [int], "cross": [int]}."""
+    "paths": [str], "priority": P0|P1|P2, "accept": str, "blocked": bool, "cycle": bool,
+    "unblocks": int, "typo": [int], "cross": [int]}."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -26,7 +40,8 @@ def parse(path):
             title = m.group(2)
             paused = "(PAUSADA)" in title.upper()
             cur = {"id": int(m.group(1)), "title": re.sub(r"\s*\(PAUSADA\)\s*", " ", title, flags=re.I).strip(),
-                   "status": "paused" if paused and section != "validate" else section, "deps": [], "accept": "", "category": ""}
+                   "status": "paused" if paused and section != "validate" else section, "deps": [],
+                   "paths": [], "priority": DEFAULT_PRIORITY, "accept": "", "category": ""}
             items.append(cur)
         elif cur is not None:
             d = re.match(r"^-\s*Depende de:\s*(.*)$", line)
@@ -35,7 +50,16 @@ def parse(path):
             c = re.match(r"^-\s*Categoria:\s*(.*?)\s*$", line)
             if c:
                 cur["category"] = c.group(1)
-            a = re.match(r"^-\s*(?:Aceite|Conferir):\s*(.*)$", line)
+            p = re.match(r"^-\s*Caminhos:\s*(.*)$", line)
+            if p:
+                cur["paths"] = _paths(p.group(1))
+            pr = re.match(r"^-\s*Prioridade:\s*(.*)$", line)
+            if pr:
+                raw = pr.group(1).strip()
+                cur["priority"] = _priority(raw)
+                if raw and raw.upper() not in PRIORITIES:
+                    cur["priority_raw"] = raw      # invalid value kept for diagnostics only
+            a = re.match(r"^-\s*(?:Aceite(?:\s*\([^)]*\))?|Conferir):\s*(.*)$", line)
             if a:
                 cur["accept"] = a.group(1).strip()
         nxt = re.match(r"^Próximo id:\s*(\d+)", line)
@@ -49,8 +73,9 @@ def parse(path):
 
 def resolve(items, next_id):
     """Adds "blocked" (a listed id is still in the file), "cycle" (item is in a dependency
-    cycle, self-dependency included; invalid and blocked), "typo" (ids >= next id) and "cross"
-    (dependencies on an item of another category: invalid, categories never depend on each other)."""
+    cycle, self-dependency included; invalid and blocked), "unblocks" (open items that depend on
+    it, directly or transitively), "typo" (ids >= next id) and "cross" (dependencies on an item of
+    another category: invalid, categories never depend on each other)."""
     ids = {i["id"] for i in items}
     cat = {i["id"]: i["category"] for i in items}
     graph = {i["id"]: [d for d in i["deps"] if d in ids] for i in items}
@@ -69,6 +94,7 @@ def resolve(items, next_id):
     for i in items:
         i["cycle"] = reaches(i["id"], i["id"])
         i["blocked"] = bool(graph[i["id"]]) or i["cycle"]
+        i["unblocks"] = sum(1 for j in items if j["id"] != i["id"] and reaches(j["id"], i["id"]))
         i["typo"] = [d for d in i["deps"] if next_id is not None and d >= next_id]
         i["cross"] = [d for d in i["deps"] if d in cat and cat[d] != i["category"]]
 
@@ -83,49 +109,61 @@ def groups(items):
     return [(c, out[c]) for c in names]
 
 
+def _overlaps(a, b):
+    """One path covers the other when equal or when it is a directory prefix of the other."""
+    a, b = a.rstrip("/"), b.rstrip("/")
+    if not a or not b:
+        return a == b
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def disjoint(a, b):
+    """True when no path in `a` overlaps a path in `b` (a prefix counts as overlap, e.g.
+    `src/` and `src/x.py`). Empty sets are disjoint."""
+    return not any(_overlaps(x, y) for x in set(a) for y in set(b))
+
+
+def parallel_ids(items):
+    """Ids of ready items whose paths are disjoint from at least one other ready item's paths.
+    Items without `Caminhos` cannot be declared parallel-safe, so they are left out."""
+    ready = [i for i in items if i["status"] == "ready" and not i.get("blocked") and not i.get("cycle")]
+    return [i["id"] for i in ready
+            if i["paths"] and any(j is not i and j["paths"] and disjoint(i["paths"], j["paths"])
+                                  for j in ready)]
+
+
+def _priority_rank(i):
+    p = i.get("priority", DEFAULT_PRIORITY)
+    return PRIORITIES.index(p) if p in PRIORITIES else len(PRIORITIES) - 1
+
+
 def ordered(items):
-    """Display order: file order, but an item always comes after the items it depends on and
-    right after the dependency that unblocks it last. Cycle members go at the end."""
+    """Priority-aware topological order: an item only comes after what it depends on; among the
+    items whose dependencies are already placed, explicit priority (P0 first), then `unblocks`
+    (larger first), then file order choose the next one. Cycle members go at the end."""
     by_id = {i["id"]: i for i in items}
+    pos = {i["id"]: n for n, i in enumerate(items)}
+    pending = {i["id"]: {d for d in i["deps"] if d in by_id and not by_id[d].get("cycle")}
+               for i in items}
+    active = [i for i in items if not i.get("cycle")]
     placed, out = set(), []
-
-    def ready(i):
-        return all(d in placed for d in i["deps"] if d in by_id)
-
-    def place(i):
-        placed.add(i["id"])
-        out.append(i)
-        for j in items:
-            if j["id"] not in placed and not j["cycle"] and ready(j):
-                place(j)
-
-    for i in items:
-        if i["id"] in placed or i["cycle"]:
-            continue
-        for d in i["deps"]:                      # pull dependencies (and their chain) first
-            if d in by_id and d not in placed and not by_id[d]["cycle"]:
-                stack = [by_id[d]]
-                while stack:
-                    x = stack[-1]
-                    pend = [by_id[y] for y in x["deps"] if y in by_id and y not in placed
-                            and not by_id[y]["cycle"] and by_id[y] is not x and by_id[y] not in stack]
-                    if pend:
-                        stack.append(pend[0])
-                    else:
-                        stack.pop()
-                        if x["id"] not in placed:
-                            place(x)
-        if i["id"] not in placed:
-            place(i)
-    out.extend(i for i in items if i["cycle"])
+    while len(out) < len(active):
+        candidates = [i for i in active if i["id"] not in placed and pending[i["id"]] <= placed]
+        if not candidates:                       # defensive: never loop on an unforeseen cycle
+            candidates = [i for i in active if i["id"] not in placed]
+        chosen = min(candidates, key=lambda i: (_priority_rank(i), -i.get("unblocks", 0), pos[i["id"]]))
+        placed.add(chosen["id"])
+        out.append(chosen)
+    out.extend(i for i in items if i.get("cycle"))
     return out
 
 
 def tree(items):
     """Display rows in dependency-tree order: -> [(item, parent_id|None, is_last, has_children)].
     The parent is the dependency that unblocks the item last; items without a usable parent
-    (no deps, cycle, or a dependency that comes later) are roots. Items to validate come first."""
-    out = sorted(ordered(items), key=lambda i: i["status"] != "validate")   # to validate first (stable)
+    (no deps, cycle, or a dependency that comes later) are roots. Items to validate come first
+    and cycle members stay last."""
+    out = sorted(ordered(items), key=lambda i: (bool(i.get("cycle")), i["status"] != "validate"))
     pos = {i["id"]: n for n, i in enumerate(out)}
     parent, kids = {}, {}
     for i in out:

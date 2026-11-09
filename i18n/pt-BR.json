@@ -299,5 +299,9 @@
   "installer.remove.reason.outside": "fora da home e da config; não toquei",
   "installer.remove.reason.not_empty": "o caminho mudou de tipo ou tem conteúdo que não é nosso",
   "installer.remove.reason.clone_dirty": "o clone tem alterações locais; deixei como está",
-  "installer.remove.reason.clone_url": "o clone não aponta para o repositório esperado; deixei como está"
+  "installer.remove.reason.clone_url": "o clone não aponta para o repositório esperado; deixei como está",
+  "tasks.priority": "{p}",
+  "tasks.unblocks": "destrava {n}",
+  "tasks.parallel": "paralelizável",
+  "tasks.paused": "pausadas"
 }
