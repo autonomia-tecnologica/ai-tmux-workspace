@@ -313,5 +313,16 @@
   "tree.rename_exists": "já existe um arquivo chamado {name}",
   "tree.rename_failed": "não consegui renomear para {name}",
   "editor.menu_title": "Abrir {name} com:",
-  "editor.none": "nenhum editor disponível no PATH; configure `editor` no config.yaml"
+  "editor.none": "nenhum editor disponível no PATH; configure `editor` no config.yaml",
+  "policy.reason.allow": "Permitido pela política: {capability}.",
+  "policy.reason.ask": "A política pede confirmação da pessoa para: {capability}.",
+  "policy.reason.deny": "Negado pela política: {capability}.",
+  "policy.reason.auto": "Permitido automaticamente dentro da caixa: {capability}.",
+  "policy.reason.inert": "Ferramenta sem efeito de arquivo ou rede.",
+  "policy.reason.unknown": "Ação não reconhecida pela política; negada por padrão.",
+  "policy.reason.no_role": "Sessão sem papel declarado; a política não se aplica.",
+  "policy.reason.unknown_role": "Papel de sessão desconhecido; negado por padrão.",
+  "policy.reason.no_parent": "Subagente sem papel pai; negado por padrão.",
+  "policy.reason.invalid": "Política ausente ou inválida; negado por padrão.",
+  "policy.reason.error": "Falha ao avaliar a política; negado por padrão."
 }

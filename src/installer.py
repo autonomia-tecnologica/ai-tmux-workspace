@@ -28,6 +28,15 @@ BASH = "/bin/bash" if os.path.exists("/bin/bash") else (shutil.which("bash") or 
 CLONE_URL = "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
 HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
 COMPLETION_DIR = Path(".local", "share", "ai-tmux-workspace", "completions")
+# Installed next to harness.py: the policy/config pair and the two adapters' shared engine. The
+# source tree (ambiente-de-trabalho) is copied first; these come from this repository.
+POLICY_SOURCES = (
+    ("harness", "policy.yaml", "policy.yaml"),
+    ("harness", "opencode-policy.js", "opencode-policy.js"),
+    ("src", "policy.py", "policy.py"),
+    ("src", "yaml_min.py", "yaml_min.py"),
+    ("i18n", "pt-BR.json", "i18n/pt-BR.json"),
+)
 CLI_DIR = Path(".local", "bin")
 REQUIRED = ("tmux", "python3", "git", "claude")
 OPTIONAL = ("gh", "nvim")
@@ -654,6 +663,7 @@ class Assistant:
             self.ui.error(t("installer.harness.copy_failed", error=str(error)))
             raise Aborted()
         shutil.copy2(ROOT / "harness" / "harness.py", target / "harness.py")
+        install_policy_files(target)
         rendered = subprocess.run(
             [sys.executable, str(target / "harness.py"), "render",
              "--harness", str(target), "--out", str(target / "settings.json")],
@@ -786,6 +796,25 @@ class Assistant:
         return 0
 
 
+def install_policy_files(target):
+    """Copy the policy engine, its config and the OpenCode adapter into an installed harness.
+
+    Overwrites in place, so running it again leaves byte-identical files (idempotent). Returns the
+    names that were actually present in this checkout, in declaration order.
+    """
+    target = Path(target)
+    installed = []
+    for folder, name, destination in POLICY_SOURCES:
+        source = ROOT / folder / name
+        if not source.is_file():
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        (target / destination).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target / destination)
+        installed.append(destination)
+    return installed
+
+
 def harness_files(source):
     source = Path(source)
     names = [name for name in ("CLAUDE.md", "forcado.yaml", "ORIGEM.md")
@@ -794,7 +823,9 @@ def harness_files(source):
     if rules.is_dir():
         names.extend(f"regras/{path.name}" for path in sorted(rules.glob("*.md"))
                      if path.is_file())
-    return names
+    names.extend(destination for folder, name, destination in POLICY_SOURCES
+                 if (ROOT / folder / name).is_file())
+    return list(dict.fromkeys(names))
 
 
 def main(argv=None):
