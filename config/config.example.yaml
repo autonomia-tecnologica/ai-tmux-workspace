@@ -14,7 +14,7 @@ agent: claude
 editor:
   prose:
     - name: Dawn
-      command: dawn
+      command: dawn-writer
       fullscreen: true
     - name: nvim
       command: nvim

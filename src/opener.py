@@ -35,7 +35,7 @@ PROSE_EXTENSIONS = {"md", "markdown", "mdx", "rst", "txt"}
 
 # Used when the `editor` key/type is absent or has no command available.
 EDITOR_FALLBACKS = {
-    "prose": [("Dawn", "dawn", True), ("nvim", "nvim", False)],
+    "prose": [("Dawn", "dawn-writer", True), ("nvim", "nvim", False)],
     "code": [("nvim", "nvim", False), ("micro", "micro", False)],
 }
 EDITOR_TAIL = ("nvim", "vim", "vi")
