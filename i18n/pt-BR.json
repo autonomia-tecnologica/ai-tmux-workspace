@@ -303,5 +303,14 @@
   "tasks.priority": "{p}",
   "tasks.unblocks": "destrava {n}",
   "tasks.parallel": "paralelizável",
-  "tasks.paused": "pausadas"
+  "tasks.paused": "pausadas",
+  "tree.menu_rename": "Renomear",
+  "tree.rename_prompt": "Novo nome:",
+  "tree.renamed": "{name} renomeado",
+  "tree.rename_empty": "o nome não pode ficar vazio",
+  "tree.rename_invalid": "nome inválido: use só o nome do arquivo, sem / ou \\, e nada de . ou ..",
+  "tree.rename_exists": "já existe um arquivo chamado {name}",
+  "tree.rename_failed": "não consegui renomear para {name}",
+  "editor.menu_title": "Abrir {name} com:",
+  "editor.none": "nenhum editor disponível no PATH; configure `editor` no config.yaml"
 }
