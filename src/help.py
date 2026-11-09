@@ -10,19 +10,25 @@ import re
 import i18n
 import lib
 from colors import CODE
-from viewer import (ANSI, AMARELO, AZUL, B, CINZA, DIM, ORANGE, R, VERDE, VERMELHO, Linha, Viewer, _larg,
-                    close_on_esc, cortar, popup_header, term_cols)
+from viewer import (ANSI, YELLOW, BLUE, B, GRAY, DIM, ORANGE, R, GREEN, RED, Row, Viewer, _char_width,
+                    close_on_esc, clip, popup_header, term_cols)
 
 HELP = lib.BASE / "i18n" / f"HELP.{i18n.LOCALE}.md"
 MAX_W = 100                        # text column never gets wider than this
 LIST_ITEM = re.compile(r"(\s{0,3})([-*]|\d+\.)\s+")
 TOKEN = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*)")
-SYMBOL_COLOR = {"verde": VERDE, "amarelo": AMARELO, "vermelho": VERMELHO, "cinza": CINZA, "apagada": DIM}
-SYMBOL_DEFAULT = {"◆": AMARELO, "⊘": AMARELO, "⚠": AMARELO, "✖": VERMELHO, "◌": DIM, "○": CINZA}
+SYMBOL_COLOR = {
+    i18n.t("help.color.green"): GREEN,
+    i18n.t("help.color.yellow"): YELLOW,
+    i18n.t("help.color.red"): RED,
+    i18n.t("help.color.gray"): GRAY,
+    i18n.t("help.color.dim"): DIM,
+}
+SYMBOL_DEFAULT = {"◆": YELLOW, "⊘": YELLOW, "⚠": YELLOW, "✖": RED, "◌": DIM, "○": GRAY}
 
 
 def width(s):
-    return sum(_larg(c) for c in ANSI.sub("", s))
+    return sum(_char_width(c) for c in ANSI.sub("", s))
 
 
 def words(text, symbol_color=None):
@@ -99,7 +105,7 @@ def table(rows, w):
             parts = []
             for i, x in enumerate(wrapped):
                 t = x[ln] if ln < len(x) else ""
-                t = f"{B}{AZUL}{ANSI.sub('', t)}{R}" if bold else t
+                t = f"{B}{BLUE}{ANSI.sub('', t)}{R}" if bold else t
                 parts.append(" " + t + " " * (cols[i] - width(t)) + " ")
             out.append(f"{DIM}│{R}" + f"{DIM}│{R}".join(parts) + f"{DIM}│{R}")
         return out
@@ -117,8 +123,8 @@ def code_block(block, w):
     bottom = f"{DIM}╰{'─' * (inner + 2)}╯{R}"
     out = [top]
     for l in block:
-        t, n = cortar(l, inner)
-        out.append(f"{DIM}│{R} {CINZA}{t}{R}{' ' * (inner - n)} {DIM}│{R}")
+        t, n = clip(l, inner)
+        out.append(f"{DIM}│{R} {GRAY}{t}{R}{' ' * (inner - n)} {DIM}│{R}")
     return out + [bottom]
 
 
@@ -128,21 +134,21 @@ def render(md, cols):
     out, lines, i = [], md.splitlines(), 0
 
     def emit(rows):
-        out.extend(Linha(ml + r) for r in rows)
+        out.extend(Row(ml + r) for r in rows)
 
     while i < len(lines):
         ln = lines[i]
         if not ln.strip():
-            if out and out[-1].texto != "":
-                out.append(Linha())
+            if out and out[-1].text != "":
+                out.append(Row())
             i += 1
         elif ln.startswith("# "):
             emit([f"{B}{ORANGE}{ln[2:]}{R}", f"{ORANGE}{'━' * min(w, width(ln[2:]) + 4)}{R}"])
             i += 1
         elif ln.startswith("## "):
-            if out and out[-1].texto != "":
-                out.append(Linha())
-            emit([f"{B}{AZUL}▌ {ln[3:]}{R}"])
+            if out and out[-1].text != "":
+                out.append(Row())
+            emit([f"{B}{BLUE}▌ {ln[3:]}{R}"])
             i += 1
         elif ln.lstrip().startswith("```"):          # fenced code block (model answers)
             i += 1
@@ -152,7 +158,7 @@ def render(md, cols):
                 i += 1
             i += 1
             emit(code_block(block, w))
-            out.append(Linha())
+            out.append(Row())
         elif ln.startswith("    "):
             block = []
             while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
@@ -161,7 +167,7 @@ def render(md, cols):
             while block and not block[-1].strip():
                 block.pop()
             emit(code_block(block, w))
-            out.append(Linha())
+            out.append(Row())
         elif ln.startswith("|"):
             rows = []
             while i < len(lines) and lines[i].startswith("|"):
@@ -170,9 +176,9 @@ def render(md, cols):
                     rows.append(cells)
                 i += 1
             emit(table(rows, w))
-            out.append(Linha())
+            out.append(Row())
         elif ln.startswith("### "):
-            emit([f"{B}{AZUL}{ln[4:]}{R}"])
+            emit([f"{B}{BLUE}{ln[4:]}{R}"])
             i += 1
         elif LIST_ITEM.match(ln):
             while i < len(lines) and LIST_ITEM.match(lines[i]):
@@ -181,11 +187,11 @@ def render(md, cols):
                 emit(wrap(lines[i][m.end():], w, indent=" " * (len(m.group(1)) + 2), first=" " * len(m.group(1)) + mark))
                 i += 1
         else:
-            para = []
+            paragraph = []
             while i < len(lines) and lines[i].strip() and not re.match(r"(#|\||```|    )", lines[i]) and not LIST_ITEM.match(lines[i]):
-                para.append(lines[i].strip())
+                paragraph.append(lines[i].strip())
                 i += 1
-            emit(wrap(" ".join(para), w))
+            emit(wrap(" ".join(paragraph), w))
     return out
 
 
@@ -197,11 +203,11 @@ def collect(v):
     try:
         stamp = (HELP.stat().st_mtime, cols)
     except OSError:
-        return [], [Linha(f" {VERMELHO}{i18n.t('help.not_found', path=HELP.name)}{R}")]
+        return [], [Row(f" {RED}{i18n.t('help.not_found', path=HELP.name)}{R}")]
     if _cache.get("stamp") != stamp:
         _cache["stamp"], _cache["body"] = stamp, render(HELP.read_text(), cols)
-    return popup_header(i18n.t('help.bar'), i18n.t('help.keys'), cols), [Linha()] + _cache["body"]
+    return popup_header(i18n.t('help.bar'), i18n.t('help.keys'), cols), [Row()] + _cache["body"]
 
 
 if __name__ == "__main__":
-    Viewer(collect, intervalo=1.0, ao_tecla=close_on_esc).rodar()
+    Viewer(collect, interval=1.0, on_key=close_on_esc).run()

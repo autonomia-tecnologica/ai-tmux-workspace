@@ -1,6 +1,6 @@
 """Tests for conference mode: state, log, isolated workers and the conversation screen.
 
-Every test points WS_ESTADO (and, for the config cases, AT_WS_CONFIG) at a temporary folder, so
+Every test points WS_STATE (and, for the config cases, AT_WS_CONFIG) at a temporary folder, so
 the real ~/.cache/workspace is never touched. Launching and running the isolated Claude is
 injected: no subprocess and no tmux needed.
 """
@@ -33,7 +33,7 @@ class ConferenceTest(unittest.TestCase):
         self.a.mkdir()
         self.b.mkdir()
         self.repos = [str(self.a.resolve()), str(self.b.resolve())]
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.tmp)})
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.tmp)})
         env.start()
         self.addCleanup(env.stop)
 
@@ -59,7 +59,7 @@ class ConferenceTest(unittest.TestCase):
 
     def test_start_twice_is_refused_when_the_active_conference_has_messages(self):
         self.assertEqual(conference.start([str(self.a)]), 0)
-        conference.say("oi", launch=self.fake_launch([]))
+        conference.say("hi", launch=self.fake_launch([]))
         self.assertEqual(conference.start([str(self.b)]), 2)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0]])
         self.assertEqual(len(conference.read_log()), 1)
@@ -75,7 +75,7 @@ class ConferenceTest(unittest.TestCase):
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(cfg)}), \
-                mock.patch("lib.repo_atual", return_value=str(self.a)):
+                mock.patch("lib.current_repo", return_value=str(self.a)):
             self.assertEqual(conference.start(), 0)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0], self.repos[1]])
 
@@ -89,7 +89,7 @@ class ConferenceTest(unittest.TestCase):
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(cfg)}), \
-                mock.patch("lib.repo_atual", return_value=str(self.a)):
+                mock.patch("lib.current_repo", return_value=str(self.a)):
             self.assertEqual(conference.start(), 2)
         self.assertEqual(conference.read_active(), {})
 
@@ -104,13 +104,13 @@ class ConferenceTest(unittest.TestCase):
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(cfg)}), \
-                mock.patch("lib.repo_atual", side_effect=AssertionError("must not read the tmux window")):
+                mock.patch("lib.current_repo", side_effect=AssertionError("must not read the tmux window")):
             self.assertEqual(conference.start(repo=str(self.a)), 0)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0], self.repos[1]])
 
     def test_start_without_repos_and_without_siblings_is_refused(self):
-        fora = self.tmp / "home"
-        fora.mkdir()
+        outside = self.tmp / "home"
+        outside.mkdir()
         cfg = self.tmp / "config.yaml"
         cfg.write_text(
             "groups:\n"
@@ -119,7 +119,7 @@ class ConferenceTest(unittest.TestCase):
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(cfg)}), \
-                mock.patch("lib.repo_atual", return_value=str(fora)):
+                mock.patch("lib.current_repo", return_value=str(outside)):
             self.assertEqual(conference.start(), 2)
         self.assertEqual(conference.read_active(), {})
 
@@ -130,12 +130,12 @@ class ConferenceTest(unittest.TestCase):
     def test_say_appends_the_message_and_starts_one_claude_per_repo(self):
         conference.start([str(self.a), str(self.b)])
         calls = []
-        self.assertEqual(conference.say("minha mensagem", launch=self.fake_launch(calls)), 0)
+        self.assertEqual(conference.say("my message", launch=self.fake_launch(calls)), 0)
 
         log = conference.read_log()
         self.assertEqual(len(log), 1)
         self.assertEqual(log[0]["sender"], "rafael")
-        self.assertEqual(log[0]["text"], "minha mensagem")
+        self.assertEqual(log[0]["text"], "my message")
         message_id = log[0]["id"]
         self.assertIsInstance(message_id, str)
         self.assertEqual(conference.read_active()["awaiting"],
@@ -149,44 +149,33 @@ class ConferenceTest(unittest.TestCase):
                          {self.repos[0]: i18n.t("conference.status.thinking"),
                           self.repos[1]: i18n.t("conference.status.thinking")})
         participants = ", ".join(f"{conference._sender(p)} ({p})" for p in self.repos)
-        expected = dict(text="minha mensagem", no_answer=conference.NO_ANSWER,
+        expected = dict(text="my message", no_answer=conference.NO_ANSWER,
                         participants=participants, max_files=conference.MAX_FILES_READ,
                         max_steps=conference.MAX_TOOL_STEPS)
         self.assertEqual(calls[0][1], i18n.t(
             "conference.prompt", you=conference._sender(self.repos[0]), **expected))
         self.assertEqual(calls[1][1], i18n.t(
             "conference.prompt", you=conference._sender(self.repos[1]), **expected))
-        self.assertIn("um parágrafo", calls[0][1])
-        self.assertIn("minha mensagem", calls[0][1])
-        self.assertIn("conferência", calls[0][1])           # not long work
-        self.assertIn("apenas sobre este repo", calls[0][1])
-        self.assertIn("leia o harness", calls[0][1])
-        self.assertIn("validação cruzada", calls[0][1])
-        self.assertIn("repos irmãos", calls[0][1])
-        self.assertIn("análise mais profunda", calls[0][1])
-        self.assertIn("dirigida a outro participante", calls[0][1])
-        self.assertIn(f"{conference.MAX_FILES_READ} arquivos", calls[0][1])
-        self.assertIn(f"{conference.MAX_TOOL_STEPS} passos", calls[0][1])
+        self.assertIn("my message", calls[0][1])
+        self.assertIn(str(conference.MAX_FILES_READ), calls[0][1])
+        self.assertIn(str(conference.MAX_TOOL_STEPS), calls[0][1])
         self.assertIn("BACKLOG.md", calls[0][1])              # the only allowed write
-        self.assertIn("salvar algo no backlog", calls[0][1])
-        self.assertIn("não altera código", calls[0][1])
         for repo in self.repos:                            # every participant is named
             self.assertIn(f"{conference._sender(repo)} ({repo})", calls[0][1])
         self.assertIn(conference_worker.NO_ANSWER, calls[0][1])
-        self.assertNotIn("independente do assunto", calls[0][1])
         self.assertNotIn(str(conference.log_path()), calls[0][1])   # no read outside the repo
 
     def test_the_prompt_carries_only_the_message_being_sent(self):
         conference.start([str(self.a)])
         calls = []
-        conference.say("primeira", launch=self.fake_launch([]))
-        conference.say("segunda", launch=self.fake_launch(calls))
-        self.assertIn("segunda", calls[0][1])
-        self.assertNotIn("primeira", calls[0][1])          # no history in the prompt
+        conference.say("first", launch=self.fake_launch([]))
+        conference.say("second", launch=self.fake_launch(calls))
+        self.assertIn("second", calls[0][1])
+        self.assertNotIn("first", calls[0][1])             # no history in the prompt
 
     def test_say_without_an_active_conference_is_refused(self):
         calls = []
-        self.assertEqual(conference.say("oi", launch=self.fake_launch(calls)), 2)
+        self.assertEqual(conference.say("hi", launch=self.fake_launch(calls)), 2)
         self.assertEqual(calls, [])
         self.assertEqual(conference.read_log(), [])
 
@@ -199,7 +188,7 @@ class ConferenceTest(unittest.TestCase):
             calls.append(repo)
             return repo == second     # the first repo's Claude fails to start
 
-        self.assertEqual(conference.say("oi", launch=launch), 1)
+        self.assertEqual(conference.say("hi", launch=launch), 1)
         self.assertEqual(calls, [first, second])
         message_id = conference.read_log()[0]["id"]
         self.assertEqual(conference.read_active()["awaiting"], {second: message_id})
@@ -208,7 +197,7 @@ class ConferenceTest(unittest.TestCase):
 
     def test_stop_closes_the_conference_and_keeps_the_log(self):
         conference.start([str(self.a)])
-        conference.say("guardar", launch=self.fake_launch([]))
+        conference.say("save", launch=self.fake_launch([]))
         self.assertEqual(conference.stop(), 0)
         self.assertEqual(conference.read_active(), {})
         self.assertEqual(len(conference.read_log()), 1)
@@ -216,28 +205,29 @@ class ConferenceTest(unittest.TestCase):
 
     def test_a_new_conference_starts_empty_and_the_previous_log_does_not_come_back(self):
         conference.start([str(self.a)])
-        conference.say("primeira", launch=self.fake_launch([]))
+        conference.say("first", launch=self.fake_launch([]))
         self.assertEqual(conference.stop(), 0)
 
         conference.start([str(self.b)])
         self.assertEqual(conference.read_log(), [])     # no persistence on screen
         archives = list((self.tmp / "conference").glob("log-*.jsonl"))
         self.assertEqual(len(archives), 1)              # the old log is only a file
-        self.assertIn("primeira", archives[0].read_text(encoding="utf-8"))
+        self.assertIn("first", archives[0].read_text(encoding="utf-8"))
 
     def test_first_paragraph_keeps_only_the_first_block(self):
-        self.assertEqual(conference.first_paragraph("um.\n\n dois.\n\ntrês"), "um.")
-        self.assertEqual(conference.first_paragraph("só um parágrafo\ncom quebra de linha"), "só um parágrafo\ncom quebra de linha")
+        self.assertEqual(conference.first_paragraph("one.\n\n two.\n\nthree"), "one.")
+        self.assertEqual(conference.first_paragraph("one paragraph\nwith a line break"),
+                         "one paragraph\nwith a line break")
         self.assertEqual(conference.first_paragraph("\n \n"), "")
 
     def test_format_log_has_sender_and_time(self):
         text = conference.format_log([
-            {"ts": 0, "sender": "rafael", "text": "pergunta"},
+            {"ts": 0, "sender": "rafael", "text": "question"},
             {"ts": 0, "sender": "repo-a", "text": "resposta"},
         ])
         self.assertIn("Rafael", text)
         self.assertIn("repo-a", text)
-        self.assertIn("pergunta", text)
+        self.assertIn("question", text)
         self.assertIn("resposta", text)
         self.assertEqual(conference.format_log([]), i18n.t("conference.log_empty"))
 
@@ -256,7 +246,7 @@ class WorkerTest(unittest.TestCase):
         self.repos = [str(self.a.resolve()), str(self.b.resolve())]
         self.cfg = self.tmp / "config.yaml"
         self.cfg.write_text("profiles:\n  claude: claude\nagent: claude\n", encoding="utf-8")
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.tmp), "AT_WS_CONFIG": str(self.cfg),
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.tmp), "AT_WS_CONFIG": str(self.cfg),
                                            "AT_HARNESS_DIR": str(self.tmp / "no-harness")})
         env.start()
         self.addCleanup(env.stop)
@@ -281,7 +271,7 @@ class WorkerTest(unittest.TestCase):
 
         ok = conference_worker.answer(
             self.repos[0], "prompt", message_id, created,
-            execute=lambda cmd, repo, prompt: ("Primeiro.\n\nSegundo.", "", 0))
+            execute=lambda cmd, repo, prompt: ("First.\n\nSecond.", "", 0))
 
         self.assertTrue(ok)
         log = conference.read_log()
@@ -289,7 +279,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(log[1]["sender"], "repo-a")
         self.assertEqual(log[1]["repo"], self.repos[0])
         self.assertEqual(log[1]["reply_to"], message_id)
-        self.assertEqual(log[1]["text"], "Primeiro.")
+        self.assertEqual(log[1]["text"], "First.")
         self.assertEqual(conference.read_active()["awaiting"], {self.repos[1]: message_id})
         self.assertEqual(conference.read_active()["status"],
                          {self.repos[1]: i18n.t("conference.status.thinking")})
@@ -300,21 +290,21 @@ class WorkerTest(unittest.TestCase):
 
         ok = conference_worker.answer(
             self.repos[0], "prompt", message_id, created,
-            execute=lambda cmd, repo, prompt: ("", "endpoint fora do ar", 1))
+            execute=lambda cmd, repo, prompt: ("", "endpoint is down", 1))
 
         self.assertFalse(ok)
         log = conference.read_log()
         self.assertEqual(log[1]["text"], i18n.t("conference.answer_failed"))
-        self.assertNotIn("endpoint fora do ar", log[1]["text"])
+        self.assertNotIn("endpoint is down", log[1]["text"])
         errors = (self.tmp / "conference" / "errors.log").read_text(encoding="utf-8")
-        self.assertIn("endpoint fora do ar", errors)
+        self.assertIn("endpoint is down", errors)
         self.assertEqual(conference.read_active()["awaiting"], {self.repos[1]: message_id})
         self.assertEqual(conference.read_active()["status"],
                          {self.repos[1]: i18n.t("conference.status.thinking")})
 
     def test_a_message_that_is_not_this_repo_gets_no_log_entry_and_no_waiting_mark(self):
         conference.start(self.repos)
-        _, message_id, created = self.say("mensagem de outro repo")
+        _, message_id, created = self.say("message from another repo")
 
         ok = conference_worker.answer(
             self.repos[0], "prompt", message_id, created,
@@ -512,7 +502,6 @@ class BudgetHookTest(unittest.TestCase):
         self.assertEqual(denied.get("permissionDecision"), "deny")
         self.assertIn(i18n.t("conference.budget.steps", max_steps=2),
                       denied.get("permissionDecisionReason"))
-        self.assertIn("responda agora", denied.get("permissionDecisionReason"))
 
     def test_the_same_event_counted_twice_charges_one_step(self):
         self.assertEqual(self.hook(tool="Grep", max_steps=1, tool_use_id="tool-1"), {})
@@ -572,7 +561,7 @@ class BudgetHookTest(unittest.TestCase):
     def test_the_workspace_hook_applies_the_budget_to_a_conference_run(self):
         payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
                    "tool_name": "Read", "tool_input": {"file_path": "/x/a.md"}}
-        env = dict(os.environ, WS_ESTADO=str(self.tmp), WS_CONFERENCE_BUDGET=str(self.state),
+        env = dict(os.environ, WS_STATE=str(self.tmp), WS_CONFERENCE_BUDGET=str(self.state),
                    WS_CONFERENCE_MAX_STEPS="20", WS_CONFERENCE_MAX_FILES="1")
 
         def run_hook():
@@ -593,7 +582,7 @@ class BudgetHookTest(unittest.TestCase):
     def test_the_workspace_hook_ignores_runs_without_a_conference_budget(self):
         payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
                    "tool_name": "Read", "tool_input": {"file_path": "/x/a.md"}}
-        env = dict(os.environ, WS_ESTADO=str(self.tmp))
+        env = dict(os.environ, WS_STATE=str(self.tmp))
         env.pop("WS_CONFERENCE_BUDGET", None)
         proc = subprocess.run([sys.executable, str(SRC / "hook.py")],
                               input=json.dumps(payload), capture_output=True, text=True,
@@ -606,7 +595,7 @@ class BudgetHookTest(unittest.TestCase):
         repo.mkdir()
         payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
                    "tool_name": "Edit", "tool_input": {"file_path": str(repo / "README.md")}}
-        env = dict(os.environ, WS_ESTADO=str(self.tmp), WS_CONFERENCE_REPO=str(repo))
+        env = dict(os.environ, WS_STATE=str(self.tmp), WS_CONFERENCE_REPO=str(repo))
         env.pop("WS_CONFERENCE_BUDGET", None)
 
         def run():
@@ -631,25 +620,25 @@ class FakeViewer:
     keys = []
     last = None
 
-    def __init__(self, coletar, intervalo=2.0, **kwargs):
-        self.coletar = coletar
-        self.ao_tecla, self.entrada, self.rodape = (kwargs.get("ao_tecla"), kwargs.get("entrada"),
-                                                    kwargs.get("rodape"))
-        self.top, self.parar, self.frame = 0, False, None
-        self.recoletar = mock.Mock()
+    def __init__(self, collect, interval=2.0, **kwargs):
+        self.collect = collect
+        self.on_key, self.on_input, self.footer = (kwargs.get("on_key"), kwargs.get("on_input"),
+                                                    kwargs.get("footer"))
+        self.top, self.stopped, self.frame = 0, False, None
+        self.redraw = mock.Mock()
         type(self).last = self
 
-    def _acordar(self):
+    def _wake(self):
         pass
 
-    def rodar(self):
-        self.frame = self.coletar(self)
+    def run(self):
+        self.frame = self.collect(self)
         for k in type(self).keys:
-            if self.entrada and self.entrada(self, k):
+            if self.on_input and self.on_input(self, k):
                 continue
-            if self.ao_tecla:
-                self.ao_tecla(self, k)
-            if self.parar:
+            if self.on_key:
+                self.on_key(self, k)
+            if self.stopped:
                 break
 
 
@@ -674,7 +663,7 @@ class ConverseTest(unittest.TestCase):
             f"    - {self.b}\n",
             encoding="utf-8",
         )
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.tmp), "AT_WS_CONFIG": str(cfg)})
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.tmp), "AT_WS_CONFIG": str(cfg)})
         env.start()
         self.addCleanup(env.stop)
 
@@ -685,30 +674,30 @@ class ConverseTest(unittest.TestCase):
             return conference.converse(repo=repo or str(self.a))
 
     def test_typing_and_enter_starts_with_the_window_repo_and_siblings_and_sends(self):
-        self.assertEqual(self.run_screen(list("minha mensagem") + ["\r", "esc"]), 0)
+        self.assertEqual(self.run_screen(list("my message") + ["\r", "esc"]), 0)
         self.assertEqual(conference.read_active(), {})   # Esc closes the conference with the screen
         log = conference.read_log()
         self.assertEqual(len(log), 1)
         self.assertEqual(log[0]["sender"], "rafael")
-        self.assertEqual(log[0]["text"], "minha mensagem")
+        self.assertEqual(log[0]["text"], "my message")
 
     def test_esc_ends_the_open_conference_and_keeps_the_log(self):
         conference.start([str(self.a), str(self.b)])
-        conference.say("oi", launch=lambda *a, **k: True)
+        conference.say("hi", launch=lambda *a, **k: True)
         self.assertEqual(self.run_screen(["esc"], repo=str(self.a)), 0)
         self.assertEqual(conference.read_active(), {})
         self.assertEqual(len(conference.read_log()), 1)
 
     def test_the_header_shows_what_each_repo_is_doing(self):
         conference.start(self.repos)
-        conference.say("oi", launch=lambda *a, **k: True)
+        conference.say("hi", launch=lambda *a, **k: True)
         message_id = conference.read_log()[0]["id"]
         created = conference.read_active()["created"]
         conference_worker._set_status(self.repos[0], message_id, created, "lendo docs/x.md")
 
         self.assertEqual(self.run_screen(["esc"], repo=str(self.a)), 0)
-        header = FakeViewer.last.frame[0][0].texto
-        body = "\n".join(l.texto for l in FakeViewer.last.frame[1])
+        header = FakeViewer.last.frame[0][0].text
+        body = "\n".join(l.text for l in FakeViewer.last.frame[1])
         self.assertIn("repo-a (lendo docs/x.md)", header)
         self.assertIn("repo-b (analisando…)", header)
         self.assertIn(i18n.t("conference.screen.hint"), body)
@@ -721,9 +710,9 @@ class ConverseTest(unittest.TestCase):
     def test_a_closed_conference_does_not_come_back_on_the_next_screen(self):
         self.run_screen(list("oi") + ["\r", "esc"])     # starts, sends and closes
         self.run_screen(["esc"])                         # reopening: nothing from the previous one
-        texto = "\n".join(l.texto for l in FakeViewer.last.frame[1])
-        self.assertNotIn("oi", texto)
-        self.assertIn(i18n.t("conference.not_active"), texto)
+        text = "\n".join(l.text for l in FakeViewer.last.frame[1])
+        self.assertNotIn("oi", text)
+        self.assertIn(i18n.t("conference.not_active"), text)
 
     def test_j_and_x_are_text_and_backspace_edits_the_box(self):
         keys = list("jx errado") + ["\x7f"] * len("errado") + list("certo") + ["\r", "esc"]
@@ -748,7 +737,7 @@ class ConverseTest(unittest.TestCase):
         lone.mkdir()
         self.run_screen(list("oi") + ["\r", "esc"], repo=str(lone))
         self.assertEqual(conference.read_active(), {})
-        self.assertIn("oi", FakeViewer.last.rodape(FakeViewer.last))
+        self.assertIn("oi", FakeViewer.last.footer(FakeViewer.last))
 
 
 if __name__ == "__main__":

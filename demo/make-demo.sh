@@ -3,7 +3,7 @@
 #
 # Isolation (nothing of the user's is read or written):
 #   - repos are created in a temp directory (git init, BACKLOG.md, a few files); no real repo is used;
-#   - AT_WS_CONFIG points to a generated copy of demo/settings.json, WS_ESTADO to the temp directory;
+#   - AT_WS_CONFIG points to a generated copy of demo/settings.json, WS_STATE to the temp directory;
 #   - TMUX_TMPDIR gives the workspace its own tmux socket directory. The launcher names its server
 #     ws-<profile>, and the profile is "claude" by design, so without this the demo would share the
 #     user's server. With it, the server is a different socket file and is killed at the end;
@@ -47,12 +47,12 @@ chmod +x "$WORK/demo-shell"
 export SHELL="$WORK/demo-shell"
 export TMUX_TMPDIR="$WORK/tmux"
 export AT_WS_CONFIG="$WORK/settings.json"
-export WS_ESTADO="$WORK/estado"
-export WS_COLS=160 WS_LINES=46 WS_SEM_ANEXAR=1
+export WS_STATE="$WORK/state"
+export WS_COLS=160 WS_LINES=46 WS_NO_ATTACH=1
 export LC_ALL=C.UTF-8
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=Demo GIT_AUTHOR_EMAIL=demo GIT_COMMITTER_NAME=Demo GIT_COMMITTER_EMAIL=demo
-mkdir -p "$HOME" "$TMUX_TMPDIR" "$WS_ESTADO" "$REPOS" "$OUT_DIR"
+mkdir -p "$HOME" "$TMUX_TMPDIR" "$WS_STATE" "$REPOS" "$OUT_DIR"
 
 # --- fictional repos -------------------------------------------------------------------------
 make_repo() { # $1 = name; stdin lists files as "@@ relative/path" lines, each followed by its content

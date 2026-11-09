@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Barra de status do tmux:  repo selecionado • modelo atual • consumo do Claude.
+"""tmux status bar: selected repo • current model • Claude usage.
 
-Uso:  statusbar.py <repo> [perfil] [largura] [abas] [ativa] [pane]
-(o tmux chama isto a cada poucos segundos; `pane` é o pane focado, #{pane_id})
-Modelo e % de contexto vêm do <sid>.status.json da sessão desse pane (gravado pelo statusline.py);
-sem ele, do transcript da sessão e, por último, do log mais recente da pasta do repo.
-O consumo vem dos logs locais do Claude Code (~/.claude/projects), somado de forma incremental
-por um processo em segundo plano — a barra só lê o cache, então nunca trava.
+Usage:  statusbar.py <repo> [profile] [width] [tabs] [active] [pane]
+(tmux calls this every few seconds; `pane` is the focused pane, #{pane_id})
+Model and context % come from the <sid>.status.json of that pane's session (written by statusline.py);
+without it, from the session transcript and, last, from the newest log in the repo folder.
+Usage comes from the local Claude Code logs (~/.claude/projects), summed incrementally
+by a background process — the bar only reads the cache, so it never blocks.
 """
 import fcntl
 import json
@@ -25,9 +25,9 @@ import extra_usage
 import lib
 
 PROJ = lib.HOME / ".claude" / "projects"
-CACHE = lib.ESTADO / "uso.json"
-BALDE = 600            # segundos por balde
-JANELA_H, JANELA_S = 5, 7 * 86400
+CACHE = lib.STATE / "usage.json"
+BUCKET = 600            # seconds per bucket
+WINDOW_H, WINDOW_S = 5, 7 * 86400
 
 
 def tokens(u):
@@ -35,10 +35,10 @@ def tokens(u):
            (u.get("cache_creation_input_tokens") or 0)
 
 
-def atualizar_uso():
-    """Lê só o que cresceu desde a última vez em cada .jsonl e acumula tokens por balde."""
-    lib.ESTADO.mkdir(parents=True, exist_ok=True)
-    lock = open(lib.ESTADO / "uso.lock", "w")
+def update_usage():
+    """Read only what grew since the last pass of each .jsonl and add tokens per bucket."""
+    lib.STATE.mkdir(parents=True, exist_ok=True)
+    lock = open(lib.STATE / "usage.lock", "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -46,66 +46,66 @@ def atualizar_uso():
     try:
         c = json.loads(CACHE.read_text())
     except Exception:
-        c = {"arq": {}, "baldes": {}}
-    agora = time.time()
-    vistos = set()
+        c = {"files": {}, "buckets": {}}
+    now = time.time()
+    seen = set()
     for f in PROJ.glob("*/*.jsonl"):
         try:
             st = f.stat()
         except OSError:
             continue
-        if st.st_mtime < agora - JANELA_S:
+        if st.st_mtime < now - WINDOW_S:
             continue
-        ini = c["arq"].get(str(f), 0)
-        if ini > st.st_size:
-            ini = 0
-        if ini == st.st_size:
+        offset = c["files"].get(str(f), 0)
+        if offset > st.st_size:
+            offset = 0
+        if offset == st.st_size:
             continue
         with open(f, "rb") as fh:
-            fh.seek(ini)
-            bloco = fh.read()
-        fim = bloco.rfind(b"\n") + 1
-        for linha in bloco[:fim].splitlines():
-            if b'"usage"' not in linha:
+            fh.seek(offset)
+            block = fh.read()
+        end = block.rfind(b"\n") + 1
+        for line in block[:end].splitlines():
+            if b'"usage"' not in line:
                 continue
             try:
-                d = json.loads(linha)
+                d = json.loads(line)
                 m = d["message"]
                 if not str(m.get("model", "")).startswith("claude-"):
                     continue
-                chave = (m.get("id"), d.get("requestId"))
-                if chave in vistos:
+                key = (m.get("id"), d.get("requestId"))
+                if key in seen:
                     continue
-                vistos.add(chave)
+                seen.add(key)
                 ts = datetime.fromisoformat(d["timestamp"].replace("Z", "+00:00")).timestamp()
-                k = str(int(ts // BALDE))
-                c["baldes"][k] = c["baldes"].get(k, 0) + tokens(m["usage"])
+                k = str(int(ts // BUCKET))
+                c["buckets"][k] = c["buckets"].get(k, 0) + tokens(m["usage"])
             except Exception:
                 continue
-        c["arq"][str(f)] = ini + fim
-    corte = int((agora - JANELA_S - 86400) // BALDE)
-    c["baldes"] = {k: v for k, v in c["baldes"].items() if int(k) >= corte}
-    c["ts"] = agora
+        c["files"][str(f)] = offset + end
+    cutoff = int((now - WINDOW_S - 86400) // BUCKET)
+    c["buckets"] = {k: v for k, v in c["buckets"].items() if int(k) >= cutoff}
+    c["ts"] = now
     tmp = CACHE.with_suffix(".tmp")
     tmp.write_text(json.dumps(c))
     os.replace(tmp, CACHE)
 
 
-def uso():
+def usage():
     try:
         c = json.loads(CACHE.read_text())
     except Exception:
-        c = {"baldes": {}, "ts": 0}
+        c = {"buckets": {}, "ts": 0}
     if time.time() - c.get("ts", 0) > 90:
-        subprocess.Popen([sys.executable, __file__, "--atualizar-uso"], stdout=subprocess.DEVNULL,
+        subprocess.Popen([sys.executable, __file__, "--update-usage"], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
-    agora = time.time()
-    h5 = sum(v for k, v in c["baldes"].items() if int(k) * BALDE >= agora - JANELA_H * 3600)
-    d7 = sum(v for k, v in c["baldes"].items() if int(k) * BALDE >= agora - JANELA_S)
+    now = time.time()
+    h5 = sum(v for k, v in c["buckets"].items() if int(k) * BUCKET >= now - WINDOW_H * 3600)
+    d7 = sum(v for k, v in c["buckets"].items() if int(k) * BUCKET >= now - WINDOW_S)
     return h5, d7
 
 
-LIMITS = lib.ESTADO / "limits.json"
+LIMITS = lib.STATE / "limits.json"
 
 
 def _pct_resets(w):
@@ -123,17 +123,17 @@ def _pct_resets(w):
 
 
 
-def quando(ts):
-    """Reset time: HH:MM if today, 'amanhã HH:MM' if tomorrow, else 'dia-da-semana HH:MM'."""
-    d, hoje = datetime.fromtimestamp(ts), datetime.now()
-    dias = (d.date() - hoje.date()).days
-    hora = d.strftime("%H:%M")
-    if dias <= 0:
-        return hora
-    return i18n.t("status.tomorrow", time=hora) if dias == 1 else f"{i18n.t(f'day.{d.weekday()}')} {hora}"
+def when(ts):
+    """Reset time: HH:MM if today, 'tomorrow HH:MM' if tomorrow, else 'weekday HH:MM'."""
+    d, today = datetime.fromtimestamp(ts), datetime.now()
+    days = (d.date() - today.date()).days
+    time_text = d.strftime("%H:%M")
+    if days <= 0:
+        return time_text
+    return i18n.t("status.tomorrow", time=time_text) if days == 1 else f"{i18n.t(f'day.{d.weekday()}')} {time_text}"
 
 
-def limites():
+def limits():
     """Real 5h / 7d percentages saved by statusline.py -> (h5, d7) strings, or None."""
     try:
         rl = json.loads(LIMITS.read_text())["rate_limits"]
@@ -150,7 +150,7 @@ def limites():
         if resets and resets < time.time():                  # window already reset
             out.append("0%")
         else:
-            out.append(f"{pct:.0f}%" + (f" ↻{quando(resets)}" if resets else ""))
+            out.append(f"{pct:.0f}%" + (f" ↻{when(resets)}" if resets else ""))
     return tuple(out)
 
 
@@ -195,7 +195,7 @@ def poll_extra_usage():
                 pass
         if time.time() - last < extra_usage.POLL_S:
             return
-        lib.ESTADO.mkdir(parents=True, exist_ok=True)
+        lib.STATE.mkdir(parents=True, exist_ok=True)
         extra_usage.ATTEMPT.touch()          # failed attempts also wait 5 minutes
         subprocess.Popen([sys.executable, str(Path(extra_usage.__file__))], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -234,20 +234,20 @@ def status_of(sid):
     if not sid:
         return {}
     try:
-        data = json.loads((lib.SESSOES / f"{sid}.status.json").read_text())
+        data = json.loads((lib.SESSIONS / f"{sid}.status.json").read_text())
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
 
 
-def modelo(repo, transcript=None):
-    """Modelo da última resposta: do transcript da sessão, se houver; senão do log mais recente do repo."""
+def model_of(repo, transcript=None):
+    """Model of the last answer: from the session transcript when present, else the newest repo log."""
     if clean_text(transcript):
         logs = [Path(os.path.expanduser(transcript))]
     else:
-        pasta = PROJ / re.sub(r"[^A-Za-z0-9]", "-", repo)
+        folder = PROJ / re.sub(r"[^A-Za-z0-9]", "-", repo)
         try:
-            logs = sorted(pasta.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            logs = sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             logs = []
     for f in logs[:2]:
@@ -255,50 +255,50 @@ def modelo(repo, transcript=None):
             with open(f, "rb") as fh:
                 fh.seek(0, 2)
                 fh.seek(max(0, fh.tell() - 400_000))
-                cauda = fh.read().decode("utf-8", "ignore")
+                tail = fh.read().decode("utf-8", "ignore")
         except OSError:
             continue
-        achados = re.findall(r'"model":"([^"<][^"]*)"', cauda)
-        if achados:
-            return achados[-1].removeprefix("claude-")
+        found = re.findall(r'"model":"([^"<][^"]*)"', tail)
+        if found:
+            return found[-1].removeprefix("claude-")
     return "—"
 
 
 def main():
-    if "--atualizar-uso" in sys.argv:
-        atualizar_uso()
+    if "--update-usage" in sys.argv:
+        update_usage()
         return
     repo = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
-    perfil = lib.agent_name()
-    largura = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 999
-    if largura < 100:       # phone: repo name + every Claude tab (active one highlighted)
+    profile = lib.agent_name()
+    width = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 999
+    if width < 100:       # phone: repo name + every Claude tab (active one highlighted)
         tabs = sys.argv[4].split() if len(sys.argv) > 4 else []
-        ativa = sys.argv[5] if len(sys.argv) > 5 else ""
-        marcas = "".join(
-            f" #[bg=colour208,fg=colour16,bold] {i} #[default]" if p == ativa else f" #[fg=colour250]{i}#[default]"
+        active = sys.argv[5] if len(sys.argv) > 5 else ""
+        marks = "".join(
+            f" #[bg=colour208,fg=colour16,bold] {i} #[default]" if p == active else f" #[fg=colour250]{i}#[default]"
             for i, p in enumerate(tabs, 1)) if len(tabs) > 1 else ""
-        print(f"#[fg=colour75,bold] {(os.path.basename(repo) or repo).replace('#', '##')}#[default]{marcas}")
+        print(f"#[fg=colour75,bold] {(os.path.basename(repo) or repo).replace('#', '##')}#[default]{marks}")
         return
-    lim = limites()
+    lim = limits()
     poll_extra_usage()
     usd = extra_usage_txt()
-    h5, d7 = uso() if lim is None and usd is None else (0, 0)
-    nome = (os.path.basename(repo) or repo).replace("#", "##")
+    h5, d7 = usage() if lim is None and usd is None else (0, 0)
+    name = (os.path.basename(repo) or repo).replace("#", "##")
     sep = "#[fg=colour240] • "
     if lim or usd:
-        partes = ([i18n.t("status.usage", h5=lim[0], d7=lim[1])] if lim else []) + ([usd] if usd else [])
-        uso_txt = " · ".join(partes)
+        parts = ([i18n.t("status.usage", h5=lim[0], d7=lim[1])] if lim else []) + ([usd] if usd else [])
+        usage_text = " · ".join(parts)
     else:
-        uso_txt = i18n.t("status.usage_tokens", h5=fmt(h5), d7=fmt(d7))
+        usage_text = i18n.t("status.usage_tokens", h5=fmt(h5), d7=fmt(d7))
     pane = sys.argv[6] if len(sys.argv) > 6 else ""
     sid, entry = session_of_pane(pane)
     st = status_of(sid)
-    model = clean_text(st.get("model")) or modelo(repo, (entry or {}).get("transcript_path"))
+    model = clean_text(st.get("model")) or model_of(repo, (entry or {}).get("transcript_path"))
     pct = as_number(st.get("context_pct"))
     ctx = f"{sep}#[fg=colour250]{i18n.t('status.context', pct=f'{pct:.0f}')}" if pct is not None else ""
-    print(f"#[fg=colour75,bold] {nome}#[nobold]{sep}#[fg=colour250]{model}"
-          f"{(' (' + perfil + ')') if perfil and perfil != 'claude' else ''}{ctx}{sep}"
-          f"#[fg=colour250]{uso_txt}#[default]")
+    print(f"#[fg=colour75,bold] {name}#[nobold]{sep}#[fg=colour250]{model}"
+          f"{(' (' + profile + ')') if profile and profile != 'claude' else ''}{ctx}{sep}"
+          f"#[fg=colour250]{usage_text}#[default]")
 
 
 if __name__ == "__main__":

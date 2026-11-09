@@ -14,6 +14,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(os.environ["WS_DIR"]) / "src"))
+import i18n  # noqa: E402  (path set above)
+
 HOOK = Path(os.environ["WS_DIR"]) / "src" / "hook.py"
 CWD = os.getcwd()
 SESSION = "demo-" + os.path.basename(CWD)
@@ -21,10 +24,10 @@ PAUSE = 0.6  # seconds between scripted lines (readable in the recording)
 
 NEW_FUNCTION = '''
 
-def limpar(itens):
-    """Esvazia o carrinho: devolve uma lista vazia e o total zerado."""
-    itens.clear()
-    return itens
+def clear_cart(items):
+    """Empty the cart: return an empty list and a zero total."""
+    items.clear()
+    return items
 '''
 
 
@@ -48,9 +51,9 @@ def tool(name, detail, seconds=0.0, field="command"):
 
 
 def answer(task):
-    say(f"Entendi: {task}.")
+    say(i18n.t("demo.fake.understood", task=task))
     tool("Read", "src/cart.py", 0.8, field="file_path")
-    say("Vou adicionar limpar() e rodar os testes do carrinho.")
+    say(i18n.t("demo.fake.plan"))
     tool("Update", "src/cart.py", 0.0, field="file_path")
     path = Path(CWD) / "src" / "cart.py"
     path.write_text(path.read_text() + NEW_FUNCTION)
@@ -59,13 +62,13 @@ def answer(task):
     hook("PostToolUse", tool_name="Bash", tool_input={"command": "pytest"})
     print("   3 passed", flush=True)
     time.sleep(PAUSE)
-    say("Pronto: limpar(itens) foi adicionada em src/cart.py e os testes passam.")
+    say(i18n.t("demo.fake.done"))
 
 
 def main():
     print("\033[H\033[2J\033[3J", end="")   # clear the shell's launch line (it shows the demo's temp path)
     hook("SessionStart")
-    print("agente simulado da demo: pronto. Digite uma tarefa.", flush=True)
+    print(i18n.t("demo.fake.banner"), flush=True)
     while True:
         print("> ", end="", flush=True)
         try:

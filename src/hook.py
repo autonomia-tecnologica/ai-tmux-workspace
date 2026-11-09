@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code hook: records the session state for the repo panel's dot.
 
-Reads the hook JSON from stdin and writes ~/.cache/workspace/sessoes/<session>.json. On PreToolUse
+Reads the hook JSON from stdin and writes ~/.cache/workspace/sessions/<session>.json. On PreToolUse
 it also asks the central capability policy (`src/policy.py`) for a decision when the session has a
 declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so sessions opened before
 the launcher sets it keep working. Never fails."""
@@ -26,7 +26,7 @@ try:
 except Exception:
     permission_state = None
 
-SESSOES = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "sessoes"
+SESSIONS = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "sessions"
 
 # Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
 # light and never fail on import. That is why the settings read in _notifications_enabled
@@ -48,21 +48,21 @@ def _one_line(text, n=100):
 
 
 # Reads the config itself rather than through lib; see the note near the top of this file.
-# Same path rules as lib.ler_config: config.yaml, or the old settings.json while it does not exist.
+# Same path rules as lib.read_config: config.yaml, or the old settings.json while it does not exist.
 def _notifications_enabled():
     try:
         if "AT_WS_CONFIG" in os.environ:
             cfg = Path(os.environ["AT_WS_CONFIG"])
-            legado = cfg.with_suffix(".json")
+            legacy = cfg.with_suffix(".json")
         else:
-            pasta = Path.home() / ".config" / "ai-tmux-workspace"
-            cfg, legado = pasta / "config.yaml", pasta / "settings.json"
-        arq = cfg if cfg.exists() else legado
-        if arq.suffix == ".json":
-            dados = json.loads(arq.read_text(encoding="utf-8"))
+            folder = Path.home() / ".config" / "ai-tmux-workspace"
+            cfg, legacy = folder / "config.yaml", folder / "settings.json"
+        file = cfg if cfg.exists() else legacy
+        if file.suffix == ".json":
+            data = json.loads(file.read_text(encoding="utf-8"))
         else:
-            dados = yaml_min.loads(arq.read_text(encoding="utf-8")) or {}
-        return dados.get("notifications", True) is not False
+            data = yaml_min.loads(file.read_text(encoding="utf-8")) or {}
+        return data.get("notifications", True) is not False
     except Exception:
         return True
 
@@ -197,14 +197,14 @@ def _alive(pid):
 # --- session files: lock, read, atomic write ---------------------------------------------------
 
 def _paths(sid):
-    return SESSOES / f"{sid}.json", SESSOES / f"{sid}.lock"
+    return SESSIONS / f"{sid}.json", SESSIONS / f"{sid}.lock"
 
 
 @contextlib.contextmanager
 def _session_lock(sid):
     """Exclusive per-session lock held for a read-modify-write. The lock file is separate from the
     JSON so the JSON can be replaced atomically while the lock is held."""
-    SESSOES.mkdir(parents=True, exist_ok=True)
+    SESSIONS.mkdir(parents=True, exist_ok=True)
     with open(_paths(sid)[1], "a") as lock:
         if fcntl is not None:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -255,46 +255,46 @@ def _apply(e, ev, d, ctx):
         return True
     if ev == "SessionStart":
         if d.get("source") != "compact":     # compact keeps the session: only ts and context fields move
-            e.update(estado="ocioso", ferramenta=None, agents=[], agent_types={})
+            e.update(state="idle", tool=None, agents=[], agent_types={})
         return True
     if ev == "UserPromptSubmit":     # a new prompt starts clean: a lost SubagentStop cannot stick
-        e.update(estado="trabalha", ferramenta=None, stopped=False, erro=False, agents=[], agent_types={})
+        e.update(state="working", tool=None, stopped=False, error=False, agents=[], agent_types={})
         return True
     if ev in ("Stop", "StopFailure"):
         if _has_background_work(d):    # background tasks or crons keep the session working
-            e.update(estado="trabalha", ferramenta=None, stopped=False)
+            e.update(state="working", tool=None, stopped=False)
         else:                          # turn ended with text in the session: red until the next prompt
-            e.update(estado="pergunta", ferramenta=None, stopped=True)
-        e["erro"] = ev == "StopFailure"
+            e.update(state="question", tool=None, stopped=True)
+        e["error"] = ev == "StopFailure"
         if "last_assistant_message" in d:
             e["last_assistant_message"] = str(d["last_assistant_message"] or "")[:MAX_LAST_MESSAGE]
         return True
     if ev in ("PostModelSwitch", "CwdChanged"):    # only ts (and cwd, set above) move
         return True
     if ev == "PermissionDenied":
-        e.update(estado="trabalha", ferramenta=None, stopped=False)
+        e.update(state="working", tool=None, stopped=False)
         return True
-    if ev == "Elicitation":          # the session waits on the person: the existing "pergunta" state
-        e.update(estado="pergunta", stopped=False)
+    if ev == "Elicitation":          # the session waits on the person: the existing "question" state
+        e.update(state="question", stopped=False)
         return True
     if ev == "PreToolUse" and d.get("tool_name") in ("AskUserQuestion", "ExitPlanMode"):
-        e.update(estado="pergunta", ferramenta=None, stopped=False)    # poll/plan approval: waiting on the person
+        e.update(state="question", tool=None, stopped=False)    # poll/plan approval: waiting on the person
         return True
     if d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
         # subagent tools share the parent's session id: the session is waiting on an agent
         # (green), not on a long-running command (yellow), and must not mask a pending question.
-        if e.get("estado") != "pergunta":
-            e.update(estado="trabalha", ferramenta=None)
+        if e.get("state") != "question":
+            e.update(state="working", tool=None)
         return True
     if ev == "PreToolUse":
-        e.update(estado="trabalha", ferramenta=d.get("tool_name"), ferr_ts=ctx["now"])
+        e.update(state="working", tool=d.get("tool_name"), tool_ts=ctx["now"])
         return True
     if ev in ("PostToolUse", "PostToolUseFailure"):
-        e.update(estado="trabalha", ferramenta=None)
+        e.update(state="working", tool=None)
         return True
     if ev == "PermissionRequest" or (ev == "Notification" and d.get("notification_type")
                                      in ("permission_prompt", "elicitation_dialog")):
-        e.update(estado="pergunta", stopped=False)
+        e.update(state="question", stopped=False)
         return True
     return False    # idle_prompt keeps whatever Stop set; unknown events change nothing
 
@@ -310,11 +310,11 @@ def _record(d, ev, sid):
     path = _paths(sid)[0]
     with _session_lock(sid):
         e = _read_state(path)
-        prev = e.get("estado")
+        prev = e.get("state")
         written = _apply(e, ev, d, ctx)
         if written:
             _write_state(path, e)
-    if written and e.get("estado") == "pergunta" and prev != "pergunta":
+    if written and e.get("state") == "question" and prev != "question":
         try:    # only the transition into red: PermissionRequest + Notification fire once
             _notify(d, ev)
         except Exception:
@@ -336,7 +336,7 @@ def _is_stale(state, ctx):
 def _sweep_stale(sid, ctx):
     """On SessionStart, removes older session files of this pane whose claude process is gone."""
     keep = _paths(sid)[0].name
-    for other in SESSOES.glob("*.json"):
+    for other in SESSIONS.glob("*.json"):
         other_sid = other.name[: -len(".json")]
         if other.name == keep or "." in other_sid:    # "<sid>.status.json" belongs to statusline
             continue

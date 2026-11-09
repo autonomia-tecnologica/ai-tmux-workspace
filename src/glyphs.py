@@ -5,11 +5,11 @@ an emoji set for a terminal without a Nerd Font) is a change in one file. Needs 
 terminal for the git and file icons.
 """
 import icons
-from colors import AMARELO, CINZA, DIM, GRAY_DARK, R, VERDE, VERMELHO
+from colors import YELLOW, GRAY, DIM, GRAY_DARK, R, GREEN, RED
 
 # --- status dots (repos, sessions) -------------------------------------------------------------
-_DOT = {"ocioso": (CINZA, "○"), "trabalha": (VERDE, "●"),
-        "espera": (AMARELO, "●"), "pergunta": (VERMELHO, "●")}
+_DOT = {"idle": (GRAY, "○"), "working": (GREEN, "●"),
+        "waiting": (YELLOW, "●"), "question": (RED, "●")}
 
 
 def dot(state):
@@ -23,8 +23,8 @@ def ci_dot(color):
 
 
 # --- task markers ------------------------------------------------------------------------------
-_MARK = {"ready": (VERDE, "●"), "refine": (CINZA, "○"), "paused": (DIM, "◌"),
-         "blocked": (AMARELO, "⊘"), "validate": (AMARELO, "◆"), "cycle": (VERMELHO, "✖")}
+_MARK = {"ready": (GREEN, "●"), "refine": (GRAY, "○"), "paused": (DIM, "◌"),
+         "blocked": (YELLOW, "⊘"), "validate": (YELLOW, "◆"), "cycle": (RED, "✖")}
 
 
 def task_mark(state):
@@ -37,7 +37,7 @@ def warn():
 
 
 def cross():
-    return f"{VERMELHO}✖{R}"
+    return f"{RED}✖{R}"
 
 
 def arrow(opened):
@@ -45,18 +45,18 @@ def arrow(opened):
 
 
 def dirty_mark():
-    return f"{AMARELO}•{R}"
+    return f"{YELLOW}•{R}"
 
 
 # --- git icons (repos panel) -------------------------------------------------------------------
-def git_icons(est, dirty):
-    """est: None (no git) | "local" | "dessinc" | other (in sync with the remote)."""
+def git_icons(state, dirty):
+    """est: None (no git) | "local" | "diverged" | other (in sync with the remote)."""
     dim = GRAY_DARK
     gh, br = "", ""
-    if est is None:
+    if state is None:
         return f"{dim}{br} {gh}{R}"
-    branch = f"{AMARELO}{br}{R}" if dirty else br
-    remote = f"{dim}{gh}{R}" if est == "local" else f"{AMARELO}{gh}{R}" if est == "dessinc" else gh
+    branch = f"{YELLOW}{br}{R}" if dirty else br
+    remote = f"{dim}{gh}{R}" if state == "local" else f"{YELLOW}{gh}{R}" if state == "diverged" else gh
     return f"{branch} {remote}"
 
 

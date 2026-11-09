@@ -5,7 +5,7 @@ names from here (viewer re-exports the base ones), so a palette change is a chan
 """
 
 R, B, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
-VERDE, AMARELO, VERMELHO, AZUL, CINZA = "\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[38;5;75m", "\x1b[38;5;244m"
+GREEN, YELLOW, RED, BLUE, GRAY = "\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[38;5;75m", "\x1b[38;5;244m"
 ORANGE = "\x1b[38;5;208m"
 CODE = "\x1b[38;5;215m"          # inline code in the help viewer: soft orange
 GRAY_DARK = "\x1b[38;5;238m"     # git icons when the repo is clean

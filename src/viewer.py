@@ -1,15 +1,15 @@
-"""Visualizador de terminal sem flicker: reescreve só as linhas que mudaram.
+"""Flicker-free terminal viewer: redraws only the lines that changed.
 
-Nada de clear/refresh de tela cheia (é isso que deixa "artefato" de caractere). Cada painel
-fornece `coletar(viewer) -> (cabecalho, corpo)` — rodado numa thread, de tempos em tempos —
-e o laço principal só desenha, rola e trata teclado/mouse.
+No full-screen clear/refresh (that is what leaves character artifacts). Each panel provides
+`collect(viewer) -> (header, body)` — run on a thread, from time to time — and the main loop only
+draws, scrolls and handles keyboard/mouse.
 
-Menu de contexto: com `acoes(viewer, chave) -> [(rotulo, ativa, funcao)]`, Espaço ou clique direito
-sobre um item abre um overlay; setas/j/k navegam, Enter executa `funcao(viewer, chave)`, Esc fecha.
-Lista vazia não abre menu. Item inativo aparece apagado e Enter nele só fecha.
+Context menu: with `actions(viewer, key) -> [(label, active, action)]`, Space or a right click on an
+item opens an overlay; arrows/j/k navigate, Enter runs `action(viewer, key)`, Esc closes.
+An empty list does not open the menu. An inactive item is dimmed and Enter on it just closes.
 
-Text input: `entrada(viewer, chave)` runs before navigation and returns True when it consumed the key;
-`rodape(viewer)` draws the footer where the screen shows the text being typed. The footer wraps its
+Text input: `on_input(viewer, key)` runs before navigation and returns True when it consumed the key;
+`footer(viewer)` draws the footer where the screen shows the text being typed. The footer wraps its
 text and grows as needed, up to `MAX_FOOTER_LINES`; past that, it keeps the end visible (the cursor
 of a message box is at the end).
 """
@@ -26,19 +26,19 @@ import unicodedata
 
 import i18n
 # colors live in colors.py; panels keep importing them from here (re-export)
-from colors import (AMARELO, AZUL, B, BG, CINZA, DIM, MENU_BG, ORANGE, R, REV, VERDE,  # noqa: F401
-                    VERMELHO)
+from colors import (YELLOW, BLUE, B, BG, GRAY, DIM, MENU_BG, ORANGE, R, REV, GREEN,  # noqa: F401
+                    RED)
 
 ANSI = re.compile(r"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
-SETA_ESQ, SETA_DIR = ("\x1b[D", "\x1bOD"), ("\x1b[C", "\x1bOC")
+ARROW_LEFT, ARROW_RIGHT = ("\x1b[D", "\x1bOD"), ("\x1b[C", "\x1bOC")
 
 
-def direcao(k):
+def direction(k):
     """"left" / "right" for the arrow keys and h / l; None for any other key."""
-    if k in SETA_ESQ or k == "h":
+    if k in ARROW_LEFT or k == "h":
         return "left"
-    if k in SETA_DIR or k == "l":
+    if k in ARROW_RIGHT or k == "l":
         return "right"
     return None
 
@@ -46,14 +46,14 @@ def direcao(k):
 MAX_FOOTER_LINES = 10    # the footer text grows up to this many rows, then keeps the tail
 
 
-def _larg(c):
+def _char_width(c):
     if unicodedata.combining(c):
         return 0
     return 2 if unicodedata.east_asian_width(c) in "WF" else 1
 
 
-def cortar(s, w):
-    """Corta `s` em `w` colunas visíveis preservando as sequências ANSI. -> (texto, largura)."""
+def clip(s, w):
+    """Cut `s` to `w` visible columns, preserving ANSI sequences. -> (text, width)."""
     out, n, i = [], 0, 0
     while i < len(s):
         m = ANSI.match(s, i)
@@ -61,7 +61,7 @@ def cortar(s, w):
             out.append(m.group())
             i = m.end()
             continue
-        k = _larg(s[i])
+        k = _char_width(s[i])
         if n + k > w:
             break
         out.append(s[i])
@@ -70,26 +70,26 @@ def cortar(s, w):
     return "".join(out), n
 
 
-def _largura(s):
-    """Colunas visíveis de `s` (ignora ANSI)."""
-    return sum(_larg(c) for c in ANSI.sub("", s))
+def _width(s):
+    """Visible columns of `s` (ignores ANSI)."""
+    return sum(_char_width(c) for c in ANSI.sub("", s))
 
 
 def ellipsize(s, w):
-    """Fits `s` in `w` visible columns, ending a cut text with "…" (wide chars count as 2)."""
+    """Fit `s` in `w` visible columns, ending a cut text with "…" (wide chars count as 2)."""
     if w <= 0:
         return ""
-    if _largura(s) <= w:
+    if _width(s) <= w:
         return s
-    return cortar(s, w - 1)[0].rstrip() + "…"
+    return clip(s, w - 1)[0].rstrip() + "…"
 
 
-class Linha:
-    __slots__ = ("texto", "chave", "cont")
+class Row:
+    __slots__ = ("text", "key", "cont")
 
-    def __init__(self, texto="", chave=None, cont=False):
+    def __init__(self, text="", key=None, cont=False):
         # cont: continuation of the previous keyed line; not navigable, but highlighted with it
-        self.texto, self.chave, self.cont = texto, chave, cont
+        self.text, self.key, self.cont = text, key, cont
 
 
 def term_cols(default=80):
@@ -100,120 +100,120 @@ def term_cols(default=80):
 def popup_header(title, keys, cols):
     """Two header rows for a popup screen: a bold orange bar (title + dim keys) over a full-width rule."""
     bar = f"{B}{ORANGE} {title} {R}{DIM} {keys}{R}"
-    return [Linha(bar), Linha(f"{DIM}{'─' * cols}{R}")]
+    return [Row(bar), Row(f"{DIM}{'─' * cols}{R}")]
 
 
 def close_on_esc(v, k):
     """Standard popup exit: Esc or q stops the viewer. -> True when the key closed it."""
     if k in ("esc", "q"):
-        v.parar = True
-        v._acordar()
+        v.stopped = True
+        v._wake()
         return True
     return False
 
 
 class Viewer:
-    def __init__(self, coletar, intervalo=2.0, cursor=False, ao_enter=None, chave_inicial=None,
-                 ao_tecla=None, ao_perde_foco=None, rodape=None, acoes=None, wrap=False, entrada=None):
-        self.coletar, self.intervalo, self.cursor = coletar, intervalo, cursor
+    def __init__(self, collect, interval=2.0, cursor=False, on_enter=None, initial_key=None,
+                 on_key=None, on_focus_lost=None, footer=None, actions=None, wrap=False, on_input=None):
+        self.collect, self.interval, self.cursor = collect, interval, cursor
         self.wrap = wrap        # up on the first row goes to the last, down on the last goes to the first
-        self.ao_enter, self.ao_tecla, self.ao_perde_foco = ao_enter, ao_tecla, ao_perde_foco
-        self.entrada = entrada  # entrada(viewer, chave) -> True when it consumed the key (text input)
-        self.rodape = rodape    # footer(viewer) -> full text of the selection, wrapped on a fixed footer
-        self.acoes = acoes      # acoes(viewer, chave) -> [(rotulo, ativa, funcao(viewer, chave))]
-        self.cab, self.corpo, self._sig = [], [], None
-        self.top, self.chave, self.idx = 0, chave_inicial, 0
-        self.recoletar = threading.Event()
-        self.parar = False
+        self.on_enter, self.on_key, self.on_focus_lost = on_enter, on_key, on_focus_lost
+        self.on_input = on_input  # on_input(viewer, key) -> True when it consumed the key (text input)
+        self.footer = footer    # footer(viewer) -> full text of the selection, wrapped on a fixed footer
+        self.actions = actions  # actions(viewer, key) -> [(label, active, action(viewer, key))]
+        self.header, self.body, self._sig = [], [], None
+        self.top, self.key, self.idx = 0, initial_key, 0
+        self.redraw = threading.Event()
+        self.stopped = False
         self._lock = threading.Lock()
         self._rp, self._wp = os.pipe()
         self._frame = None
-        self._tam = None
-        self._rod_n = 0         # rows taken by the footer (separator + text) in the last frame
-        self.menu = None        # {"chave", "itens", "sel", "linha", "coluna"} while the context menu is open
-        self._caixa = None      # (x, y, largura, altura) of the menu box as last drawn
+        self._size = None
+        self._footer_rows = 0    # rows taken by the footer (separator + text) in the last frame
+        self.menu = None         # {"key", "items", "sel", "row", "column"} while the context menu is open
+        self._box = None         # (x, y, width, height) of the menu box as last drawn
 
-    # ---- coleta (thread) -------------------------------------------------------------
-    def _coletor(self):
-        while not self.parar:
+    # ---- collection (thread) ----------------------------------------------------------
+    def _collector(self):
+        while not self.stopped:
             try:
-                cab, corpo = self.coletar(self)
-            except Exception as e:      # um erro de coleta não derruba o painel
-                cab, corpo = [], [Linha(" " + i18n.t("viewer.error", e=e))]
-            sig = (tuple((l.texto, l.chave) for l in cab), tuple((l.texto, l.chave) for l in corpo))
+                header, body = self.collect(self)
+            except Exception as e:      # a collection error must not take the panel down
+                header, body = [], [Row(" " + i18n.t("viewer.error", e=e))]
+            sig = (tuple((l.text, l.key) for l in header), tuple((l.text, l.key) for l in body))
             with self._lock:
                 if sig != self._sig:
-                    self._sig, self.cab, self.corpo = sig, cab, corpo
-                    self._acordar()
-            self.recoletar.wait(self.intervalo)
-            self.recoletar.clear()
+                    self._sig, self.header, self.body = sig, header, body
+                    self._wake()
+            self.redraw.wait(self.interval)
+            self.redraw.clear()
 
-    def _acordar(self):
+    def _wake(self):
         try:
             os.write(self._wp, b"x")
         except OSError:
             pass
 
-    # ---- desenho ---------------------------------------------------------------------
-    def _localizar_cursor(self):
+    # ---- drawing ----------------------------------------------------------------------
+    def _locate_cursor(self):
         if not self.cursor:
             return
-        sel = [i for i, l in enumerate(self.corpo) if l.chave is not None]
+        sel = [i for i, l in enumerate(self.body) if l.key is not None]
         if not sel:
             self.idx = 0
             return
         for i in sel:
-            if self.corpo[i].chave == self.chave:
+            if self.body[i].key == self.key:
                 self.idx = i
                 return
         self.idx = min(sel, key=lambda i: abs(i - self.idx))
-        self.chave = self.corpo[self.idx].chave
+        self.key = self.body[self.idx].key
 
-    def _visivel(self, h):
+    def _visible(self, h):
         if self.idx < self.top:
             self.top = self.idx
         elif self.idx >= self.top + h:
             self.top = self.idx - h + 1
 
-    def _desenhar(self, forcar=False):
-        cols, lins = shutil.get_terminal_size((80, 24))
+    def _draw(self, force=False):
+        cols, height = shutil.get_terminal_size((80, 24))
         with self._lock:
-            cab, corpo = self.cab, self.corpo
-        self._localizar_cursor()
+            header, body = self.header, self.body
+        self._locate_cursor()
         rows = []
-        for l in cab[:lins]:
-            rows.append(cortar(l.texto, cols)[0])
-        n_cab = len(rows)
-        rod = []
-        self._rod_n = 0
-        if self.rodape:
-            room = max(0, lins - n_cab - 1)     # at least the separator plus one text row
+        for l in header[:height]:
+            rows.append(clip(l.text, cols)[0])
+        n_header = len(rows)
+        footer_rows = []
+        self._footer_rows = 0
+        if self.footer:
+            room = max(0, height - n_header - 1)     # at least the separator plus one text row
             if room:
-                rod = self._footer_lines(cols, min(room, MAX_FOOTER_LINES))
-                self._rod_n = len(rod) + 1
-        h = max(0, lins - n_cab - self._rod_n)
-        self.top = max(0, min(self.top, max(0, len(corpo) - h)))
+                footer_rows = self._footer_lines(cols, min(room, MAX_FOOTER_LINES))
+                self._footer_rows = len(footer_rows) + 1
+        h = max(0, height - n_header - self._footer_rows)
+        self.top = max(0, min(self.top, max(0, len(body) - h)))
         end = self.idx + 1
-        while self.cursor and end < len(corpo) and corpo[end].cont:
+        while self.cursor and end < len(body) and body[end].cont:
             end += 1
         for r in range(h):
             i = self.top + r
-            if i >= len(corpo):
+            if i >= len(body):
                 rows.append("")
                 continue
-            t, n = cortar(corpo[i].texto, cols)
-            if self.cursor and self.idx <= i < end and (i == self.idx and corpo[i].chave is not None or corpo[i].cont):
+            t, n = clip(body[i].text, cols)
+            if self.cursor and self.idx <= i < end and (i == self.idx and body[i].key is not None or body[i].cont):
                 t = BG + t.replace(R, R + BG) + " " * (cols - n) + R
             rows.append(t)
-        self._caixa = None
+        self._box = None
         if self.menu is not None:
-            self._sobrepor_menu(rows, n_cab, h, cols)
-        if self._rod_n:
-            rows = self._com_footer(rows, cols, lins, rod)
-        while len(rows) < lins:
+            self._overlay_menu(rows, n_header, h, cols)
+        if self._footer_rows:
+            rows = self._with_footer(rows, cols, height, footer_rows)
+        while len(rows) < height:
             rows.append("")
-        if forcar or self._frame is None or self._tam != (cols, lins):
-            self._frame, self._tam = [None] * lins, (cols, lins)
+        if force or self._frame is None or self._size != (cols, height):
+            self._frame, self._size = [None] * height, (cols, height)
         buf = []
         for y, t in enumerate(rows):
             if self._frame[y] != t:
@@ -223,29 +223,29 @@ class Viewer:
             sys.stdout.write("\x1b[?2026h" + "".join(buf) + "\x1b[?2026l")
             sys.stdout.flush()
 
-    def _sobrepor_menu(self, rows, n_cab, h, cols):
-        """Draws the context menu as a box over the body, below the row it was opened from."""
-        itens = self.menu["itens"]
-        alt = len(itens)
-        if h < alt:
+    def _overlay_menu(self, rows, n_header, h, cols):
+        """Draw the context menu as a box over the body, below the row it was opened from."""
+        items = self.menu["items"]
+        box_h = len(items)
+        if h < box_h:
             return
-        w = max(_largura(rot) for rot, _, _ in itens) + 2
-        y0 = max(n_cab, min(self.menu["linha"] + 1, n_cab + h - alt))
-        x0 = max(0, min(self.menu["coluna"], cols - w))
-        for j, (rot, ativa, _) in enumerate(itens):
+        w = max(_width(label) for label, _, _ in items) + 2
+        y0 = max(n_header, min(self.menu["row"] + 1, n_header + h - box_h))
+        x0 = max(0, min(self.menu["column"], cols - w))
+        for j, (label, active, _) in enumerate(items):
             if j == self.menu["sel"]:
-                estilo = MENU_BG + B + REV
+                style = MENU_BG + B + REV
             else:
-                estilo = MENU_BG + ("" if ativa else DIM)
-            esquerda, nl = cortar(rows[y0 + j], x0)
-            esquerda += " " * (x0 - nl)
-            texto = " " + rot + " " * (w - 1 - _largura(rot))
-            rows[y0 + j] = esquerda + R + estilo + texto + R
-        self._caixa = (x0, y0, w, alt)
+                style = MENU_BG + ("" if active else DIM)
+            left, nl = clip(rows[y0 + j], x0)
+            left += " " * (x0 - nl)
+            text = " " + label + " " * (w - 1 - _width(label))
+            rows[y0 + j] = left + R + style + text + R
+        self._box = (x0, y0, w, box_h)
 
-    def _rod_h(self):
+    def _footer_h(self):
         """Footer height from the last frame (0 when there is no footer)."""
-        return self._rod_n if self.rodape else 0
+        return self._footer_rows if self.footer else 0
 
     def _footer_lines(self, cols, room):
         """Footer text wrapped to the terminal width, at most `room` rows.
@@ -253,200 +253,200 @@ class Viewer:
         A text longer than the room keeps its tail, because the message box shows the cursor at the
         end; the first visible row gets an ellipsis so the cut is visible."""
         try:
-            texto = self.rodape(self) or ""
+            text = self.footer(self) or ""
         except Exception:
-            texto = ""
+            text = ""
         w = max(1, cols - 1)
-        linhas = []
-        while texto:
-            parte, _n = cortar(texto, w)
-            if not parte:                    # a single wide char that does not fit: never loop
-                parte, texto = texto[:1], texto[1:]
+        lines = []
+        while text:
+            chunk, _n = clip(text, w)
+            if not chunk:                    # a single wide char that does not fit: never loop
+                chunk, text = text[:1], text[1:]
             else:
-                texto = texto[len(parte):]
-            linhas.append(parte)
-        if len(linhas) > room:
-            linhas = linhas[-room:]
+                text = text[len(chunk):]
+            lines.append(chunk)
+        if len(lines) > room:
+            lines = lines[-room:]
             mark = "… " if w >= 3 else "…"
-            linhas[0] = mark + cortar(linhas[0], max(1, w - _largura(mark)))[0]
-        return linhas
+            lines[0] = mark + clip(lines[0], max(1, w - _width(mark)))[0]
+        return lines
 
-    def _com_footer(self, rows, cols, lins, linhas):
-        """Pads the body up to the footer area, then draws a separator and the footer rows."""
-        rows = rows[:lins - self._rod_n]
-        while len(rows) < lins - self._rod_n:
+    def _with_footer(self, rows, cols, height, lines):
+        """Pad the body up to the footer area, then draw a separator and the footer rows."""
+        rows = rows[:height - self._footer_rows]
+        while len(rows) < height - self._footer_rows:
             rows.append("")
-        rows.append(f"{CINZA}{'─' * cols}{R}")
-        rows += [f"{DIM}{l}{R}" for l in linhas]
+        rows.append(f"{GRAY}{'─' * cols}{R}")
+        rows += [f"{DIM}{l}{R}" for l in lines]
         return rows
 
-    # ---- entrada ---------------------------------------------------------------------
-    def _mover(self, d):
-        sel = [i for i, l in enumerate(self.corpo) if l.chave is not None]
+    # ---- input ------------------------------------------------------------------------
+    def _move(self, d):
+        sel = [i for i, l in enumerate(self.body) if l.key is not None]
         if not sel:
             return
-        if d in ("ini", "fim"):
-            self.idx = sel[0] if d == "ini" else sel[-1]
+        if d in ("home", "end"):
+            self.idx = sel[0] if d == "home" else sel[-1]
         else:
             pos = min(range(len(sel)), key=lambda k: abs(sel[k] - self.idx))
             if self.wrap and d in (1, -1):
                 self.idx = sel[(pos + d) % len(sel)]
             else:
                 self.idx = sel[max(0, min(len(sel) - 1, pos + d))]
-        self.chave = self.corpo[self.idx].chave
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
-        self._visivel(h)
-        self.recoletar.set()    # painéis que reagem à seleção (ex.: tarefas) redesenham já
+        self.key = self.body[self.idx].key
+        h = max(1, (self._size or (80, 24))[1] - len(self.header) - self._footer_h())
+        self._visible(h)
+        self.redraw.set()    # panels that react to the selection (e.g. tasks) redraw now
 
-    def _rolar(self, d):
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
-        self.top = max(0, min(self.top + d, max(0, len(self.corpo) - h)))
+    def _scroll(self, d):
+        h = max(1, (self._size or (80, 24))[1] - len(self.header) - self._footer_h())
+        self.top = max(0, min(self.top + d, max(0, len(self.body) - h)))
 
-    def _abrir_menu(self, linha, coluna):
-        """Opens the context menu for the selected item (linha: screen row, 0-based). No actions, no menu."""
-        if not self.acoes or not (0 <= self.idx < len(self.corpo)) or self.corpo[self.idx].chave is None:
+    def _open_menu(self, row, column):
+        """Open the context menu for the selected item (row: screen row, 0-based). No actions, no menu."""
+        if not self.actions or not (0 <= self.idx < len(self.body)) or self.body[self.idx].key is None:
             return
-        chave = self.corpo[self.idx].chave
-        itens = self.acoes(self, chave)
-        if itens:
-            self.menu = {"chave": chave, "itens": itens, "sel": 0, "linha": linha, "coluna": coluna}
+        key = self.body[self.idx].key
+        items = self.actions(self, key)
+        if items:
+            self.menu = {"key": key, "items": items, "sel": 0, "row": row, "column": column}
 
-    def _executar_menu(self, j):
+    def _run_menu(self, j):
         m = self.menu
         self.menu = None
-        _, ativa, funcao = m["itens"][j]
-        if ativa:
-            funcao(self, m["chave"])
-            self.recoletar.set()
+        _, active, action = m["items"][j]
+        if active:
+            action(self, m["key"])
+            self.redraw.set()
 
-    def _tecla_menu(self, k):
+    def _menu_key(self, k):
         m = self.menu
-        n = len(m["itens"])
+        n = len(m["items"])
         if k in ("j", "\x1b[B", "\x1bOB"):
             m["sel"] = (m["sel"] + 1) % n
         elif k in ("k", "\x1b[A", "\x1bOA"):
             m["sel"] = (m["sel"] - 1) % n
         elif k in ("\r", "\n"):
-            self._executar_menu(m["sel"])
+            self._run_menu(m["sel"])
         elif k == "esc":
             self.menu = None
 
-    def _tecla(self, k):
+    def _key(self, k):
         if self.menu is not None:
-            self._tecla_menu(k)
+            self._menu_key(k)
             return
-        if self.entrada and self.entrada(self, k):
+        if self.on_input and self.on_input(self, k):
             return
-        h = max(1, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
+        h = max(1, (self._size or (80, 24))[1] - len(self.header) - self._footer_h())
         if k in ("j", "\x1b[B", "\x1bOB"):
-            self._mover(1) if self.cursor else self._rolar(1)
+            self._move(1) if self.cursor else self._scroll(1)
         elif k in ("k", "\x1b[A", "\x1bOA"):
-            self._mover(-1) if self.cursor else self._rolar(-1)
+            self._move(-1) if self.cursor else self._scroll(-1)
         elif k in ("\x1b[6~", "\x04"):
-            self._mover(h // 2) if self.cursor else self._rolar(h - 1)
+            self._move(h // 2) if self.cursor else self._scroll(h - 1)
         elif k in ("\x1b[5~", "\x15"):
-            self._mover(-(h // 2)) if self.cursor else self._rolar(-(h - 1))
+            self._move(-(h // 2)) if self.cursor else self._scroll(-(h - 1))
         elif k in ("g", "\x1b[H", "\x1b[1~"):
-            self._mover("ini") if self.cursor else setattr(self, "top", 0)
+            self._move("home") if self.cursor else setattr(self, "top", 0)
         elif k in ("G", "\x1b[F", "\x1b[4~"):
-            self._mover("fim") if self.cursor else self._rolar(10 ** 6)
-        elif k in ("\r", "\n", "l") + (() if self.acoes else (" ",)) and self.cursor and self.ao_enter:
-            if 0 <= self.idx < len(self.corpo) and self.corpo[self.idx].chave is not None:
-                self.ao_enter(self, self.corpo[self.idx].chave, k)
+            self._move("end") if self.cursor else self._scroll(10 ** 6)
+        elif k in ("\r", "\n", "l") + (() if self.actions else (" ",)) and self.cursor and self.on_enter:
+            if 0 <= self.idx < len(self.body) and self.body[self.idx].key is not None:
+                self.on_enter(self, self.body[self.idx].key, k)
         elif k == " " and self.cursor:
-            self._abrir_menu(len(self.cab) + self.idx - self.top, 2)
+            self._open_menu(len(self.header) + self.idx - self.top, 2)
         elif k == "r":
-            self.recoletar.set()
+            self.redraw.set()
         elif k == "\x1b[O":     # focus lost (tmux focus-events)
-            if self.ao_perde_foco:
-                self.ao_perde_foco(self)
+            if self.on_focus_lost:
+                self.on_focus_lost(self)
         elif k == "\x1b[I":
             pass
-        elif self.ao_tecla:
-            self.ao_tecla(self, direcao(k) or k)
+        elif self.on_key:
+            self.on_key(self, direction(k) or k)
 
-    def _indice_em(self, linha):
-        """Index in the body of the selectable row at screen row `linha` (0-based), or None."""
-        h = max(0, (self._tam or (80, 24))[1] - len(self.cab) - self._rod_h())
-        if linha < len(self.cab) or linha - len(self.cab) >= h:
+    def _index_at(self, row):
+        """Index in the body of the selectable row at screen row `row` (0-based), or None."""
+        h = max(0, (self._size or (80, 24))[1] - len(self.header) - self._footer_h())
+        if row < len(self.header) or row - len(self.header) >= h:
             return None
-        i = self.top + (linha - len(self.cab))
-        if 0 <= i < len(self.corpo) and self.corpo[i].chave is not None:
+        i = self.top + (row - len(self.header))
+        if 0 <= i < len(self.body) and self.body[i].key is not None:
             return i
         return None
 
     def _mouse(self, b, x, y, press):
-        linha, coluna = y - 1, x - 1
+        row, column = y - 1, x - 1
         if b == 64:
-            self._rolar(-3)
+            self._scroll(-3)
         elif b == 65:
-            self._rolar(3)
+            self._scroll(3)
         elif press and b in (0, 2) and self.menu is not None:
-            if b == 0 and self._caixa:
-                cx, cy, cw, ca = self._caixa
-                if cx <= coluna < cx + cw and cy <= linha < cy + ca:
-                    self._executar_menu(linha - cy)
+            if b == 0 and self._box:
+                cx, cy, cw, ca = self._box
+                if cx <= column < cx + cw and cy <= row < cy + ca:
+                    self._run_menu(row - cy)
                     return
             self.menu = None        # click outside the box closes the menu
-        elif b == 0 and press and self.cursor and self.ao_enter:
-            i = self._indice_em(linha)
+        elif b == 0 and press and self.cursor and self.on_enter:
+            i = self._index_at(row)
             if i is not None:
-                self.idx, self.chave = i, self.corpo[i].chave
-                self.recoletar.set()
-                self.ao_enter(self, self.chave, "click")
-        elif b == 2 and press and self.cursor and self.acoes:
-            i = self._indice_em(linha)
+                self.idx, self.key = i, self.body[i].key
+                self.redraw.set()
+                self.on_enter(self, self.key, "click")
+        elif b == 2 and press and self.cursor and self.actions:
+            i = self._index_at(row)
             if i is not None:
-                self.idx, self.chave = i, self.corpo[i].chave
-                self.recoletar.set()
-                self._abrir_menu(linha, coluna)
+                self.idx, self.key = i, self.body[i].key
+                self.redraw.set()
+                self._open_menu(row, column)
 
-    def _processar(self, dados):
+    def _process(self, data):
         i = 0
-        while i < len(dados):
-            m = SGR.match(dados, i)
+        while i < len(data):
+            m = SGR.match(data, i)
             if m:
                 self._mouse(int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4) == b"M")
                 i = m.end()
                 continue
-            if dados[i:i + 1] == b"\x1b":
-                m = re.compile(rb"\x1b(\[[0-9;]*[~A-Za-z]|O[A-Za-z])").match(dados, i)
+            if data[i:i + 1] == b"\x1b":
+                m = re.compile(rb"\x1b(\[[0-9;]*[~A-Za-z]|O[A-Za-z])").match(data, i)
                 if m:
-                    self._tecla(m.group().decode("latin1"))
+                    self._key(m.group().decode("latin1"))
                     i = m.end()
                     continue
-                self._tecla("esc")      # lone Esc key
+                self._key("esc")      # lone Esc key
                 i += 1
                 continue
             j = i + 1
-            while j < len(dados) and dados[j] & 0xC0 == 0x80:
+            while j < len(data) and data[j] & 0xC0 == 0x80:
                 j += 1
-            self._tecla(dados[i:j].decode("utf-8", "replace"))
+            self._key(data[i:j].decode("utf-8", "replace"))
             i = j
 
-    # ---- laço ------------------------------------------------------------------------
-    def rodar(self):
+    # ---- main loop --------------------------------------------------------------------
+    def run(self):
         fd = sys.stdin.fileno()
-        antigo = termios.tcgetattr(fd)
-        signal.signal(signal.SIGWINCH, lambda *_: self._acordar())
-        signal.signal(signal.SIGTERM, lambda *_: setattr(self, "parar", True) or self._acordar())
+        old = termios.tcgetattr(fd)
+        signal.signal(signal.SIGWINCH, lambda *_: self._wake())
+        signal.signal(signal.SIGTERM, lambda *_: setattr(self, "stopped", True) or self._wake())
         tty.setcbreak(fd)
         sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?1004h")
         sys.stdout.flush()
-        threading.Thread(target=self._coletor, daemon=True).start()
+        threading.Thread(target=self._collector, daemon=True).start()
         try:
-            while not self.parar:
-                self._desenhar()
-                pronto, _, _ = select.select([fd, self._rp], [], [], 5)
-                if self._rp in pronto:
+            while not self.stopped:
+                self._draw()
+                ready, _, _ = select.select([fd, self._rp], [], [], 5)
+                if self._rp in ready:
                     os.read(self._rp, 4096)
-                if fd in pronto:
+                if fd in ready:
                     d = os.read(fd, 4096)
                     if not d:
                         break
-                    self._processar(d)
+                    self._process(d)
         finally:
-            self.parar = True
+            self.stopped = True
             sys.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
-            termios.tcsetattr(fd, termios.TCSADRAIN, antigo)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)

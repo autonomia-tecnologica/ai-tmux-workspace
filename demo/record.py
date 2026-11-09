@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Records the README demo from the workspace running on its own tmux server, then renders
 docs/demo.gif and docs/image.png (a frame of the workspace in use). Called by make-demo.sh, which
-sets the environment (TMUX_TMPDIR, AT_WS_CONFIG, WS_ESTADO, HOME) and starts the workspace.
+sets the environment (TMUX_TMPDIR, AT_WS_CONFIG, WS_STATE, HOME) and starts the workspace.
 Do not run it against the user's workspace.
 
 Method: each frame is the window composed from `tmux capture-pane -e` of its panes (plus the
@@ -21,6 +21,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 os.environ.setdefault("WS_DIR", str(Path(__file__).resolve().parent.parent))   # statusbar.py is run from here
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+import i18n  # noqa: E402  (path set above)
 
 SESSION = "claude"      # the launcher's session name for profile "claude"
 SOCKET = "ws-claude"    # the launcher's socket name; TMUX_TMPDIR (set by make-demo.sh) isolates it
@@ -313,7 +315,7 @@ def wait_text(pane_id, needle, timeout=90.0):
 
 
 def panes_of(window):
-    out = tmux("list-panes", "-t", window, "-F", "#{pane_id}|#{@papel}")
+    out = tmux("list-panes", "-t", window, "-F", "#{pane_id}|#{@role}")
     return {role: pid for pid, role in (l.split("|") for l in out.strip().split("\n"))}
 
 
@@ -345,7 +347,7 @@ def scene_script(rec):
     rec.window = main
     # No client is attached, so windows created now would get tmux's default 80x24 and the phone layout.
     tmux("set-option", "-g", "default-size", f"{COLS}x{ROWS}")
-    wait_text(panes["claude"], "agente simulado da demo: pronto")
+    wait_text(panes["claude"], i18n.t("demo.fake.ready"))
     time.sleep(SETTLE_S)
     rec.snap(1.6)                                            # 1. the workspace: repos, tasks, agent
     tmux("select-pane", "-L", "-t", panes["claude"])         # S-Left: focus the repos panel (no mouse)
@@ -359,11 +361,11 @@ def scene_script(rec):
         time.sleep(0.2)
     rec.window = web = window_id("lojinha-web")
     # the agent starts after the window's panes are built, so its banner means the layout is ready
-    wait_text(panes_of(web)["claude"], "agente simulado da demo: pronto")
+    wait_text(panes_of(web)["claude"], i18n.t("demo.fake.ready"))
     wp = panes_of(web)
     time.sleep(SETTLE_S)
     rec.snap(1.8)                                            # 2. second repo open, its tasks in the panel
-    task = "Implemente a tarefa 12 do backlog"
+    task = i18n.t("demo.task")
     literal(wp["claude"], task[:14])                         # 3. type the task into the agent
     time.sleep(SETTLE_S / 2)
     rec.snap(0.5)
@@ -375,14 +377,14 @@ def scene_script(rec):
     rec.checkpoint(wp["claude"], "Read(src/cart.py)", 0.8, delay=0.5)     # green: reading
     rec.checkpoint(wp["claude"], "Bash(python3", 1.2, delay=10.0)         # yellow: tool running for 10 s
     rec.checkpoint(wp["claude"], "3 passed", 0.8, delay=0.3)              # green again
-    rec.checkpoint(wp["claude"], "Pronto: limpar(itens)", 2.0, delay=1.5)  # red: the answer waits for you
+    rec.checkpoint(wp["claude"], i18n.t("demo.fake.done_mark"), 2.0, delay=1.5)  # red: the answer waits for you
     tmux("select-pane", "-R", "-t", wp["claude"])            # S-Right: files tab of the right column
     rec.settle(1.0)
     rec.shot = rec.frames[-1][0]
-    tmux("select-pane", "-U", "-t", wp["direita"])           # ctrl+b Up: focus the tab strip
+    tmux("select-pane", "-U", "-t", wp["side"])           # ctrl+b Up: focus the tab strip
     send(wp["dtabs"], "Right")                               # move to DIFF
     send(wp["dtabs"], "Enter")                               # activate it
-    wait_text(wp["direita"], "MUDANÇAS")                     # the diff panel's header
+    wait_text(wp["side"], i18n.t("diff.changes"))         # the diff panel's header
     rec.settle(2.2)                                          # 6. diff of the change
     rec.window = main
     tmux("select-window", "-t", main)                        # prefix+1: back to the first window

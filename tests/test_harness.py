@@ -21,7 +21,7 @@ PRODUCTION_COMMAND = 'python3 "$HOME/.local/share/ai-tmux-workspace/harness/harn
 CLAUDE_MD = "# Harness entry\n\nRead the rules before working.\n"
 AGENTS_MD = "# Agents\n\nOne slice at a time.\n"
 
-FORCADO = """\
+HARNESS_POLICY = """\
 versao: 1
 itens:
   - id: F03
@@ -45,9 +45,9 @@ itens:
     texto: regras/agents.md
     tipo: lembrete
     alvo: "Write|Edit|NotebookEdit"
-    falha: "abrir"
+    failure: "open"
 """
-FORCADO_NO_F07 = """\
+HARNESS_POLICY_NO_F07 = """\
 versao: 1
 itens:
   - id: F03
@@ -56,7 +56,7 @@ itens:
     alvo: Bash
     padrao: "sudo *"
 """
-FORCADO_OTHER_RULE = """\
+HARNESS_POLICY_OTHER_RULE = """\
 versao: 1
 itens:
   - id: F03
@@ -87,9 +87,9 @@ class HarnessTest(unittest.TestCase):
         (self.harness / "CLAUDE.md").write_text(CLAUDE_MD, encoding="utf-8")
         (self.harness / "regras" / "agents.md").write_text(AGENTS_MD, encoding="utf-8")
         (self.harness / "regras" / "conversation.md").write_text("# Conversation\n", encoding="utf-8")
-        self.forcado(FORCADO)
+        self.write_harness(HARNESS_POLICY)
 
-    def forcado(self, text):
+    def write_harness(self, text):
         (self.harness / "forcado.yaml").write_text(text, encoding="utf-8")
 
     def env(self):
@@ -197,7 +197,7 @@ class HarnessTest(unittest.TestCase):
 
     # 6 ---------------------------------------------------------------------------------------
     def test_removing_f07_in_yaml_disables_the_gate_and_reminder(self):
-        self.forcado(FORCADO_NO_F07)
+        self.write_harness(HARNESS_POLICY_NO_F07)
         proc, output = self.hook_output(self.prompt())
         self.assertEqual(proc.stdout.strip(), "")
         self.assertIsNone(output)
@@ -206,7 +206,7 @@ class HarnessTest(unittest.TestCase):
         self.assertIsNone(output)
 
     def test_changing_f03_in_yaml_changes_the_rendered_deny(self):
-        self.forcado(FORCADO_OTHER_RULE)
+        self.write_harness(HARNESS_POLICY_OTHER_RULE)
         target = self.root / "settings.json"
         proc = self.render("--out", str(target))
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -283,13 +283,13 @@ class HarnessTest(unittest.TestCase):
 
 
 class YamlSubsetTest(unittest.TestCase):
-    def test_forcado_fixture_parses(self):
+    def test_harness_fixture_parses(self):
         sys.path.insert(0, str(ROOT / "harness"))
         try:
             import harness
         finally:
             sys.path.pop(0)
-        document = harness.yaml_loads(textwrap.dedent(FORCADO))
+        document = harness.yaml_loads(textwrap.dedent(HARNESS_POLICY))
         self.assertEqual(document["versao"], 1)
         self.assertEqual([item["id"] for item in document["itens"]], ["F03", "F05", "F07"])
         self.assertEqual(document["itens"][1]["padrao"], ["**/.env", "**/*.pem"])

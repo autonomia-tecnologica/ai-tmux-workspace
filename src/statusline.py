@@ -3,7 +3,7 @@
 
 Claude Code pipes a JSON to stdin after each response. We keep:
 - rate_limits (claude.ai plans: 5-hour and 7-day windows) in $WS_STATE/limits.json;
-- model, context usage and cost of the session in $WS_STATE/sessoes/<session_id>.status.json,
+- model, context usage and cost of the session in $WS_STATE/sessions/<session_id>.status.json,
   read by statusbar.py and panel_sessions.py (skipped when the JSON has no session_id).
 
 Standalone on purpose: no import of lib, because it runs several times per response. Every field
@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-ESTADO = Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace"))
+STATE = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace"))
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
@@ -50,11 +50,11 @@ def _write_json(path, data):
 def _main(data):
     limits = data.get("rate_limits")
     if isinstance(limits, dict):
-        _write_json(ESTADO / "limits.json", {"ts": time.time(), "rate_limits": limits})
+        _write_json(STATE / "limits.json", {"ts": time.time(), "rate_limits": limits})
 
     session_id = data.get("session_id")
     if isinstance(session_id, str) and SESSION_ID.fullmatch(session_id):
-        _write_json(ESTADO / "sessoes" / f"{session_id}.status.json", {
+        _write_json(STATE / "sessions" / f"{session_id}.status.json", {
             "ts": time.time(),
             "model": _text(_dig(data, "model", "display_name")),
             "context_pct": _number(_dig(data, "context_window", "used_percentage")),

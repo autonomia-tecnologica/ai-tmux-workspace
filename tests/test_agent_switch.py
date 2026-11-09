@@ -2,7 +2,7 @@
 keeps `--continue` (today's flow); a different command, an unknown repo, or a last opening that never produced
 a transcript opens a new session and, when a previous transcript exists, passes the i18n migration prompt as
 the positional argument of `claude`. Each test runs `src/lib.py` in a child process with temporary HOME,
-WS_ESTADO and AT_WS_CONFIG, so the real config, cache and transcripts are never read or written."""
+WS_STATE and AT_WS_CONFIG, so the real config, cache and transcripts are never read or written."""
 import json
 import os
 import re
@@ -51,7 +51,7 @@ class OpeningCommandTest(unittest.TestCase):
         return f"{base} --permission-mode {mode}"
 
     def opening(self, repo=None):
-        env = dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state), AT_WS_CONFIG=str(self.config),
+        env = dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config),
                    AT_HARNESS_DIR=str(self.root / "no-harness"))
         proc = subprocess.run([sys.executable, str(LIB), "opening-command", str(repo or self.repo)],
                               env=env, capture_output=True, text=True, check=False)
@@ -175,7 +175,7 @@ class OpeningCommandTest(unittest.TestCase):
     def test_transcript_fallback_from_the_session_cache(self):
         transcript = self.root / "cached.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
-        sessions = self.state / "sessoes"
+        sessions = self.state / "sessions"
         sessions.mkdir(parents=True)
         (sessions / "abc.json").write_text(json.dumps({
             "cwd": str(self.repo), "ts": 1, "transcript_path": str(transcript)}), encoding="utf-8")
@@ -187,7 +187,7 @@ class OpeningCommandTest(unittest.TestCase):
     def test_cache_entry_of_another_repo_is_not_used(self):
         transcript = self.root / "elsewhere.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
-        sessions = self.state / "sessoes"
+        sessions = self.state / "sessions"
         sessions.mkdir(parents=True)
         (sessions / "abc.json").write_text(json.dumps({
             "cwd": str(self.root / "elsewhere"), "ts": 1, "transcript_path": str(transcript)}),

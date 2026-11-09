@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Sessões ativas (Claudes abertos) de todos os repos do workspace, agrupadas por repo: título, estado, última fala, nº de mensagens,
-modelo, contexto e custo. Subagentes em execução viram uma linha dentro da sessão pai. Enter foca o painel da sessão.
+"""Active sessions (open Claudes) of every workspace repo, grouped by repo: title, state, last answer, message count,
+model, context and cost. Running subagents become a row inside the parent session. Enter focuses the session pane.
 
-Os transcripts são lidos de forma incremental (só o que foi acrescentado desde a última leitura); modelo, contexto e custo
-vêm do <sid>.status.json gravado pelo statusline.py."""
+Transcripts are read incrementally (only what was appended since the last read); model, context and cost
+come from the <sid>.status.json written by statusline.py."""
 import json
 import os
 import re
@@ -16,15 +16,15 @@ import i18n
 import lib
 import statusbar
 import tmux
-from viewer import AMARELO, B, CINZA, DIM, R, VERDE, VERMELHO, Linha, Viewer
+from viewer import YELLOW, B, GRAY, DIM, R, GREEN, RED, Row, Viewer
 
 
-PARTE = 1 << 20          # bytes lidos por vez: o transcript é consumido em pedaços, nunca inteiro
-CABECA = 300_000         # a primeira fala do usuário (título de reserva) só é procurada no começo
-CACHE = {}               # caminho do transcript -> estado da leitura (ver _empty_state)
+CHUNK = 1 << 20          # bytes read at a time: the transcript is consumed in pieces, never whole
+HEAD = 300_000           # the first user answer (fallback title) is only searched at the start
+CACHE = {}               # transcript path -> read state (see _empty_state)
 
 
-def texto(msg):
+def text_of(msg):
     c = msg.get("content")
     if isinstance(c, str):
         return c
@@ -32,21 +32,21 @@ def texto(msg):
 
 
 def _empty_state():
-    return {"ini": 0, "n": 0, "titulo": None, "primeira": None, "ultima": "", "modelo": ""}
+    return {"offset": 0, "n": 0, "title": None, "first": None, "last": "", "model": ""}
 
 
-def _process(bloco, ini, est):
-    """Atualiza `est` com as linhas completas de `bloco`, que começa no byte `ini` do transcript."""
-    for m in re.finditer(rb'"aiTitle"\s*:\s*"((?:[^"\\]|\\.)*)"', bloco):
+def _process(block, offset, state):
+    """Update `state` with the complete lines of `block`, which starts at byte `offset` of the transcript."""
+    for m in re.finditer(rb'"aiTitle"\s*:\s*"((?:[^"\\]|\\.)*)"', block):
         try:
-            est["titulo"] = json.loads(b'"' + m.group(1) + b'"')
+            state["title"] = json.loads(b'"' + m.group(1) + b'"')
         except Exception:
             pass
-    est["n"] += len(re.findall(rb'"type"\s*:\s*"(?:user|assistant)"', bloco))
-    pos = ini
-    for l in bloco.split(b"\n"):
-        atual, pos = pos, pos + len(l) + 1
-        if not (b'"assistant"' in l or (est["primeira"] is None and atual < CABECA and b'"user"' in l)):
+    state["n"] += len(re.findall(rb'"type"\s*:\s*"(?:user|assistant)"', block))
+    pos = offset
+    for l in block.split(b"\n"):
+        current, pos = pos, pos + len(l) + 1
+        if not (b'"assistant"' in l or (state["first"] is None and current < HEAD and b'"user"' in l)):
             continue
         try:
             d = json.loads(l)
@@ -58,106 +58,106 @@ def _process(bloco, ini, est):
         if not isinstance(msg, dict):
             continue
         if d.get("type") == "assistant":
-            est["modelo"] = msg.get("model") or est["modelo"]       # o último modelo não vazio vale
-            t = texto(msg).strip()
+            state["model"] = msg.get("model") or state["model"]       # the last non-empty model wins
+            t = text_of(msg).strip()
             if t:
-                est["ultima"] = t
-        elif d.get("type") == "user" and est["primeira"] is None and atual < CABECA:
-            t = texto(msg).strip()
+                state["last"] = t
+        elif d.get("type") == "user" and state["first"] is None and current < HEAD:
+            t = text_of(msg).strip()
             if t and not t.startswith("<"):
-                est["primeira"] = t
+                state["first"] = t
 
 
-def _advance(f, est):
-    """Lê só o que foi acrescentado a `f` desde `est["ini"]`, em pedaços, sem passar de linhas completas."""
-    if f.stat().st_size < est["ini"]:            # truncado ou trocado: recomeça
-        est.update(_empty_state())
+def _advance(f, state):
+    """Read only what was appended to `f` since `state["offset"]`, in pieces, never past complete lines."""
+    if f.stat().st_size < state["offset"]:         # truncated or replaced: start over
+        state.update(_empty_state())
     with open(f, "rb") as fh:
-        fh.seek(est["ini"])
-        resto = b""
+        fh.seek(state["offset"])
+        rest = b""
         while True:
-            bloco = fh.read(PARTE)
-            if not bloco:
+            block = fh.read(CHUNK)
+            if not block:
                 break
-            dados = resto + bloco
-            fim = dados.rfind(b"\n") + 1
-            if fim:
-                _process(dados[:fim], est["ini"], est)
-                est["ini"] += fim
-            resto = dados[fim:]
+            data = rest + block
+            end = data.rfind(b"\n") + 1
+            if end:
+                _process(data[:end], state["offset"], state)
+                state["offset"] += end
+            rest = data[end:]
 
 
-def ler(f):
-    """Título, última fala, nº de mensagens e modelo do transcript `f`, pelo CACHE (incremental)."""
-    est = CACHE.setdefault(str(f), _empty_state())
-    _advance(f, est)
-    return {"titulo": est["titulo"] or est["primeira"] or i18n.t("sessions.untitled"),
-            "ultima": " ".join(est["ultima"].split()), "n": est["n"],
-            "modelo": str(est["modelo"] or "").removeprefix("claude-")}
+def read(f):
+    """Title, last answer, message count and model of transcript `f`, via CACHE (incremental)."""
+    state = CACHE.setdefault(str(f), _empty_state())
+    _advance(f, state)
+    return {"title": state["title"] or state["first"] or i18n.t("sessions.untitled"),
+            "last": " ".join(state["last"].split()), "n": state["n"],
+            "model": str(state["model"] or "").removeprefix("claude-")}
 
 
-def pasta(cwd):
+def folder(cwd):
     return lib.HOME / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
 
 def transcript_of(entry, sid):
-    """Transcript da sessão: `transcript_path` da entrada quando existe; senão a pasta do projeto pelo cwd."""
+    """Session transcript: the entry `transcript_path` when present; else the project folder from the cwd."""
     tp = entry.get("transcript_path")
     if isinstance(tp, str) and tp.strip():
         return Path(os.path.expanduser(tp))
-    return pasta(entry["cwd"]) / f"{sid}.jsonl"
+    return folder(entry["cwd"]) / f"{sid}.jsonl"
 
 
-def coletar(v):
-    agora = time.time()
-    principal = lib.ler_principal()
-    repos = ([principal] if principal else []) + [r for _, rs in lib.ler_repos() for r in rs]
-    por_repo = lib.live_sessions([p for _, p in repos], agora)
-    total = sum(len(x) for x in por_repo.values())
-    cab = [Linha(f" {CINZA}{i18n.t('sessions.header', n=total)}{R}"), Linha("")]
-    corpo = []
-    usados = set()
-    for rnome, rpath in repos:
-        for sid, e, cor in por_repo.get(rpath, []):
-            caminho = transcript_of(e, sid)
-            usados.add(str(caminho))
+def collect(v):
+    now = time.time()
+    main = lib.read_main()
+    repos = ([main] if main else []) + [r for _, rs in lib.read_repos() for r in rs]
+    by_repo = lib.live_sessions([p for _, p in repos], now)
+    total = sum(len(x) for x in by_repo.values())
+    header = [Row(f" {GRAY}{i18n.t('sessions.header', n=total)}{R}"), Row("")]
+    body = []
+    used = set()
+    for repo_name, rpath in repos:
+        for sid, e, color in by_repo.get(rpath, []):
+            path = transcript_of(e, sid)
+            used.add(str(path))
             try:
-                d = ler(caminho)
+                d = read(path)
             except Exception:
-                d = {"titulo": i18n.t("sessions.untitled"), "ultima": "", "n": 0, "modelo": ""}
+                d = {"title": i18n.t("sessions.untitled"), "last": "", "n": 0, "model": ""}
             st = statusbar.status_of(sid)
-            ultima = " ".join((statusbar.clean_text(e.get("last_assistant_message")) or d["ultima"]).split())
-            modelo = statusbar.clean_text(st.get("model")) or d["modelo"]
-            if rnome:
-                corpo.append(Linha(f" {CINZA}{rnome.upper()}{R}"))
-                rnome = None
+            last = " ".join((statusbar.clean_text(e.get("last_assistant_message")) or d["last"]).split())
+            model = statusbar.clean_text(st.get("model")) or d["model"]
+            if repo_name:
+                body.append(Row(f" {GRAY}{repo_name.upper()}{R}"))
+                repo_name = None
             k = (e["pane"], rpath)
-            corpo.append(Linha(f" {glyphs.dot(cor)} {B}{d['titulo']}{R}", k))
-            corpo.append(Linha(f"   {CINZA}{i18n.t('sessions.agent')}{R} {DIM}{ultima}{R}", cont=True))
-            partes = [i18n.t("sessions.msgs", n=d["n"])] + ([modelo] if modelo else [])
+            body.append(Row(f" {glyphs.dot(color)} {B}{d['title']}{R}", k))
+            body.append(Row(f"   {GRAY}{i18n.t('sessions.agent')}{R} {DIM}{last}{R}", cont=True))
+            parts = [i18n.t("sessions.msgs", n=d["n"])] + ([model] if model else [])
             pct = statusbar.as_number(st.get("context_pct"))
             if pct is not None:
-                partes.append(i18n.t("status.context", pct=f"{pct:.0f}"))
-            custo = statusbar.as_number(st.get("cost_usd"))
-            if custo is not None:
-                partes.append(i18n.t("sessions.cost", v=f"{custo:.2f}".replace(".", ",")))
-            corpo.append(Linha(f"   {CINZA}{' · '.join(partes)}{R}", cont=True))
-            tipos = e.get("agent_types") or {}
+                parts.append(i18n.t("status.context", pct=f"{pct:.0f}"))
+            cost = statusbar.as_number(st.get("cost_usd"))
+            if cost is not None:
+                parts.append(i18n.t("sessions.cost", v=f"{cost:.2f}".replace(".", ",")))
+            body.append(Row(f"   {GRAY}{' · '.join(parts)}{R}", cont=True))
+            types = e.get("agent_types") or {}
             for a in e.get("agents") or []:
-                corpo.append(Linha(f"   {VERDE}↳{R} {CINZA}{tipos.get(a, 'agent')}{R}", cont=True))
-            corpo.append(Linha(""))
-    for chave in [c for c in CACHE if c not in usados]:      # sessão que saiu da lista: libera a leitura
-        del CACHE[chave]
-    return cab, corpo
+                body.append(Row(f"   {GREEN}↳{R} {GRAY}{types.get(a, 'agent')}{R}", cont=True))
+            body.append(Row(""))
+    for key in [c for c in CACHE if c not in used]:      # session left the list: release the read state
+        del CACHE[key]
+    return header, body
 
 
-def enter(v, chave, tecla):
+def enter(v, key, _pressed):
     """Focus the session's pane: bring it forward in its repo window (it may be a hidden tab)."""
-    pane, repo = chave
-    sess = tmux.run("display", "-p", "-t", pane, "#{session_name}")
+    pane, repo = key
+    session = tmux.run("display", "-p", "-t", pane, "#{session_name}")
     win = ""
-    for linha in tmux.run("list-windows", "-t", sess, "-F", "#{window_id}|#{@ws_repo}").splitlines():
-        wid, _, r = linha.partition("|")
+    for line in tmux.run("list-windows", "-t", session, "-F", "#{window_id}|#{@ws_repo}").splitlines():
+        wid, _, r = line.partition("|")
         if r == repo:
             win = wid
             break
@@ -171,4 +171,4 @@ def enter(v, chave, tecla):
 
 
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=3.0, cursor=True, ao_enter=enter).rodar()
+    Viewer(collect, interval=3.0, cursor=True, on_enter=enter).run()

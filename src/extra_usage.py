@@ -23,11 +23,11 @@ import lib
 URL = "https://api.anthropic.com/api/oauth/usage"   # fixed on purpose: no env/config override
 TIMEOUT_S = 5
 POLL_S = 300
-CACHE = lib.ESTADO / "extra_usage.json"
-ATTEMPT = lib.ESTADO / "extra_usage.attempt"
+CACHE = lib.STATE / "extra_usage.json"
+ATTEMPT = lib.STATE / "extra_usage.attempt"
 
 def enabled():
-    return lib.ler_config().get("extra_usage") is True
+    return lib.read_config().get("extra_usage") is True
 
 
 def build_opener():
@@ -95,7 +95,7 @@ def parse(data):
 
 
 def save(entry):
-    lib.ESTADO.mkdir(parents=True, exist_ok=True)
+    lib.STATE.mkdir(parents=True, exist_ok=True)
     tmp = CACHE.with_suffix(".tmp")
     tmp.write_text(json.dumps(entry))
     os.replace(tmp, CACHE)

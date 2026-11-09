@@ -18,6 +18,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+import i18n  # noqa: E402  (path set above)
+
 BASH = shutil.which("bash") or "/bin/bash"
 INSTALL = ROOT / "install.sh"
 REMOVE = ROOT / "remove.sh"
@@ -80,8 +83,8 @@ class InstallerTest(unittest.TestCase):
     def env(self, **overrides):
         env = {key: value for key, value in os.environ.items()
                if key not in ("AT_WS_CONFIG", "AT_WS_INSTALL_STATE", "AT_HARNESS_SOURCE",
-                              "WS_ESTADO", "SUDO_USER", "SUDO_UID", "PKEXEC_UID", "DOAS_USER")}
-        env.update(HOME=str(self.home), WS_ESTADO=str(self.state),
+                              "WS_STATE", "SUDO_USER", "SUDO_UID", "PKEXEC_UID", "DOAS_USER")}
+        env.update(HOME=str(self.home), WS_STATE=str(self.state),
                    AT_HARNESS_SOURCE=str(self.source), SHELL="/usr/bin/zsh", NO_COLOR="1",
                    PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
         env.update(overrides)
@@ -272,7 +275,7 @@ class InstallerTest(unittest.TestCase):
     def test_remove_without_manifest_or_settings_is_not_an_error(self):
         result = self.remove("")
         self.assertEqual(result.returncode, 0)
-        self.assertIn("nada a remover", result.stdout)
+        self.assertIn(i18n.t("installer.remove.nothing"), result.stdout)
 
     # 13 --------------------------------------------------------------------------------------
     def test_install_records_source_json_and_locks_the_harness_copy(self):

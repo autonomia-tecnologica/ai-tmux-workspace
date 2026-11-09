@@ -158,7 +158,7 @@ def _stream_answer(stream, repo, on_status=None):
 
 def _budget_state():
     """Fresh state-file path for one run; the hook creates it on the first counted step."""
-    folder = conference.estado_dir() / "budget"
+    folder = conference.state_dir() / "budget"
     folder.mkdir(parents=True, exist_ok=True)
     fd, path = tempfile.mkstemp(dir=str(folder), prefix="run-", suffix=".json")
     os.close(fd)
@@ -231,9 +231,9 @@ def _t(key, **kw):
 def _save_error(repo, code, detail):
     """Keeps the failure out of the log shown to Rafael but available for diagnosis."""
     try:
-        pasta = conference.estado_dir()
-        pasta.mkdir(parents=True, exist_ok=True)
-        with open(pasta / "errors.log", "a", encoding="utf-8") as f:
+        folder = conference.state_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / "errors.log", "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {conference._sender(repo)} "
                     f"(code {code}): {' '.join(str(detail or '').split())[:500]}\n")
     except OSError:

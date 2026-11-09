@@ -19,8 +19,8 @@ import yaml_min  # noqa: E402
 from i18n import _STRINGS  # noqa: E402
 
 def home(p):
-    """Expected path of a home-relative entry, resolved the same way lib.expandir resolves it."""
-    return lib.expandir(str(Path.home() / p))
+    """Expected path of a home-relative entry, resolved the same way lib.expand_path resolves it."""
+    return lib.expand_path(str(Path.home() / p))
 
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "config" / "config.example.yaml"
@@ -100,9 +100,9 @@ class YamlMinTest(unittest.TestCase):
         }
         for text, line in cases.items():
             with self.subTest(text=text):
-                with self.assertRaises(yaml_min.ErroYAML) as ctx:
+                with self.assertRaises(yaml_min.YamlError) as ctx:
                     yaml_min.loads(text)
-                self.assertEqual(ctx.exception.linha, line)
+                self.assertEqual(ctx.exception.line, line)
 
 
 class ConfigTestCase(unittest.TestCase):
@@ -113,15 +113,15 @@ class ConfigTestCase(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.addCleanup(self._tmp.cleanup)
-        lib.ERRO_CONFIG = None
+        lib.CONFIG_ERROR = None
 
-    def write(self, name, texto):
+    def write(self, name, text):
         path = self.dir / name
-        path.write_text(texto, encoding="utf-8")
+        path.write_text(text, encoding="utf-8")
         return path
 
-    def write_legacy(self, dados):
-        return self.write("config.json", json.dumps(dados, indent=2, ensure_ascii=False))
+    def write_legacy(self, data):
+        return self.write("config.json", json.dumps(data, indent=2, ensure_ascii=False))
 
     def sha(self, path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -141,10 +141,10 @@ class YamlConfigTest(ConfigTestCase):
             "    - ~/a\n"
             "    - ~/b\n"
         ))
-        self.assertEqual(lib.ler_repos(), [("Cat", [("a", home("a")), ("b", home("b"))])])
-        self.assertEqual(lib.ler_principal()[0], "m")
-        self.assertEqual(lib.ler_relacoes(), [("Rel", [home("a"), home("b")])])
-        self.assertIsNone(lib.ERRO_CONFIG)
+        self.assertEqual(lib.read_repos(), [("Cat", [("a", home("a")), ("b", home("b"))])])
+        self.assertEqual(lib.read_main()[0], "m")
+        self.assertEqual(lib.read_relations(), [("Rel", [home("a"), home("b")])])
+        self.assertIsNone(lib.CONFIG_ERROR)
 
     def test_siblings_are_symmetric(self):
         self.write("config.yaml", "groups:\n  Cat:\n    - path: ~/a\n      siblings: [~/b]\n    - ~/b\n    - ~/c\n")
@@ -184,9 +184,9 @@ class YamlConfigTest(ConfigTestCase):
 
     def test_bad_yaml_gives_empty_config_and_marks_the_error(self):
         path = self.write("config.yaml", "groups:\n  Cat:\n    - ~/a\n\tbroken: 1\n")
-        self.assertEqual(lib.ler_config(), {})
-        self.assertEqual(lib.ERRO_CONFIG, (str(path), 4))
-        self.assertEqual(lib.ler_repos(), [])
+        self.assertEqual(lib.read_config(), {})
+        self.assertEqual(lib.CONFIG_ERROR, (str(path), 4))
+        self.assertEqual(lib.read_repos(), [])
 
     def test_set_agent_keeps_other_keys_and_refuses_to_overwrite_a_broken_file(self):
         self.write("config.yaml", "agent: claude\ngroups:\n  Cat:\n    - path: ~/a\n      siblings: [~/b]\n")
@@ -196,7 +196,7 @@ class YamlConfigTest(ConfigTestCase):
         self.assertEqual(cfg["groups"]["Cat"][0]["siblings"], ["~/b"])
         broken = self.write("config.yaml", "agent: [oops\n")
         before = self.sha(broken)
-        with self.assertRaises(lib.ErroConfig):
+        with self.assertRaises(lib.ConfigError):
             lib.set_agent("claude")
         self.assertEqual(self.sha(broken), before)
 
@@ -205,7 +205,7 @@ class LegacyAndMigrationTest(ConfigTestCase):
     LEGACY = {
         "notifications": False, "agent": "claude",
         "profiles": {"claude": "claude", "deepseek": "claude --settings ~/.claude/settings.deepseek.json"},
-        "prompts": ["Quero limpar a sessão.", "Use \"aspas\" e # hash"],
+        "prompts": ["I want to clear the session.", "Use \"quotes\" and # hash"],
         "options": [{"label": "Git status", "run": "git status -sb"}],
         "main": "~/Codes/main-repo",
         "groups": {"Example": ["~/Codes/some-repo", {"path": "~/Codes/b", "siblings": ["~/Codes/some-repo"]}]},
@@ -214,27 +214,27 @@ class LegacyAndMigrationTest(ConfigTestCase):
 
     def test_reads_old_settings_json_while_yaml_does_not_exist(self):
         self.write_legacy(self.LEGACY)
-        self.assertEqual(lib.ler_config(), self.LEGACY)
-        self.assertTrue(lib.precisa_migrar())
+        self.assertEqual(lib.read_config(), self.LEGACY)
+        self.assertTrue(lib.needs_migration())
         self.assertEqual(lib.siblings(home("Codes/some-repo")), [home("Codes/b")])
 
     def test_migration_writes_yaml_and_never_touches_the_json(self):
         legacy = self.write_legacy(self.LEGACY)
         before = self.sha(legacy)
-        destino = lib.migrar_config()
-        self.assertEqual(destino, self.dir / "config.yaml")
+        destination = lib.migrate_config()
+        self.assertEqual(destination, self.dir / "config.yaml")
         self.assertEqual(self.sha(legacy), before)                 # settings.json unchanged
         self.assertTrue(legacy.exists())                           # and not deleted
-        self.assertEqual(yaml_min.loads(destino.read_text(encoding="utf-8")), self.LEGACY)
-        self.assertEqual(lib.ler_config(), self.LEGACY)            # YAML now wins
-        self.assertFalse(lib.precisa_migrar())
+        self.assertEqual(yaml_min.loads(destination.read_text(encoding="utf-8")), self.LEGACY)
+        self.assertEqual(lib.read_config(), self.LEGACY)            # YAML now wins
+        self.assertFalse(lib.needs_migration())
 
     def test_migration_refuses_to_overwrite_an_existing_yaml(self):
         self.write_legacy(self.LEGACY)
         self.write("config.yaml", "agent: codex\n")
-        self.assertFalse(lib.precisa_migrar())
+        self.assertFalse(lib.needs_migration())
         with self.assertRaises(FileExistsError):
-            lib.migrar_config()
+            lib.migrate_config()
 
     def test_set_agent_with_only_the_old_json_writes_the_whole_config_as_yaml(self):
         legacy = self.write_legacy(self.LEGACY)
@@ -248,7 +248,7 @@ class LegacyAndMigrationTest(ConfigTestCase):
     def test_json_path_given_explicitly_is_read_and_written_as_json(self):
         with mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.dir / "settings.json")}):
             (self.dir / "settings.json").write_text(json.dumps(self.LEGACY), encoding="utf-8")
-            self.assertEqual(lib.ler_config(), self.LEGACY)
+            self.assertEqual(lib.read_config(), self.LEGACY)
             lib.set_agent("deepseek")
             self.assertEqual(json.loads((self.dir / "settings.json").read_text())["agent"], "deepseek")
 
@@ -256,14 +256,14 @@ class LegacyAndMigrationTest(ConfigTestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AT_WS_CONFIG", None)
             with mock.patch.object(lib, "HOME", self.dir):
-                pasta = self.dir / ".config" / "ai-tmux-workspace"
-                pasta.mkdir(parents=True)
-                (pasta / "settings.json").write_text(json.dumps(self.LEGACY), encoding="utf-8")
-                self.assertEqual(lib.config_path(), pasta / "config.yaml")
-                self.assertEqual(lib.legado_path(), pasta / "settings.json")
-                self.assertEqual(lib.ler_config(), self.LEGACY)
-                self.assertTrue(lib.precisa_migrar())
-                self.assertEqual(lib.migrar_config(), pasta / "config.yaml")
+                folder = self.dir / ".config" / "ai-tmux-workspace"
+                folder.mkdir(parents=True)
+                (folder / "settings.json").write_text(json.dumps(self.LEGACY), encoding="utf-8")
+                self.assertEqual(lib.config_path(), folder / "config.yaml")
+                self.assertEqual(lib.legacy_path(), folder / "settings.json")
+                self.assertEqual(lib.read_config(), self.LEGACY)
+                self.assertTrue(lib.needs_migration())
+                self.assertEqual(lib.migrate_config(), folder / "config.yaml")
 
 
 class ReadersTest(ConfigTestCase):
@@ -285,9 +285,9 @@ class ReadersTest(ConfigTestCase):
         self.assertTrue(icons.enabled())
 
     def test_new_user_strings_exist_in_pt_br(self):
-        for chave in ("options.migrate", "config.migrated", "config.err.migrate",
+        for key in ("options.migrate", "config.migrated", "config.err.migrate",
                       "config.err.read", "config.err.read_line", "config.err.write"):
-            self.assertIn(chave, _STRINGS)
+            self.assertIn(key, _STRINGS)
 
 
 if __name__ == "__main__":

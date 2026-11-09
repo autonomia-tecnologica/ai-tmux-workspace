@@ -24,7 +24,7 @@ launcher exported it, else this file's code root. Every role may read it; only a
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
-Every decision is appended to `$WS_ESTADO/policy.jsonl` (mode 0600) with the role, session,
+Every decision is appended to `$WS_STATE/policy.jsonl` (mode 0600) with the role, session,
 capability, target, decision and reason. The target is a path or a command summary, never the raw
 argument list, so a value passed on the command line is not written to the log.
 
@@ -1155,7 +1155,7 @@ def _auto_enabled(event):
 
 
 def _log_path():
-    base = os.environ.get("WS_ESTADO")
+    base = os.environ.get("WS_STATE")
     root = Path(base).expanduser() if base else Path.home() / ".cache" / "workspace"
     return root / "policy.jsonl"
 

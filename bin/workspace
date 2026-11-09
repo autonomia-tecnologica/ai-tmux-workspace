@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# workspace — tmux para os repos de config.yaml (~/.config/ai-tmux-workspace/).
-#   workspace                 abre (ou reanexa) o workspace; o agente (claude, deepseek...) vem de "agent" no config.yaml (Ctrl+b o)
+# workspace — tmux for the repos of config.yaml (~/.config/ai-tmux-workspace/).
+#   workspace                 opens (or reattaches) the workspace; the agent (claude, deepseek...) comes from "agent" in config.yaml (Ctrl+b o)
 #   workspace install         links `workspace` into ~/.local/bin
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
-#   workspace restart [perfil] kill the tmux server and start again (Claude resumes with --continue)
-#   workspace fit [perfil]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
-#   workspace reload [perfil] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
-#   workspace doctor          conferência de drift do harness instalado (--warn: só avisa, usado pelo reload)
+#   workspace restart [profile] kill the tmux server and start again (Claude resumes with --continue)
+#   workspace fit [profile]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
+#   workspace reload [profile] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
+#   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
-#   workspace stop [perfil]   kill the profile's tmux server
+#   workspace stop [profile]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
-#   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <perfil>
+#   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <profile>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-AQUI="$(dirname "$BIN")"        # raiz do repo
-SRC="$AQUI/src"
-export WS_DIR="$AQUI"
+ROOT="$(dirname "$BIN")"        # repo root
+SRC="$ROOT/src"
+export WS_DIR="$ROOT"
 MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
-perfil_cmd() { python3 "$SRC/lib.py" perfil-cmd "$1" "${2:-}"; }
-# Gera as settings de todos os perfis sem subir o agente (reload). Erro de config não derruba o reload:
-# a mensagem específica sai no stderr e os outros perfis continuam.
+profile_cmd() { python3 "$SRC/lib.py" profile-cmd "$1" "${2:-}"; }
+# Generates the settings of every profile without starting the agent (reload). A config error does not
+# fail the reload: the specific message goes to stderr and the other profiles continue.
 settings_refresh() { python3 "$SRC/lib.py" ensure-settings "${1:-}" >/dev/null || true; }
 settings_refresh_all() {
   local p
@@ -29,7 +29,7 @@ settings_refresh_all() {
 }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
 doctor() { python3 "$SRC/drift.py" "$@"; }
-laco() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
+loop_cmd() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
 }
 
@@ -48,38 +48,38 @@ term_h() { echo $(( ($(tmux display -p -t "$1" '#{window_height}') - 2) * 17 / 1
 # One line per pane: role|parent|split|size|command. The claude pane is the window itself (not in the tree).
 #   split: v (stacked) | h (side by side); b = before the parent; f = full (window height/width)
 #   size: lines, N%, or TERM / LEFT / RIGHT (computed at build time); empty = half of the parent
-#   command: shell (plain shell, restarted at its final size), laco:<panel>, tabs:<strip>
+#   command: shell (plain shell, restarted at its final size), loop_cmd:<panel>, tabs:<strip>
 REPO_TREE='tabs|claude|vb|2|tabs:claude
 terminal|claude|v|TERM|shell
 ttabs|terminal|vb|1|tabs:terminal
-repos|claude|hbf|LEFT|laco:repos
-tasks|repos|v|50%|laco:tasks
+repos|claude|hbf|LEFT|loop_cmd:repos
+tasks|repos|v|50%|loop_cmd:tasks
 rtabs|repos|vb|2|tabs:repos
 ktabs|tasks|vb|1|tabs:tasks
-direita|claude|hf|RIGHT|laco:tree
-dtabs|direita|vb|2|tabs:side'
+side|claude|hf|RIGHT|loop_cmd:tree
+dtabs|side|vb|2|tabs:side'
 
 # Pane with a given role in a window. "terminal" also matches the temporary "ttmp N" tab standing in for it.
-pane_with_role() { # $1=janela $2=papel
-  tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' |
+pane_with_role() { # $1=window $2=role
+  tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' |
     awk -F'|' -v r="$2" '$2==r || (r=="terminal" && $2 ~ /^ttmp /){print $1; exit}'
 }
 
 # Creates, in tree order, the panes the window lacks (a role already present is skipped, and so is a missing parent).
-# Does not apply the final sizes: the caller decides (construir does not, ensure_window calls fit_window).
-build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
-  local W="$1" path="$2" tree="$3" role parent split size cmd anchor P larg id dir sh shells=""
+# Does not apply the final sizes: the caller decides (build_window does not, ensure_window calls fit_window).
+build_tree() { # $1=window $2=repo path $3=tree (see REPO_TREE)
+  local W="$1" path="$2" tree="$3" role parent split size cmd anchor P width id dir sh shells=""
   local opts hfix=""
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
-  larg="$(tmux display -p -t "$W" '#{window_width}')"
+  width="$(tmux display -p -t "$W" '#{window_width}')"
   while IFS='|' read -r role parent split size cmd; do
     case "$role" in ''|\#*) continue ;; esac
     [ -n "$(pane_with_role "$W" "$role")" ] && continue
     anchor="$(pane_with_role "$W" "$parent")"; [ -n "$anchor" ] || continue
     case "$size" in
       TERM) size="$(term_h "$P")" ;;
-      LEFT) size="$(col_w left "$larg")" ;;
-      RIGHT) size="$(col_w right "$larg")" ;;
+      LEFT) size="$(col_w left "$width")" ;;
+      RIGHT) size="$(col_w right "$width")" ;;
     esac
     dir=-v; case "$split" in h*) dir=-h ;; esac
     opts=(-d "$dir")
@@ -87,13 +87,13 @@ build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
     case "$split" in *f*) opts+=(-f) ;; esac
     [ -n "$size" ] && opts+=(-l "$size")
     sh=""
-    case "$cmd" in laco:*) sh="$(laco "${cmd#laco:}")" ;; tabs:*) sh="$(laco tabs "${cmd#tabs:}")" ;; esac
+    case "$cmd" in loop_cmd:*) sh="$(loop_cmd "${cmd#loop_cmd:}")" ;; tabs:*) sh="$(loop_cmd tabs "${cmd#tabs:}")" ;; esac
     if [ -n "$sh" ]; then
       id="$(tmux split-window "${opts[@]}" -t "$anchor" -c "$path" -P -F '#{pane_id}' "$sh")"
     else
       id="$(tmux split-window "${opts[@]}" -t "$anchor" -c "$path" -P -F '#{pane_id}')"
     fi
-    tmux set -p -t "$id" @papel "$role"
+    tmux set -p -t "$id" @role "$role"
     case "$split" in h*) [ -n "$size" ] && hfix="$hfix $id:$size" ;; esac
     [ "$cmd" = shell ] && shells="$shells $id"
   done <<<"$tree"
@@ -103,51 +103,51 @@ build_tree() { # $1=janela $2=caminho do repo $3=árvore (ver REPO_TREE)
   for id in $shells; do tmux respawn-pane -k -t "$id" -c "$path"; done
 }
 
-# Monta a janela de um repo:  [repos | claude (5) / terminal (1) | direita]   ~22% : rest : ~19% (clamped)
-construir() { # $1=caminho  $2=-d (não selecionar)
-  local path="$1" d="${2:-}" S nome W P cmd linha T
-  S="$(env_global WS_PERFIL)"; cmd="$(perfil_cmd "$S" "$path")" || return 1
-  nome="$(basename "$path")"
-  W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$path")"
+# Builds a repo window:  [repos | claude (5) / terminal (1) | side]   ~22% : rest : ~19% (clamped)
+build_window() { # $1=path  $2=-d (do not select)
+  local path="$1" d="${2:-}" S name W P cmd line T
+  S="$(env_global WS_PROFILE)"; cmd="$(profile_cmd "$S" "$path")" || return 1
+  name="$(basename "$path")"
+  W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$name" -c "$path")"
   P="$(tmux display -p -t "$W" '#{pane_id}')"
-  tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_perfil "$S"
-  tmux set -p -t "$P" @papel claude
+  tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_profile "$S"
+  tmux set -p -t "$P" @role claude
   init_tabs "$W" "$P" c
   build_tree "$W" "$path" "$REPO_TREE"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
-  # mesmo agente que abriu o repo por último: retoma a sessão mais recente (`--continue`, senão uma nova).
-  # agente diferente: sessão nova, já com o prompt de migração quando há transcrição anterior (lib.py).
+  # same agent that opened the repo last: resumes the newest session (`--continue`, else a new one).
+  # a different agent: a new session, already with the migration prompt when there is a previous transcript (lib.py).
   # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
-  linha="$(python3 "$SRC/lib.py" opening-command "$path")"
-  [ -n "$linha" ] || linha="$cmd --continue || $cmd"
-  tmux send-keys -t "$P" "cd ${path@Q}; $linha" Enter
+  line="$(python3 "$SRC/lib.py" opening-command "$path")"
+  [ -n "$line" ] || line="$cmd --continue || $cmd"
+  tmux send-keys -t "$P" "cd ${path@Q}; $line" Enter
   tmux select-pane -t "$P"
   mobile_apply "$W"
 }
 
-# --- Abas temporárias (Claude e terminal) -----------------------------------------------------
-# Duas tiras independentes, cada uma com o mesmo padrão: a primeira aba é a principal (papel `claude`
-# / `terminal`), as outras são painéis novos no mesmo repo (papel `tmp N` / `ttmp N`). Cada aba é um
-# painel: a visível ocupa o espaço da principal, as demais ficam numa janela escondida
-# ("tab:<repo>" / "ttab:<repo>") e trocam de lugar com swap-pane. A tira é um painel de 1 linha
+# --- Temporary tabs (Claude and terminal) ------------------------------------------------------
+# Two independent strips, each with the same pattern: the first tab is the main one (role `claude`
+# / `terminal`), the others are new panes in the same repo (role `tmp N` / `ttmp N`). Each tab is a
+# pane: the visible one takes the main pane's space, the others stay in a hidden window
+# ("tab:<repo>" / "ttab:<repo>") and swap places with swap-pane. The strip is a 1-row panel
 # (panel_tabs.py <claude|terminal>).
 tab_alive() { tmux list-panes -a -F '#{pane_id}' | grep -qxF "$1"; }
 
-# $1=papel qualquer (principal, temporário ou da tira) -> define o tipo: c (Claude) ou t (terminal)
+# $1=any role (main, temporary or strip) -> sets the kind: c (Claude) or t (terminal)
 tab_kind() { case "$1" in terminal|ttmp*|ttabs) echo t ;; *) echo c ;; esac; }
 
 # $1=c|t -> define K_TABS K_ACT K_NEXT K_MAIN K_TMP K_HID K_STRIP
 tab_vars() {
   if [ "$1" = t ]; then
-    K_TABS=@ws_ttabs K_ACT=@ws_tativo K_NEXT=@ws_tnext K_MAIN=terminal K_TMP=ttmp K_HID=ttab K_STRIP=ttabs
+    K_TABS=@ws_ttabs K_ACT=@ws_term_active K_NEXT=@ws_tnext K_MAIN=terminal K_TMP=ttmp K_HID=ttab K_STRIP=ttabs
   else
-    K_TABS=@ws_tabs K_ACT=@ws_ativo K_NEXT=@ws_next K_MAIN=claude K_TMP=tmp K_HID=tab K_STRIP=tabs
+    K_TABS=@ws_tabs K_ACT=@ws_active K_NEXT=@ws_next K_MAIN=claude K_TMP=tmp K_HID=tab K_STRIP=tabs
   fi
 }
 
-# $1=janela $2=painel principal da tira $3=c|t: registra a aba principal (lista, ativa, próximo número).
-# Só preenche o que falta, então serve a janela nova (construir) e a existente (ensure_window) sem mudar nada.
+# $1=window $2=main pane of the strip $3=c|t: registers the main tab (list, active, next number).
+# Only fills what is missing, so it serves both a new window (build_window) and an existing one (ensure_window) without changing anything.
 init_tabs() {
   local W="$1" P="$2"
   tab_vars "$3"
@@ -155,12 +155,12 @@ init_tabs() {
     tmux set -w -t "$W" $K_TABS "$P"; tmux set -w -t "$W" $K_ACT "$P"; tmux set -w -t "$W" $K_NEXT 2; }
 }
 
-tab_list() { # $1=janela $2=c|t: ids vivos, na ordem
+tab_list() { # $1=window $2=c|t: live ids, in order
   local p
   tab_vars "${2:-c}"
-  # Janela criada antes das abas existirem (sessão antiga/restaurada): adota o painel principal.
+  # Window created before tabs existed (old/restored session): adopt the main pane.
   if [ -z "$(tmux show -wqv -t "$1" $K_TABS)" ]; then
-    p="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$K_MAIN" '$2==r{print $1; exit}')"
+    p="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_MAIN" '$2==r{print $1; exit}')"
     if [ -n "$p" ]; then
       tmux set -w -t "$1" $K_TABS "$p"
       [ -n "$(tmux show -wqv -t "$1" $K_ACT)" ] || tmux set -w -t "$1" $K_ACT "$p"
@@ -170,21 +170,21 @@ tab_list() { # $1=janela $2=c|t: ids vivos, na ordem
   for p in $(tmux show -wqv -t "$1" $K_TABS); do tab_alive "$p" && echo "$p"; done
 }
 
-tab_render() { # $1=janela $2=c|t: reinicia a tira de abas (panel_tabs.py) para refletir o estado atual
+tab_render() { # $1=window $2=c|t: restarts the tab strip (panel_tabs.py) to reflect the current state
   local pane kind="${2:-c}" name
   tab_vars "$kind"; name=claude; [ "$kind" = t ] && name=terminal
-  pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' | awk -F'|' -v r="$K_STRIP" '$2==r{print $1}')"
-  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(laco tabs "$name")"
+  pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_STRIP" '$2==r{print $1}')"
+  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(loop_cmd tabs "$name")"
   return 0
 }
 
-tab_show() { # $1=janela $2=painel da aba
-  local W="$1" T="$2" atual kind
+tab_show() { # $1=window $2=tab pane
+  local W="$1" T="$2" current kind
   tab_alive "$T" || return 1
-  kind="$(tab_kind "$(tmux show -pqv -t "$T" @papel)")"; tab_vars "$kind"
-  atual="$(tmux show -wqv -t "$W" $K_ACT)"
-  if [ "$atual" != "$T" ]; then
-    tmux swap-pane -d -s "$T" -t "$atual" || return 1
+  kind="$(tab_kind "$(tmux show -pqv -t "$T" @role)")"; tab_vars "$kind"
+  current="$(tmux show -wqv -t "$W" $K_ACT)"
+  if [ "$current" != "$T" ]; then
+    tmux swap-pane -d -s "$T" -t "$current" || return 1
     tmux set -w -t "$W" $K_ACT "$T"
   fi
   tmux select-pane -t "$T"
@@ -193,16 +193,16 @@ tab_show() { # $1=janela $2=painel da aba
   mobile_apply "$W"
 }
 
-tab_new() { # $1=janela $2=papel do painel em foco (define o tipo; padrão Claude)
+tab_new() { # $1=window $2=role of the focused pane (sets the kind; default Claude)
   local W="$1" S cmd path n P kind
   kind="$(tab_kind "${2:-}")"; tab_vars "$kind"
-  S="$(env_global WS_PERFIL)"
+  S="$(env_global WS_PROFILE)"
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   [ -n "$path" ] || return 1
-  if [ "$kind" = t ]; then cmd="${SHELL:-bash}"; else cmd="$(perfil_cmd "$S" "$path")"; fi
+  if [ "$kind" = t ]; then cmd="${SHELL:-bash}"; else cmd="$(profile_cmd "$S" "$path")"; fi
   n="$(tmux show -wqv -t "$W" $K_NEXT)"; n="${n:-2}"
   P="$(tmux new-window -d -P -F '#{pane_id}' -t "$S:" -n "$K_HID:$(basename "$path")" -c "$path")"
-  tmux set -p -t "$P" @papel "$K_TMP $n"; tmux set -p -t "$P" @ws_owner "$W"
+  tmux set -p -t "$P" @role "$K_TMP $n"; tmux set -p -t "$P" @ws_owner "$W"
   tmux set -w -t "$W" $K_TABS "$(tab_list "$W" "$kind" | tr '\n' ' ')$P"
   tmux set -w -t "$W" $K_NEXT $((n + 1))
   if [ "$kind" = t ]; then
@@ -216,21 +216,21 @@ tab_new() { # $1=janela $2=papel do painel em foco (define o tipo; padrão Claud
   tab_show "$W" "$P"
 }
 
-tab_step() { # $1=janela $2=+1|-1 $3=papel do painel em foco (define o tipo)
-  local W="$1" ativo ids i=0 idx=0 n kind p
+tab_step() { # $1=window $2=+1|-1 $3=role of the focused pane (sets the kind)
+  local W="$1" active ids i=0 idx=0 n kind p
   kind="$(tab_kind "${3:-}")"; tab_vars "$kind"
-  ativo="$(tmux show -wqv -t "$W" $K_ACT)"
+  active="$(tmux show -wqv -t "$W" $K_ACT)"
   mapfile -t ids < <(tab_list "$W" "$kind"); n=${#ids[@]}
   [ "$n" -gt 1 ] || return 0
-  for p in "${ids[@]}"; do [ "$p" = "$ativo" ] && idx=$i; i=$((i + 1)); done
+  for p in "${ids[@]}"; do [ "$p" = "$active" ] && idx=$i; i=$((i + 1)); done
   tab_show "$W" "${ids[$(( (idx + $2 + n) % n ))]}"
 }
 
-tab_exit() { # $1=painel que acabou: devolve o foco ao principal e tira a aba da lista
+tab_exit() { # $1=pane that ended: returns focus to the main one and removes the tab from the list
   local P="$1" W main kind
   W="$(tmux show -pqv -t "$P" @ws_owner 2>/dev/null)"
   [ -n "$W" ] || return 0
-  kind="$(tab_kind "$(tmux show -pqv -t "$P" @papel)")"; tab_vars "$kind"
+  kind="$(tab_kind "$(tmux show -pqv -t "$P" @role)")"; tab_vars "$kind"
   main="$(tab_list "$W" "$kind" | head -1)"
   [ "$(tmux show -wqv -t "$W" $K_ACT)" = "$P" ] && [ -n "$main" ] && tab_show "$W" "$main"
   tmux set -w -t "$W" $K_TABS "$(tab_list "$W" "$kind" | grep -vxF "$P" | tr '\n' ' ')"
@@ -238,22 +238,22 @@ tab_exit() { # $1=painel que acabou: devolve o foco ao principal e tira a aba da
 }
 
 open_repo() {
-  local path S ja
-  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PERFIL)"
+  local path S existing
+  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   [ -d "$path" ] || { msg cli.not_exists path="$path" >&2; exit 1; }
-  ja="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
-  if [ -n "$ja" ]; then
-    tmux select-window -t "$ja"
-    # foco na tela principal: a aba ativa (ou o Claude principal)
-    local foco; foco="$(tmux show -wqv -t "$ja" @ws_ativo)"
-    tab_alive "$foco" 2>/dev/null || foco="$(tmux list-panes -t "$ja" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
-    [ -n "$foco" ] && tmux select-pane -t "$foco"
-    tmux set -w -t "$ja" @ws_mview claude   # phone: picking a repo lands on its Claude
-    mobile_apply "$ja"
+  existing="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
+  if [ -n "$existing" ]; then
+    tmux select-window -t "$existing"
+    # focus on the main screen: the active tab (or the main Claude)
+    local focus; focus="$(tmux show -wqv -t "$existing" @ws_active)"
+    tab_alive "$focus" 2>/dev/null || focus="$(tmux list-panes -t "$existing" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
+    [ -n "$focus" ] && tmux select-pane -t "$focus"
+    tmux set -w -t "$existing" @ws_mview claude   # phone: picking a repo lands on its Claude
+    mobile_apply "$existing"
     return
   fi
-  construir "$path" || return 1        # erro na settings do perfil: a mensagem já saiu no stderr
-  # a janela de partida ("boot") some quando já há repo aberto
+  build_window "$path" || return 1        # profile settings error: the message already went to stderr
+  # the starting window ("boot") goes away once a repo is open
   tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' '$2=="boot"{print $1}' |
     while read -r w; do tmux kill-window -t "$w"; done
 }
@@ -271,15 +271,15 @@ worktree_cmd() { # $1=new|list|remove|merge ...
   fi
 }
 
-side() { # $1=modo $2=janela
+side() { # $1=mode $2=window
   local pane strip
-  pane="$(pane_with_role "$2" direita)"
+  pane="$(pane_with_role "$2" side)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_side "$1"
-  tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+  tmux respawn-pane -k -t "$pane" "$(loop_cmd "$1")"
   # restart the strip so it redraws with the new active tab
   strip="$(pane_with_role "$2" dtabs)"
-  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs side)"
+  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(loop_cmd tabs side)"
 }
 
 # Left-top panel mode (repos | sessions), next to REPOS in the rtabs strip.
@@ -288,9 +288,9 @@ left() { # $1=repos|sessions $2=window
   pane="$(pane_with_role "$2" repos)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_left "$1"
-  tmux respawn-pane -k -t "$pane" "$(laco "$1")"
+  tmux respawn-pane -k -t "$pane" "$(loop_cmd "$1")"
   strip="$(pane_with_role "$2" rtabs)"
-  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(laco tabs repos)"
+  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(loop_cmd tabs repos)"
   return 0
 }
 
@@ -300,11 +300,11 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
   local path W pane S prev=""
   [ "${3:-1}" = 0 ] && prev="$(tmux display -p '#{window_id}' 2>/dev/null)"
   open_repo "$1"
-  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PERFIL)"
+  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   [ -n "$W" ] || return 1
-  pane="$(tmux show -wqv -t "$W" @ws_ativo)"
-  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  pane="$(tmux show -wqv -t "$W" @ws_active)"
+  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
   # Bracketed paste, not send-keys -l: a multi-line message (the conference prompt carries the log)
   # would otherwise press Enter on its first line break and submit before the end.
   tmux set-buffer -b ws_send -- "$2" && tmux paste-buffer -p -d -b ws_send -t "$pane" \
@@ -315,19 +315,19 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
 # Types text into the active Claude tab of a window, without Enter (bracketed paste: newlines stay text), and focuses it.
 type_prompt() { # $1=window id $2=text
   local pane
-  pane="$(tmux show -wqv -t "$1" @ws_ativo)"
-  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  pane="$(tmux show -wqv -t "$1" @ws_active)"
+  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
   [ -n "$pane" ] || return 1
   tmux set-buffer -b ws_prompt -- "$2" && tmux paste-buffer -p -d -b ws_prompt -t "$pane"
   tmux select-pane -t "$pane"
 }
 
-resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando essa sessão
+resume() { # $1=session id $2=window: reopens the Claude pane resuming that session
   local pane cmd path
   path="$(tmux display -p -t "$2" '#{@ws_repo}')"
-  cmd="$(perfil_cmd "$(env_global WS_PERFIL)" "$path")" || return 1
-  tab_show "$2" "$(tab_list "$2" | head -1)"      # retoma sempre no Claude principal
-  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@papel}' | awk -F'|' '$2=="claude"{print $1}')"
+  cmd="$(profile_cmd "$(env_global WS_PROFILE)" "$path")" || return 1
+  tab_show "$2" "$(tab_list "$2" | head -1)"      # always resumes in the main Claude
+  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
   [ -n "$pane" ] || return 1
   tmux respawn-pane -k -t "$pane" -c "$path"
   tmux send-keys -t "$pane" "$cmd --resume $1" Enter
@@ -337,36 +337,36 @@ resume() { # $1=id da sessão $2=janela: reabre o painel do Claude já retomando
 # Closes windows (and their hidden tab windows) whose repo is no longer in config.yaml.
 # Runs on reload, so removing a repo from settings cleans up the rest.
 prune() { # $1=session
-  local names id nome base
-  names="$(python3 "$SRC/lib.py" nomes-janelas "$1")"
+  local names id name base
+  names="$(python3 "$SRC/lib.py" window-names "$1")"
   [ -n "$names" ] || return 0   # unreadable/empty settings: never prune
-  while IFS='|' read -r id nome; do
-    [ "$nome" = boot ] && continue
-    base="${nome#tab:}"; base="${base#ttab:}"
+  while IFS='|' read -r id name; do
+    [ "$name" = boot ] && continue
+    base="${name#tab:}"; base="${base#ttab:}"
     grep -qxF -- "$base" <<<"$names" || tmux kill-window -t "$id" 2>/dev/null
   done < <(tmux list-windows -t "$1:" -F '#{window_id}|#{window_name}')
   return 0
 }
 
-# Derruba o servidor e sobe de novo (o Claude volta com `claude --continue`).
-# Serve para os hooks/config novos valerem: detach não basta, o Claude só lê os hooks ao abrir.
+# Kills the server and starts it again (Claude comes back with `claude --continue`).
+# New hooks/config only take effect this way: detach is not enough, Claude reads the hooks on open.
 restart() {
-  local perfil="${1:-claude}" sock="ws-${1:-claude}"
-  if env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then
+  local profile="${1:-claude}" sock="ws-${1:-claude}"
+  if env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
     env -u TMUX tmux -L "$sock" kill-server
     sleep 1
   fi
-  iniciar "$perfil"
+  start_workspace "$profile"
 }
 
-# Reinicia os painéis (repos, lateral direita, tira de abas) relendo o código: mata o python de cada um
-# e o laço `while :` o sobe de novo em ~1s. Não mexe no Claude nem no terminal.
-panels() { # $1=perfil (padrão: claude)
-  local perfil="${1:-claude}" sock="ws-${1:-claude}" pid
-  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { msg cli.no_workspace profile="$perfil" >&2; exit 1; }
+# Restarts the panels (repos, side column, tab strip), re-reading the code: kills each python
+# and the `while :` loop starts it again in ~1s. Does not touch Claude or the terminal.
+panels() { # $1=profile (default: claude)
+  local profile="${1:-claude}" sock="ws-${1:-claude}" pid
+  tmux -L "$sock" has-session -t "$profile" 2>/dev/null || { msg cli.no_workspace profile="$profile" >&2; exit 1; }
   while read -r pid; do
     pkill -TERM -P "$pid" -f 'python3 .*/panel_' 2>/dev/null
-  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@papel}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="direita"||$2=="tabs"||$2=="ttabs"||$2=="dtabs"||$2=="rtabs"||$2=="ktabs"{print $1}')
+  done < <(tmux -L "$sock" list-panes -a -F '#{pane_pid}|#{@role}' | awk -F'|' '$2=="repos"||$2=="tasks"||$2=="side"||$2=="tabs"||$2=="ttabs"||$2=="dtabs"||$2=="rtabs"||$2=="ktabs"{print $1}')
   return 0
 }
 
@@ -378,11 +378,11 @@ is_mobile() { [ "$(tmux display -p -t "$1" '#{window_width}')" -lt "$MOBILE_W" ]
 mview_target() { # $1=window $2=claude|terminal|repos|tasks|side -> pane id
   local W="$1" p=""
   case "$2" in
-    claude) p="$(tmux show -wqv -t "$W" @ws_ativo)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" claude)" ;;
-    terminal) p="$(tmux show -wqv -t "$W" @ws_tativo)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" terminal)" ;;
+    claude) p="$(tmux show -wqv -t "$W" @ws_active)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" claude)" ;;
+    terminal) p="$(tmux show -wqv -t "$W" @ws_term_active)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" terminal)" ;;
     repos) p="$(pane_with_role "$W" repos)" ;;
     tasks) p="$(pane_with_role "$W" tasks)" ;;
-    side) p="$(pane_with_role "$W" direita)" ;;
+    side) p="$(pane_with_role "$W" side)" ;;
   esac
   echo "$p"
 }
@@ -443,13 +443,13 @@ menu() { # $1=client $2=window
 # One list-panes and one batched tmux call: this runs on every client switch, so it must be fast.
 fit_window() { # $1=window
   local W="$1" rows w h id role cmd=()
-  rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@papel}|#{window_width}|#{window_height}')"
+  rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}|#{window_width}|#{window_height}')"
   rid() { awk -F'|' -v r="$1" '$2==r{print $1; exit}' <<<"$rows"; }   # bash 3.2 (macOS): no associative arrays
   [ -n "$(rid claude)" ] || return 0
   IFS='|' read -r _ _ w h <<<"${rows%%$'\n'*}"
   if [ "$w" -ge "$MOBILE_W" ]; then
     id="$(rid repos)";    [ -n "$id" ] && cmd+=(resize-pane -t "$id" -x "$(col_w left "$w")" ';')
-    id="$(rid direita)";  [ -n "$id" ] && cmd+=(resize-pane -t "$id" -x "$(col_w right "$w")" ';')
+    id="$(rid side)";  [ -n "$id" ] && cmd+=(resize-pane -t "$id" -x "$(col_w right "$w")" ';')
     id="$(rid terminal)"; [ -n "$id" ] && cmd+=(resize-pane -t "$id" -y "$(( (h - 2) * 17 / 100 ))" ';')
     for role in ttabs:1 tabs:2 dtabs:2 rtabs:2 ktabs:1; do
       id="$(rid "${role%%:*}")"; [ -n "$id" ] && cmd+=(resize-pane -t "$id" -y "${role##*:}" ';')
@@ -460,44 +460,44 @@ fit_window() { # $1=window
   return 0
 }
 
-# Plugin windows: the plugins listed in config.yaml ("plugins" por perfil), one window "plugin:<id>" each.
+# Plugin windows: the plugins listed in config.yaml ("plugins" per profile), one window "plugin:<id>" each.
 # Nothing is discovered (see src/lib.py). lib.py checks plugin.json and prints only the valid ones, so a
 # broken plugin shows its error here and the other windows are still built.
 # Mode bar on top of every plugin window (full width, above the plugin's own layout): the rtabs strip
 # of panel_tabs.py, which lists REPOS and the plugins. The plugin owns its layout, so the bar is added here.
 BARRA_PLUGIN='rtabs|claude|vb|2|tabs:repos'
 
-plugin_abrir() { # $1=perfil $2=id $3=pasta $4=rótulo $5=árvore (ver REPO_TREE)
-  local S="$1" nome="plugin:$2" W
-  W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' -v n="$nome" '$2==n{print $1; exit}')"
+plugin_open() { # $1=profile $2=id $3=folder $4=label $5=tree (see REPO_TREE)
+  local S="$1" name="plugin:$2" W
+  W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{window_name}' | awk -F'|' -v n="$name" '$2==n{print $1; exit}')"
   if [ -z "$W" ]; then
-    W="$(tmux new-window -d -P -F '#{window_id}' -t "$S:" -n "$nome" -c "$3")"
-    tmux set -p -t "$(tmux display -p -t "$W" '#{pane_id}')" @papel claude
+    W="$(tmux new-window -d -P -F '#{window_id}' -t "$S:" -n "$name" -c "$3")"
+    tmux set -p -t "$(tmux display -p -t "$W" '#{pane_id}')" @role claude
   fi
   # the bar comes first, so it takes the top row; ensure_window creates it only when missing
   ensure_window "$W" "$3" "$BARRA_PLUGIN"$'\n'"$5"
   msg plugin.opened label="$4" id="$2"
 }
 
-plugin_sync() { # $1=perfil: abre ou completa a janela de cada plugin listado (idempotente)
-  local S="${1:-claude}" bloco="" id="" dir="" label="" linha
-  while IFS= read -r linha; do
-    if [[ "$linha" == @@* ]]; then
-      [ -n "$id" ] && plugin_abrir "$S" "$id" "$dir" "$label" "$bloco"
-      IFS=$'\t' read -r id dir label <<<"${linha#@@}"
-      bloco=""
+plugin_sync() { # $1=profile: opens or completes the window of each listed plugin (idempotent)
+  local S="${1:-claude}" block="" id="" dir="" label="" line
+  while IFS= read -r line; do
+    if [[ "$line" == @@* ]]; then
+      [ -n "$id" ] && plugin_open "$S" "$id" "$dir" "$label" "$block"
+      IFS=$'\t' read -r id dir label <<<"${line#@@}"
+      block=""
     else
-      bloco+="$linha"$'\n'
+      block+="$line"$'\n'
     fi
   done < <(python3 "$SRC/lib.py" plugins "$S")
-  [ -n "$id" ] && plugin_abrir "$S" "$id" "$dir" "$label" "$bloco"
+  [ -n "$id" ] && plugin_open "$S" "$id" "$dir" "$label" "$block"
   return 0
 }
 
 # Checks an open window and creates what is missing (tab strips, repos, side, terminal) without touching
 # what exists. New structural changes go in REPO_TREE, and `reload` applies them without a restart.
-# $3 = árvore de painéis (padrão REPO_TREE; plugins passam a própria). Plugin windows have no @ws_repo.
-ensure_window() { # $1=janela $2=caminho do repo $3=árvore
+# $3 = pane tree (default REPO_TREE; plugins pass their own). Plugin windows have no @ws_repo.
+ensure_window() { # $1=window $2=repo path $3=tree
   local W="$1" path="$2" P T
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
   init_tabs "$W" "$P" c
@@ -512,11 +512,11 @@ ensure_window() { # $1=janela $2=caminho do repo $3=árvore
 # fit runs at a time; events during a run just ask for another pass, and it repeats until the window
 # sizes stop changing (tmux resizes a window gradually when the latest client switches).
 fit() {
-  local perfil="${1:-claude}" sock="ws-${1:-claude}" W sig last=""   # lock stays global: the EXIT trap uses it
-  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || return 0
+  local profile="${1:-claude}" sock="ws-${1:-claude}" W sig last=""   # lock stays global: the EXIT trap uses it
+  tmux -L "$sock" has-session -t "$profile" 2>/dev/null || return 0
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
-  export WS_PERFIL="$perfil"
-  lock="${TMPDIR:-/tmp}/ws-fit-$perfil-$(id -u)"
+  export WS_PROFILE="$profile"
+  lock="${TMPDIR:-/tmp}/ws-fit-$profile-$(id -u)"
   if ! mkdir "$lock" 2>/dev/null; then
     if [ -f "$lock/pid" ] && ! kill -0 "$(cat "$lock/pid")" 2>/dev/null; then rm -rf "$lock"; fi   # stale lock
     touch "$lock.again" 2>/dev/null; return 0
@@ -524,50 +524,50 @@ fit() {
   echo $$ >"$lock/pid"; trap 'rm -rf "$lock"' EXIT
   for _ in 1 2 3 4 5; do
     rm -f "$lock.again"
-    while read -r W; do fit_window "$W"; done < <(tmux list-windows -t "$perfil:" -F '#{window_id}')
-    sig="$(tmux list-windows -t "$perfil:" -F '#{window_id}#{window_width}x#{window_height}')"
+    while read -r W; do fit_window "$W"; done < <(tmux list-windows -t "$profile:" -F '#{window_id}')
+    sig="$(tmux list-windows -t "$profile:" -F '#{window_id}#{window_width}x#{window_height}')"
     [ "$sig" = "$last" ] && [ ! -e "$lock.again" ] && break
     last="$sig"; sleep 0.2
   done
 }
 
-# Aplica config/tmux.conf novo e a tira de abas nas janelas já abertas, sem derrubar o servidor.
+# Applies a new config/tmux.conf and the tab strip to the windows already open, without killing the server.
 reload() {
-  local perfil="${1:-claude}" sock="ws-${1:-claude}" W P path strip
-  tmux -L "$sock" has-session -t "$perfil" 2>/dev/null || { msg cli.no_workspace profile="$perfil" >&2; exit 1; }
+  local profile="${1:-claude}" sock="ws-${1:-claude}" W P path strip
+  tmux -L "$sock" has-session -t "$profile" 2>/dev/null || { msg cli.no_workspace profile="$profile" >&2; exit 1; }
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
-  export WS_PERFIL="$perfil"
+  export WS_PROFILE="$profile"
   settings_refresh_all
-  tmux source-file "$AQUI/config/tmux.conf"
-  prune "$perfil"
+  tmux source-file "$ROOT/config/tmux.conf"
+  prune "$profile"
   while IFS='|' read -r W path; do
     [ -n "$path" ] && ensure_window "$W" "$path"
-  done < <(tmux list-windows -t "$perfil:" -F '#{window_id}|#{@ws_repo}')
-  plugin_sync "$perfil"
-  panels "$perfil"
+  done < <(tmux list-windows -t "$profile:" -F '#{window_id}|#{@ws_repo}')
+  plugin_sync "$profile"
+  panels "$profile"
   doctor --warn >&2 || true   # drift warning: never fails the reload
-  tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$perfil"
+  tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$profile"
 }
 
-iniciar() {
-  local perfil="${1:-claude}" cmd sock primeiro
-  cmd="$(perfil_cmd "$perfil")" || exit 2
-  [ -n "$cmd" ] || { msg cli.unknown_profile profile="$perfil" >&2; exit 2; }
-  sock="ws-$perfil"
-  if ! env -u TMUX tmux -L "$sock" has-session -t "$perfil" 2>/dev/null; then
-    export WS_PERFIL="$perfil"
-    env -u TMUX tmux -L "$sock" -f "$AQUI/config/tmux.conf" new-session -d -s "$perfil" -n boot \
+start_workspace() {
+  local profile="${1:-claude}" cmd sock first_repo
+  cmd="$(profile_cmd "$profile")" || exit 2
+  [ -n "$cmd" ] || { msg cli.unknown_profile profile="$profile" >&2; exit 2; }
+  sock="ws-$profile"
+  if ! env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
+    export WS_PROFILE="$profile"
+    env -u TMUX tmux -L "$sock" -f "$ROOT/config/tmux.conf" new-session -d -s "$profile" -n boot \
       -x "${WS_COLS:-$(tput cols 2>/dev/null || echo 200)}" -y "${WS_LINES:-$(tput lines 2>/dev/null || echo 50)}"
-    env -u TMUX tmux -L "$sock" set-environment -g WS_PERFIL "$perfil"
-    env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$AQUI"
-    if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$perfil:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
-      primeiro="$(python3 "$SRC/lib.py" repo-inicial)"
-      env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$primeiro'"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_PROFILE "$profile"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$ROOT"
+    if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$profile:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
+      first_repo="$(python3 "$SRC/lib.py" initial-repo)"
+      env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$first_repo'"
     fi
-    env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$perfil'"
+    env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$profile'"
   fi
-  [ -n "${WS_SEM_ANEXAR:-}" ] && return 0
-  exec env -u TMUX tmux -L "$sock" attach -t "$perfil"
+  [ -n "${WS_NO_ATTACH:-}" ] && return 0
+  exec env -u TMUX tmux -L "$sock" attach -t "$profile"
 }
 
 install() {
@@ -577,43 +577,46 @@ install() {
 }
 
 install_hooks() {
-  python3 - "$SRC/hook.py" "$SRC/statusline.py" <<'PY'
+  python3 - "$SRC/hook.py" "$SRC/statusline.py" "$SRC" <<'PY'
 import json, os, shutil, sys
 from pathlib import Path
 
-hook, statusline = sys.argv[1], sys.argv[2]
+hook, statusline, src = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, src)
+from i18n import t
+
 # Events confirmed in the Claude Code 2.1.319 binary. Third-party hooks are never touched.
-EVENTOS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
-           "PermissionRequest", "PermissionDenied", "Notification", "Stop", "StopFailure",
-           "SubagentStart", "SubagentStop", "SessionEnd", "Elicitation", "CwdChanged", "PostModelSwitch")
+EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+          "PermissionRequest", "PermissionDenied", "Notification", "Stop", "StopFailure",
+          "SubagentStart", "SubagentStop", "SessionEnd", "Elicitation", "CwdChanged", "PostModelSwitch")
 
 f = Path.home() / ".claude" / "settings.json"   # HOME overrides this, e.g. for tests
 raw = f.read_text() if f.exists() else ""
 try:
     cfg = json.loads(raw) if raw.strip() else {}
 except json.JSONDecodeError as e:
-    sys.exit(f"settings.json inválido, nada gravado: {e}")
+    sys.exit(t("workspace.hooks.invalid_json", error=e))
 if not isinstance(cfg, dict):
-    sys.exit("settings.json não é um objeto JSON, nada gravado")
+    sys.exit(t("workspace.hooks.not_object"))
 
 changed = []
 hooks = cfg.setdefault("hooks", {})
-for ev in EVENTOS:
-    grupos = hooks.setdefault(ev, [])
-    if any(hook in h.get("command", "") for g in grupos for h in g.get("hooks", [])):
+for ev in EVENTS:
+    groups = hooks.setdefault(ev, [])
+    if any(hook in h.get("command", "") for g in groups for h in g.get("hooks", [])):
         continue
-    grupos.append({"hooks": [{"type": "command", "command": f"python3 {hook}", "timeout": 5}]})
+    groups.append({"hooks": [{"type": "command", "command": f"python3 {hook}", "timeout": 5}]})
     changed.append(ev)
 
 sl = cfg.get("statusLine")
 if sl is None:
     cfg["statusLine"] = {"type": "command", "command": f"python3 {statusline}"}
     changed.append("statusLine")
-    aviso = None
+    warning = None
 elif isinstance(sl, dict) and statusline in str(sl.get("command", "")):
-    aviso = None
+    warning = None
 else:
-    aviso = "AVISO: já existe um statusLine de outra origem; não foi alterado."
+    warning = t("workspace.hooks.statusline_warning")
 
 if changed:
     if f.exists():
@@ -625,12 +628,16 @@ if changed:
         shutil.copymode(f, tmp)
     os.replace(tmp, f)
 
-if aviso:
-    print(aviso)
-eventos = [c for c in changed if c != "statusLine"]
-print(f"hooks registrados em {len(eventos)} evento(s); statusLine {'registrado' if 'statusLine' in changed else 'sem mudança'}."
-      + (" Backup em settings.json.bak-workspace." if changed and raw else "")
-      + (" Sessões abertas precisam reiniciar; eventos novos exigem 'workspace restart'." if changed else " Nada a fazer."))
+if warning:
+    print(warning)
+events = [c for c in changed if c != "statusLine"]
+status = t("workspace.hooks.status_registered" if "statusLine" in changed
+           else "workspace.hooks.status_unchanged")
+rest = t("workspace.hooks.nothing")
+if changed:
+    rest = t("workspace.hooks.backup") if raw else ""
+    rest += t("workspace.hooks.restart")
+print(t("workspace.hooks.summary", events=len(events), status=status, rest=rest))
 PY
 }
 
@@ -641,7 +648,7 @@ case "${1:-}" in
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" "${4:-1}" ;;
   type) type_prompt "$2" "$3" ;;
-  options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$AQUI" "python3 $SRC/options.py $3" ;;
+  options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "python3 $SRC/options.py $3" ;;
   resume) shift; resume "$@" ;;
   tab-new) tab_new "$2" "${3:-}" ;;
   tab-show) tab_show "$2" "$3" ;;
@@ -657,6 +664,6 @@ case "${1:-}" in
   fit) shift; fit "$@" ;;
   mview) shift; mview "$@" ;;
   menu) menu "$2" "$3" ;;
-  ""|-*) iniciar claude ;;
+  ""|-*) start_workspace claude ;;
   *) msg cli.unknown_command command="$1" >&2; exit 2 ;;
 esac

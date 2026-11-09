@@ -33,31 +33,31 @@ import i18n
 import lib
 import tmux
 from tree_state import Expander
-from viewer import B, DIM, ORANGE, R, Linha, Viewer, close_on_esc, popup_header, term_cols
+from viewer import B, DIM, ORANGE, R, Row, Viewer, close_on_esc, popup_header, term_cols
 
 MAX_W = 100
 TIMEOUT_S = 300
 
-PASTAS = Expander(padrao_aberto=True)   # everything starts expanded: all options on one screen
+FOLDERS = Expander(default_open=True)   # everything starts expanded: all options on one screen
 pending = None      # leaf chosen in the tree, run after the viewer closes
 
 
 def prompt_list():
-    custom = lib.ler_config().get("prompts")
+    custom = lib.read_config().get("prompts")
     if isinstance(custom, list) and custom:
         return [p for p in custom if isinstance(p, str) and p.strip()]
     return [v for k, v in sorted(i18n._STRINGS.items()) if k.startswith("prompt.wheel.")]
 
 
 def tree():
-    lib.ler_config()     # refreshes lib.ERRO_CONFIG before it is read below
+    lib.read_config()     # refreshes lib.CONFIG_ERROR before it is read below
     nodes = []
-    if lib.ERRO_CONFIG:
-        caminho, linha = lib.ERRO_CONFIG
-        texto = (i18n.t("config.err.read_line", path=caminho, line=linha) if linha
-                 else i18n.t("config.err.read", path=caminho))
-        nodes.append({"label": texto})
-    elif lib.precisa_migrar():
+    if lib.CONFIG_ERROR:
+        path, line = lib.CONFIG_ERROR
+        text = (i18n.t("config.err.read_line", path=path, line=line) if line
+                 else i18n.t("config.err.read", path=path))
+        nodes.append({"label": text})
+    elif lib.needs_migration():
         nodes.append({"label": i18n.t("options.migrate"), "migrate": True})
     nodes += [
         {"label": i18n.t("options.prompts"), "prompts": True,
@@ -68,12 +68,12 @@ def tree():
             {"label": i18n.t("options.conference.selected"), "conference": "selected"},
         ]},
     ]
-    agents = sorted(set(lib.ler_config().get("profiles", {})) | {"claude"})
+    agents = sorted(set(lib.read_config().get("profiles", {})) | {"claude"})
     current = lib.agent_name()
     nodes.append({"label": i18n.t("options.agent"), "children": [
         {"label": ("● " if a == current else "○ ") + a, "agent": a} for a in agents]})
     nodes.append({"label": i18n.t("options.general"), "children": [{"label": i18n.t("options.mic"), "mic": True}]})
-    custom = lib.ler_config().get("options")
+    custom = lib.read_config().get("options")
     if isinstance(custom, list):
         nodes += custom
     return nodes
@@ -87,7 +87,7 @@ def flatten(nodes, depth=0, path=()):
             continue
         key = ".".join(map(str, path + (i,)))
         rows.append((key, depth, node))
-        if isinstance(node.get("children"), list) and PASTAS.is_open(key):
+        if isinstance(node.get("children"), list) and FOLDERS.is_open(key):
             rows += flatten(node["children"], depth + 1, path + (i,))
     return rows
 
@@ -95,14 +95,14 @@ def flatten(nodes, depth=0, path=()):
 def collect(v):
     cols = term_cols()
     w = min(MAX_W, cols - 4)
-    body = [Linha()]
+    body = [Row()]
     n_prompt = 0
     for key, depth, node in flatten(tree()):
         folder = isinstance(node.get("children"), list)
         pad = "  " * depth
         if folder:
-            mark = "▾" if PASTAS.is_open(key) else "▸"
-            body.append(Linha(f" {pad}{ORANGE}{B}{mark} {node['label']}{R}", chave=key))
+            mark = "▾" if FOLDERS.is_open(key) else "▸"
+            body.append(Row(f" {pad}{ORANGE}{B}{mark} {node['label']}{R}", key=key))
             continue
         num = ""
         if "type" in node and key.split(".")[0] == "0":
@@ -111,9 +111,9 @@ def collect(v):
         lines = textwrap.wrap(node["label"], max(10, w - len(pad) - 5)) or [""]
         for i, ln in enumerate(lines):
             head = f"{ORANGE}{num}{R}" if i == 0 else "  " * (len(num) // 2)
-            body.append(Linha(f" {pad}  {head}{ln}", chave=key if i == 0 else None, cont=i > 0))
+            body.append(Row(f" {pad}  {head}{ln}", key=key if i == 0 else None, cont=i > 0))
     if len(body) == 1:
-        body.append(Linha(f" {DIM}{i18n.t('options.empty')}{R}"))
+        body.append(Row(f" {DIM}{i18n.t('options.empty')}{R}"))
     return popup_header(i18n.t('options.bar'), i18n.t('options.keys'), cols), body
 
 
@@ -121,7 +121,7 @@ def node_of(key):
     return next((n for k, _, n in flatten(tree()) if k == key), None)
 
 
-def pai_de(key):
+def parent_of(key):
     """Parent key of a row ("0.1" -> "0"), None at the top level."""
     return key.rsplit(".", 1)[0] if "." in key else None
 
@@ -133,14 +133,14 @@ def on_enter(v, key, k):
         return
     if isinstance(node.get("children"), list):
         if k == "l":        # Right opens; Enter and Space toggle
-            PASTAS.open(key)
+            FOLDERS.open(key)
         else:
-            PASTAS.toggle(key)
-        v.recoletar.set()
+            FOLDERS.toggle(key)
+        v.redraw.set()
     else:
         pending = node
-        v.parar = True
-        v._acordar()
+        v.stopped = True
+        v._wake()
 
 
 def on_key(v, k):
@@ -151,18 +151,18 @@ def on_key(v, k):
         if int(k) <= len(typed):
             global pending
             pending = typed[int(k) - 1]
-            v.parar = True
-            v._acordar()
-    elif k == "right" and v.chave is not None:
-        on_enter(v, v.chave, "l")
-    elif k == "left" and v.chave is not None:
-        node = node_of(v.chave)
-        pasta = isinstance(node, dict) and isinstance(node.get("children"), list)
-        novo = PASTAS.handle_arrow(k, v.chave, pai=pai_de, pasta=pasta)
-        if novo != v.chave:         # leaf or collapsed folder: moved up, and the parent folder collapses
-            PASTAS.close(novo)
-            v.chave = novo
-        v.recoletar.set()
+            v.stopped = True
+            v._wake()
+    elif k == "right" and v.key is not None:
+        on_enter(v, v.key, "l")
+    elif k == "left" and v.key is not None:
+        node = node_of(v.key)
+        folder = isinstance(node, dict) and isinstance(node.get("children"), list)
+        new = FOLDERS.handle_arrow(k, v.key, parent=parent_of, folder=folder)
+        if new != v.key:         # leaf or collapsed folder: moved up, and the parent folder collapses
+            FOLDERS.close(new)
+            v.key = new
+        v.redraw.set()
 
 
 def repo_and_command(window):
@@ -183,9 +183,9 @@ def confirm_security(name):
             answer = input(f" {ORANGE}{i18n.t('options.agent.security.confirm')}{R} ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             return False
-        if answer in ("s", "sim", "y", "yes"):
+        if answer in i18n.t("options.answer.yes").split():
             return True
-        if answer in ("d", "detalhes", "details"):
+        if answer in i18n.t("options.answer.details").split():
             show(title, i18n.t("options.agent.security.details", profile=name))
             continue
         return False
@@ -202,7 +202,7 @@ def switch_agent(name, window):
     except (OSError, ValueError):
         show(i18n.t("options.agent"), i18n.t("config.err.write"))
         return
-    env = dict(os.environ, WS_SEM_ANEXAR="1")
+    env = dict(os.environ, WS_NO_ATTACH="1")
     subprocess.Popen([lib.WS, "restart"], env=env, start_new_session=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -218,14 +218,14 @@ def conference_output(fn, *args, **kwargs):
 def workspace_repos(window_repo):
     """[(group, [(name, path), ...]), ...] for the picker. The window repo is always first (even
     when the config does not list it); repeated paths keep the first occurrence."""
-    window_repo = lib.expandir(window_repo)
+    window_repo = lib.expand_path(window_repo)
     entries = [("", [(os.path.basename(window_repo), window_repo)])]
     seen = {window_repo}
 
     def add(group, repos):
         keep = []
         for name, path in repos:
-            path = lib.expandir(path)
+            path = lib.expand_path(path)
             if path in seen or not os.path.isdir(path):
                 continue
             seen.add(path)
@@ -233,10 +233,10 @@ def workspace_repos(window_repo):
         if keep:
             entries.append((group, keep))
 
-    principal = lib.ler_principal()
-    if principal:
-        add("", [principal])
-    for group, repos in lib.ler_repos():
+    main = lib.read_main()
+    if main:
+        add("", [main])
+    for group, repos in lib.read_repos():
         add(group, repos)
     return entries
 
@@ -246,59 +246,59 @@ def choose_repos(window_repo):
     when the screen is cancelled or nothing is marked. The window repo starts marked."""
     entries = workspace_repos(window_repo)
     paths = [path for _, repos in entries for _, path in repos]
-    state = {"selected": {lib.expandir(window_repo)}, "done": False, "notice": ""}
+    state = {"selected": {lib.expand_path(window_repo)}, "done": False, "notice": ""}
     title, keys = i18n.t("options.conference.pick_title"), i18n.t("options.conference.pick_keys")
 
     def collect(v):
         cols = term_cols()
-        body = [Linha()]
+        body = [Row()]
         if state["notice"]:
-            body += [Linha(f" {DIM}{state['notice']}{R}"), Linha()]
+            body += [Row(f" {DIM}{state['notice']}{R}"), Row()]
         for group, repos in entries:
             if group:
-                body.append(Linha(f" {DIM}{group}{R}"))
+                body.append(Row(f" {DIM}{group}{R}"))
             for name, path in repos:
                 mark = "●" if path in state["selected"] else "○"
-                color = ORANGE if path == v.chave else ""
-                body.append(Linha(f" {color}{mark} {name}{R}", chave=path))
+                color = ORANGE if path == v.key else ""
+                body.append(Row(f" {color}{mark} {name}{R}", key=path))
         return popup_header(title, keys, cols), body
 
     def on_input(v, k):
         if k in ("\r", "\n"):
             if not state["selected"]:
                 state["notice"] = i18n.t("options.conference.pick_none")
-                v.recoletar.set()
+                v.redraw.set()
                 return True
             state["done"] = True
-            v.parar = True
-            v._acordar()
+            v.stopped = True
+            v._wake()
             return True
         if k == " ":
-            if v.chave:
-                state["selected"] = (state["selected"] - {v.chave}
-                                     if v.chave in state["selected"]
-                                     else state["selected"] | {v.chave})
+            if v.key:
+                state["selected"] = (state["selected"] - {v.key}
+                                     if v.key in state["selected"]
+                                     else state["selected"] | {v.key})
                 state["notice"] = ""
-                v.recoletar.set()
+                v.redraw.set()
             return True
         if k == "a":
             state["selected"] = set(paths)
             state["notice"] = ""
-            v.recoletar.set()
+            v.redraw.set()
             return True
         if k == "n":
             state["selected"].clear()
             state["notice"] = ""
-            v.recoletar.set()
+            v.redraw.set()
             return True
         return False
 
     def footer(_v):
         return f"{DIM}{i18n.t('options.conference.pick_footer', n=len(state['selected']))}{R}"
 
-    Viewer(collect, intervalo=3600, cursor=True,
-           chave_inicial=paths[0] if paths else None,
-           ao_tecla=close_on_esc, entrada=on_input, rodape=footer).rodar()
+    Viewer(collect, interval=3600, cursor=True,
+           initial_key=paths[0] if paths else None,
+           on_key=close_on_esc, on_input=on_input, footer=footer).run()
     if not state["done"]:
         return []
     return [path for path in paths if path in state["selected"]]
@@ -330,11 +330,11 @@ def run_leaf(node, window):
         return
     if "migrate" in node:
         try:
-            destino = lib.migrar_config()
-            texto = i18n.t("config.migrated", path=str(destino))
+            destination = lib.migrate_config()
+            text = i18n.t("config.migrated", path=str(destination))
         except (OSError, ValueError):
-            texto = i18n.t("config.err.migrate")
-        show(node["label"], texto)
+            text = i18n.t("config.err.migrate")
+        show(node["label"], text)
         return
     if "mic" in node:
         import mic
@@ -374,15 +374,15 @@ def run_leaf(node, window):
 def show(title, text):
     def collect_result(v):
         cols = term_cols()
-        body = [Linha()] + help.render(text, cols)
+        body = [Row()] + help.render(text, cols)
         return popup_header(title, i18n.t('options.result_keys'), cols), body
 
-    Viewer(collect_result, intervalo=3600, ao_tecla=close_on_esc).rodar()
+    Viewer(collect_result, interval=3600, on_key=close_on_esc).run()
 
 
 if __name__ == "__main__":
     WINDOW = sys.argv[1] if len(sys.argv) > 1 else ""
     if WINDOW:
-        Viewer(collect, intervalo=3600, cursor=True, ao_enter=on_enter, ao_tecla=on_key, wrap=True).rodar()
+        Viewer(collect, interval=3600, cursor=True, on_enter=on_enter, on_key=on_key, wrap=True).run()
         if pending:
             run_leaf(pending, WINDOW)

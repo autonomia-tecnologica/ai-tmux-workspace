@@ -43,7 +43,7 @@ DIR_CLOSED, DIR_OPEN = "", ""
 
 
 def enabled():
-    return bool(lib.ler_config().get("icons", True))
+    return bool(lib.read_config().get("icons", True))
 
 
 def file_icon(name, dim=False):

@@ -1,7 +1,7 @@
 """Git worktrees: create, list, prepare, merge and remove one worktree per branch.
 
 A worktree lives under `~/.local/share/ai-tmux-workspace/worktrees/<repo>/<branch>`; `WS_WORKTREES`
-overrides that root (read at call time, like `WS_ESTADO` in lib.py), so tests isolate it.
+overrides that root (read at call time, like `WS_STATE` in lib.py), so tests isolate it.
 
 `.workspace.yaml` in the main checkout (optional) drives preparation: `base` (default branch for new
 worktrees), `setup` (shell command run inside the worktree), `include` (literal gitignored files to
@@ -50,11 +50,11 @@ def resolve_repo(value):
     path = _expand(value)
     if os.path.isdir(path):
         return path
-    for _, repos in lib.ler_repos():
+    for _, repos in lib.read_repos():
         for name, repo in repos:
             if value in (name, os.path.basename(repo)):
                 return repo
-    main = lib.ler_principal()
+    main = lib.read_main()
     if main and value in (main[0], os.path.basename(main[1])):
         return main[1]
     raise WorktreeError(t("worktree.not_a_repo", repo=value))
@@ -113,7 +113,7 @@ def read_config(repo):
         raise WorktreeError(t("worktree.config_invalid", path=str(path), error=error))
     try:
         data = yaml_min.loads(text)
-    except yaml_min.ErroYAML as error:
+    except yaml_min.YamlError as error:
         raise WorktreeError(t("worktree.config_invalid", path=str(path), error=error))
     return data if isinstance(data, dict) else {}
 

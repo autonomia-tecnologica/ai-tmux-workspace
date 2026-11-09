@@ -1,7 +1,7 @@
 """Tests for the workspace-generated settings: the harness base (hooks + deny) merged with each
 profile's own settings, the `--settings` launch flag, and the refusal to write a literal access key.
 
-Each test runs `src/lib.py` in a child process with temporary HOME, WS_ESTADO, AT_WS_CONFIG and
+Each test runs `src/lib.py` in a child process with temporary HOME, WS_STATE, AT_WS_CONFIG and
 AT_HARNESS_DIR, so the real config, cache and installed harness are never read or written. The
 committed harness/settings.json is the explicit fallback until item 33 installs the harness."""
 import json
@@ -19,7 +19,7 @@ LIB = ROOT / "src" / "lib.py"
 
 FAKE_KEY = "sk-" + "fake-" + "0" * 30      # assembled at runtime: no key-like literal in the repo
 
-FORCADO = """\
+HARNESS_POLICY = """\
 versao: 1
 itens:
   - id: F03
@@ -52,7 +52,7 @@ class SettingsTest(unittest.TestCase):
         self.config.write_text(json.dumps(config), encoding="utf-8")
 
     def env(self, harness=None):
-        return dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state),
+        return dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state),
                     AT_WS_CONFIG=str(self.config),
                     AT_HARNESS_DIR=str(harness if harness is not None else self.root / "no-harness"))
 
@@ -66,10 +66,10 @@ class SettingsTest(unittest.TestCase):
     def generated(self, profile="deepseek"):
         return json.loads((self.state / "settings" / f"{profile}.json").read_text(encoding="utf-8"))
 
-    def harness(self, forcado=FORCADO):
+    def harness(self, policy=HARNESS_POLICY):
         folder = self.root / "installed-harness"
         folder.mkdir(exist_ok=True)
-        (folder / "forcado.yaml").write_text(textwrap.dedent(forcado), encoding="utf-8")
+        (folder / "forcado.yaml").write_text(textwrap.dedent(policy), encoding="utf-8")
         (folder / "harness.py").write_text("# installed hook\n", encoding="utf-8")
         return folder
 
@@ -117,7 +117,7 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("apiKeyHelper", text)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
-    def test_installed_harness_forcado_is_the_base_when_present(self):
+    def test_installed_harness_policy_is_the_base_when_present(self):
         folder = self.harness()
         self.mapping_profile({})
         proc = self.ensure("deepseek", harness=folder)
@@ -141,7 +141,7 @@ class SettingsTest(unittest.TestCase):
         self.mapping_profile({"env": {"ANTHROPIC_AUTH_TOKEN": FAKE_KEY}})
         proc = self.ensure("deepseek")
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("valor literal", proc.stderr)
+        self.assertIn("apiKeyHelper", proc.stderr)         # the message points to the vault helper
         self.assertFalse((self.state / "settings" / "deepseek.json").exists())
 
     def test_literal_key_in_any_env_name_is_refused(self):
@@ -152,7 +152,7 @@ class SettingsTest(unittest.TestCase):
                 self.mapping_profile({"env": {key: "literal-value"}})
                 proc = self.ensure("deepseek")
                 self.assertEqual(proc.returncode, 2, proc.stdout)
-                self.assertIn("valor literal", proc.stderr)
+                self.assertIn("apiKeyHelper", proc.stderr)         # the message points to the vault helper
 
     def test_non_secret_env_names_are_not_mistaken_for_keys(self):
         self.mapping_profile({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
@@ -164,14 +164,14 @@ class SettingsTest(unittest.TestCase):
         self.mapping_profile({"apiKeyHelper": f"printf '%s' {FAKE_KEY}"})
         proc = self.ensure("deepseek")
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("cara de chave", proc.stderr)
+        self.assertIn("apiKeyHelper", proc.stderr)         # the message points to the vault helper
 
     def test_literal_key_in_the_profile_command_is_refused(self):
         self.configure({"agent": "deepseek", "profiles": {
             "deepseek": f"claude --api-key {FAKE_KEY}"}})
-        proc = self.run_lib("perfil-cmd", "deepseek")
+        proc = self.run_lib("profile-cmd", "deepseek")
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("cara de chave", proc.stderr)
+        self.assertIn("apiKeyHelper", proc.stderr)         # the message points to the vault helper
 
     def test_bad_settings_shape_is_refused(self):
         self.configure({"agent": "deepseek", "profiles": {"deepseek": {"command": "claude",
@@ -183,7 +183,7 @@ class SettingsTest(unittest.TestCase):
     # 3 ---------------------------------------------------------------------------------------
     def test_launch_command_appends_the_generated_settings(self):
         self.mapping_profile({})
-        proc = self.run_lib("perfil-cmd", "deepseek")
+        proc = self.run_lib("profile-cmd", "deepseek")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         self.assertTrue(out.startswith("env ENABLE_TOOL_SEARCH=false claude --settings "))
@@ -191,7 +191,7 @@ class SettingsTest(unittest.TestCase):
 
     def test_default_claude_profile_gets_the_base_without_a_model(self):
         self.configure({"agent": "claude", "profiles": {"claude": "claude"}})
-        proc = self.run_lib("perfil-cmd", "claude")
+        proc = self.run_lib("profile-cmd", "claude")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         self.assertTrue(out.startswith("claude --settings "))
@@ -203,7 +203,7 @@ class SettingsTest(unittest.TestCase):
     def test_legacy_string_profile_with_settings_is_left_untouched(self):
         self.configure({"agent": "deepseek", "profiles": {
             "deepseek": "claude --settings ~/.claude/settings.deepseek.json"}})
-        proc = self.run_lib("perfil-cmd", "deepseek")
+        proc = self.run_lib("profile-cmd", "deepseek")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("claude --settings ~/.claude/settings.deepseek.json", proc.stdout)
         self.assertNotIn(str(self.state / "settings"), proc.stdout)
@@ -220,7 +220,7 @@ class SettingsTest(unittest.TestCase):
         repo.mkdir()
         self.configure({"agent": "deepseek", "profiles": {
             "claude": "claude", "deepseek": {"command": "claude"}}})
-        first = self.run_lib("perfil-cmd", "deepseek", str(repo))
+        first = self.run_lib("profile-cmd", "deepseek", str(repo))
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertIn("--permission-mode bypassPermissions", first.stdout)
         saved = json.loads((self.state / "permission.json").read_text(encoding="utf-8"))
@@ -228,7 +228,7 @@ class SettingsTest(unittest.TestCase):
 
         self.configure({"agent": "claude", "profiles": {
             "claude": "claude", "deepseek": {"command": "claude"}}})
-        second = self.run_lib("perfil-cmd", "claude", str(repo))
+        second = self.run_lib("profile-cmd", "claude", str(repo))
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("--permission-mode acceptEdits", second.stdout)     # the old profile's mode is not reapplied
 

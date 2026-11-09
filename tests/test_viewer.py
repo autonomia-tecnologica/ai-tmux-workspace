@@ -13,21 +13,21 @@ import viewer  # noqa: E402
 
 
 def make(text):
-    return viewer.Viewer(lambda v: ([], []), rodape=lambda v: text)
+    return viewer.Viewer(lambda v: ([], []), footer=lambda v: text)
 
 
 class FooterTest(unittest.TestCase):
     def test_a_long_message_wraps_into_more_than_the_old_two_rows(self):
-        linhas = make("m" * 65)._footer_lines(20, viewer.MAX_FOOTER_LINES)
-        self.assertGreater(len(linhas), 2)
-        self.assertTrue(all(viewer._largura(l) <= 19 for l in linhas))
+        lines = make("m" * 65)._footer_lines(20, viewer.MAX_FOOTER_LINES)
+        self.assertGreater(len(lines), 2)
+        self.assertTrue(all(viewer._width(l) <= 19 for l in lines))
 
     def test_the_footer_keeps_the_end_when_it_does_not_fit(self):
-        text = "".join(f"linha {n} " for n in range(30))
-        linhas = make(text)._footer_lines(20, 4)
-        self.assertEqual(len(linhas), 4)
-        self.assertTrue(linhas[0].startswith("…"))
-        self.assertIn("linha 29", linhas[-1])
+        text = "".join(f"row {n} " for n in range(30))
+        lines = make(text)._footer_lines(20, 4)
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(lines[0].startswith("…"))
+        self.assertIn("29", "".join(lines))      # the end survives, the start does not
 
     def test_ansi_is_preserved(self):
         text = f"{viewer.ORANGE}abc{viewer.R}"
@@ -42,9 +42,9 @@ class FooterTest(unittest.TestCase):
         with mock.patch("shutil.get_terminal_size",
                         return_value=os.terminal_size((20, 12))), \
                 mock.patch("sys.stdout", out):
-            v._desenhar(forcar=True)
-        self.assertGreater(v._rod_n, 3)
-        self.assertEqual(v._rod_h(), v._rod_n)
+            v._draw(force=True)
+        self.assertGreater(v._footer_rows, 3)
+        self.assertEqual(v._footer_h(), v._footer_rows)
 
 
 if __name__ == "__main__":

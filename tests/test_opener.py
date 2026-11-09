@@ -35,7 +35,7 @@ class ChoicesTest(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def choices(self, path, config, found):
-        with mock.patch.object(opener.lib, "ler_config", return_value=config), \
+        with mock.patch.object(opener.lib, "read_config", return_value=config), \
                 mock.patch.object(opener.shutil, "which", side_effect=which_for(*found)):
             return opener.choices(path)
 
@@ -80,14 +80,14 @@ class ChoicesTest(unittest.TestCase):
         self.assertEqual([e["command"] for e in result], ["vim"])
 
     def test_default_choice_is_the_first_one(self):
-        with mock.patch.object(opener.lib, "ler_config", return_value={}), \
+        with mock.patch.object(opener.lib, "read_config", return_value={}), \
                 mock.patch.object(opener.shutil, "which", side_effect=which_for("dawn-writer", "nvim")):
             self.assertEqual(opener.default_choice("/tmp/a.md")["name"], "Dawn")
 
     def test_no_editor_available_returns_empty(self):
         result = self.choices("/tmp/a.py", {}, set())
         self.assertEqual(result, [])
-        with mock.patch.object(opener.lib, "ler_config", return_value={}), \
+        with mock.patch.object(opener.lib, "read_config", return_value={}), \
                 mock.patch.object(opener.shutil, "which", return_value=None):
             self.assertIsNone(opener.default_choice("/tmp/a.py"))
 

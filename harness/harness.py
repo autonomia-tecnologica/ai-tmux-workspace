@@ -14,7 +14,7 @@ invalid input or missing session id exits 0 with no decision (fail open). Events
 hooks and translates every item with `tipo: deny` into a permissions.deny entry.
 
 The harness directory comes from AT_HARNESS_DIR or --harness (render); the default is derived from
-Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_ESTADO (or
+Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_STATE (or
 ~/.cache/workspace). Stdlib only, and no import from src/: this file is installed on its own.
 """
 import json
@@ -272,7 +272,7 @@ def state_dir():
     """Directory of the per-session read markers."""
     if os.environ.get("AT_HARNESS_STATE"):
         return Path(os.environ["AT_HARNESS_STATE"]).expanduser()
-    base = os.environ.get("WS_ESTADO")
+    base = os.environ.get("WS_STATE")
     return (Path(base).expanduser() if base else Path.home() / ".cache" / "workspace") / "harness"
 
 

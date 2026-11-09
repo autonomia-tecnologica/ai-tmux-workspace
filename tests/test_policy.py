@@ -38,7 +38,7 @@ EXPECTED_CAPABILITIES = {
 }
 
 ENV_KEYS = (
-    "HOME", "WS_ESTADO", "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE",
+    "HOME", "WS_STATE", "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE",
     "WS_PARENT_ROLE", "WS_SESSION_ID", "WS_POLICY", "WS_POLICY_AUTO", "WS_AUTO", "WS_DIR",
     "WS_I18N", "WS_POLICY_CLI", "TMPDIR",
 )
@@ -77,7 +77,7 @@ class PolicyTest(unittest.TestCase):
             folder.mkdir(parents=True)
         self.outside = "/opt/ai-tmux-workspace-policy-test/outside.txt"
         self.saved = {name: os.environ.pop(name, None) for name in ENV_KEYS}
-        os.environ.update(HOME=str(self.home), WS_ESTADO=str(self.state),
+        os.environ.update(HOME=str(self.home), WS_STATE=str(self.state),
                           WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo))
         self.addCleanup(self._restore)
 
@@ -91,7 +91,7 @@ class PolicyTest(unittest.TestCase):
     # --- helpers -------------------------------------------------------------------------------
     def env(self, **overrides):
         env = {name: value for name, value in os.environ.items() if name not in ENV_KEYS}
-        env.update(HOME=str(self.home), WS_ESTADO=str(self.state),
+        env.update(HOME=str(self.home), WS_STATE=str(self.state),
                    WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo))
         for name, value in overrides.items():
             if value is None:

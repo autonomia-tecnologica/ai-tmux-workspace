@@ -15,37 +15,37 @@ import options  # noqa: E402
 
 
 class FakePickViewer:
-    """Applies (chave, key) pairs in order; None as chave keeps the current row."""
+    """Applies (key, value) pairs in order; None as key keeps the current row."""
 
     keys = []
     last = None
 
-    def __init__(self, coletar, **kwargs):
-        self.coletar = coletar
-        self.chave = kwargs.get("chave_inicial")
-        self.entrada = kwargs.get("entrada")
-        self.ao_tecla = kwargs.get("ao_tecla")
-        self.rodape = kwargs.get("rodape")
-        self.parar = False
-        self.recoletar = mock.Mock()
+    def __init__(self, collect, **kwargs):
+        self.collect = collect
+        self.key = kwargs.get("initial_key")
+        self.on_input = kwargs.get("on_input")
+        self.on_key = kwargs.get("on_key")
+        self.footer = kwargs.get("footer")
+        self.stopped = False
+        self.redraw = mock.Mock()
         self.top, self.frame = 0, None
         type(self).last = self
 
-    def _acordar(self):
+    def _wake(self):
         pass
 
-    def rodar(self):
-        self.frame = self.coletar(self)
-        for chave, k in type(self).keys:
-            if chave is not None:
-                self.chave = chave
+    def run(self):
+        self.frame = self.collect(self)
+        for key, k in type(self).keys:
+            if key is not None:
+                self.key = key
             if k is None:
                 continue
-            if self.entrada and self.entrada(self, k):
-                if self.parar:
+            if self.on_input and self.on_input(self, k):
+                if self.stopped:
                     break
                 continue
-            if self.ao_tecla and self.ao_tecla(self, k):
+            if self.on_key and self.on_key(self, k):
                 break
 
 
@@ -67,7 +67,7 @@ class OptionsConferenceTest(unittest.TestCase):
             f"    - {self.sibling}\n",
             encoding="utf-8",
         )
-        env = mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.cfg), "WS_ESTADO": str(self.tmp)})
+        env = mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.cfg), "WS_STATE": str(self.tmp)})
         env.start()
         self.addCleanup(env.stop)
 
@@ -124,8 +124,8 @@ class OptionsConferenceTest(unittest.TestCase):
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, [])
-        frame = FakePickViewer.last.coletar(FakePickViewer.last)   # recoletar after the notice
-        body = "\n".join(l.texto for l in frame[1])
+        frame = FakePickViewer.last.collect(FakePickViewer.last)   # redraw after the notice
+        body = "\n".join(l.text for l in frame[1])
         self.assertIn(i18n.t("options.conference.pick_none"), body)
 
     def test_the_picker_lists_the_window_repo_first(self):

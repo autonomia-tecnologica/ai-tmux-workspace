@@ -27,7 +27,7 @@ MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions
 
 
 def _state_dir():
-    return Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace"))
+    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace"))
 
 
 def path():

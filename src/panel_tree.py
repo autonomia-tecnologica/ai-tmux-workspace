@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Árvore de arquivos do repo da janela. Enter abre/fecha pasta ou abre o arquivo no editor."""
+"""File tree of the window repo. Enter opens/closes a folder or opens the file in the editor."""
 import os
 import shlex
 import subprocess
@@ -12,13 +12,13 @@ from i18n import t
 import opener
 import tmux
 from tree_state import Expander
-from viewer import AMARELO, AZUL, B, CINZA, DIM, R, VERDE, Linha, Viewer
+from viewer import YELLOW, BLUE, B, GRAY, DIM, R, GREEN, Row, Viewer
 
-REPO = lib.repo_atual()
-IGNORA = {".git", "node_modules", "__pycache__", ".venv", "target", ".mypy_cache", ".pytest_cache"}
-ABERTAS = Expander()   # folders expanded by the user (closed by default)
-ABERTAS.open(REPO)
-LIMITE = 400
+REPO = lib.current_repo()
+IGNORED = {".git", "node_modules", "__pycache__", ".venv", "target", ".mypy_cache", ".pytest_cache"}
+OPEN_FOLDERS = Expander()   # folders expanded by the user (closed by default)
+OPEN_FOLDERS.open(REPO)
+LIMIT = 400
 USE_ICONS = icons.enabled()
 
 
@@ -27,24 +27,24 @@ def status_git():
     return {os.path.join(REPO, p): xy for p, xy in st.items()}
 
 
-def ignored_names(pasta, itens):
-    """Names among `itens` that git ignores (one `git check-ignore` call per folder)."""
-    if not itens:
+def ignored_names(folder, items):
+    """Names among `items` that git ignores (one `git check-ignore` call per folder)."""
+    if not items:
         return set()
     rc, out = lib.git(REPO, "check-ignore", "-z", "--stdin",
-                      input="\0".join(e.path for e in itens) + "\0", timeout=5)
-    if rc != 0:   # 1 = nenhum ignorado (saída vazia); erro cai aqui também
+                      input="\0".join(e.path for e in items) + "\0", timeout=5)
+    if rc != 0:   # 1 = nothing ignored (empty output); an error also lands here
         return set()
     return {os.path.basename(x.rstrip("/")) for x in out.split("\0") if x}
 
 
-def listar(pasta):
+def list_dir(folder):
     try:
-        itens = [e for e in os.scandir(pasta) if e.name not in IGNORA]
+        items = [e for e in os.scandir(folder) if e.name not in IGNORED]
     except OSError:
         return []
-    itens.sort(key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
-    return itens[:LIMITE]
+    items.sort(key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
+    return items[:LIMIT]
 
 
 _last_cwd = [None]
@@ -58,9 +58,9 @@ def follow_terminal(v):
     if not pane:
         return
     win = tmux.display("#{window_id}", target=pane)
-    target = tmux.show_w(win, "@ws_tativo")
+    target = tmux.show_w(win, "@ws_term_active")
     if not target:
-        target = tmux.run("list-panes", "-t", win, "-F", "#{pane_id}|#{@papel}")
+        target = tmux.run("list-panes", "-t", win, "-F", "#{pane_id}|#{@role}")
         target = next((l.split("|")[0] for l in target.splitlines() if l.endswith("|terminal")), "")
     if not target:
         return
@@ -70,181 +70,181 @@ def follow_terminal(v):
     _last_cwd[0] = cwd
     repo = os.path.realpath(REPO)
     if cwd == repo:                 # the root is not a row: select the first entry and scroll to the top
-        first = next(iter(listar(REPO)), None)
+        first = next(iter(list_dir(REPO)), None)
         if first:
-            v.chave = ("d" if first.is_dir(follow_symlinks=False) else "f", first.path)
+            v.key = ("d" if first.is_dir(follow_symlinks=False) else "f", first.path)
             v.top = 0
-            v._acordar()
+            v._wake()
         return
     if not cwd.startswith(repo + "/"):
         return
     rel = os.path.relpath(cwd, repo).split(os.sep)
     for i in range(len(rel)):       # open the ancestors and the folder itself (its subfolders stay closed)
-        ABERTAS.open(os.path.join(REPO, *rel[:i + 1]))
-    v.chave = ("d", os.path.join(REPO, *rel))
-    v._acordar()
+        OPEN_FOLDERS.open(os.path.join(REPO, *rel[:i + 1]))
+    v.key = ("d", os.path.join(REPO, *rel))
+    v._wake()
 
 
-def coletar(v):
+def collect(v):
     follow_terminal(v)
     st = status_git()
-    sujos = {os.path.dirname(p) for p in st}
-    for p in list(sujos):
+    dirty = {os.path.dirname(p) for p in st}
+    for p in list(dirty):
         while p.startswith(REPO) and p != REPO:
             p = os.path.dirname(p)
-            sujos.add(p)
-    cab = []
-    corpo = []
+            dirty.add(p)
+    header = []
+    body = []
 
-    def descer(pasta, nivel, ignorada=False):
-        itens = listar(pasta)
-        ign = {e.name for e in itens} if ignorada else ignored_names(pasta, itens)
-        for e in itens:
-            ind = "  " * nivel
+    def descend(folder, level, ignored=False):
+        items = list_dir(folder)
+        ign = {e.name for e in items} if ignored else ignored_names(folder, items)
+        for e in items:
+            ind = "  " * level
             if e.is_dir(follow_symlinks=False):
-                aberta = ABERTAS.is_open(e.path)
-                mark = f" {glyphs.dirty_mark()}" if e.path in sujos else ""
-                ic = glyphs.dir_icon(aberta, e.name in ign) if USE_ICONS else ""
-                nome = f"{DIM}{e.name}/{R}" if e.name in ign else f"{AZUL}{e.name}/{R}"
-                corpo.append(Linha(f" {ind}{CINZA}{glyphs.arrow(aberta)}{R} {ic}{nome}{mark}",
+                opened = OPEN_FOLDERS.is_open(e.path)
+                mark = f" {glyphs.dirty_mark()}" if e.path in dirty else ""
+                ic = glyphs.dir_icon(opened, e.name in ign) if USE_ICONS else ""
+                name = f"{DIM}{e.name}/{R}" if e.name in ign else f"{BLUE}{e.name}/{R}"
+                body.append(Row(f" {ind}{GRAY}{glyphs.arrow(opened)}{R} {ic}{name}{mark}",
                                    ("d", e.path)))
-                if aberta:
-                    descer(e.path, nivel + 1, e.name in ign)
+                if opened:
+                    descend(e.path, level + 1, e.name in ign)
             else:
                 s = st.get(e.path)
-                cor = DIM if e.name in ign else "" if not s else (VERDE if s.strip() in ("??", "A") else AMARELO)
+                color = DIM if e.name in ign else "" if not s else (GREEN if s.strip() in ("??", "A") else YELLOW)
                 ic = glyphs.file_icon(e.name, e.name in ign) if USE_ICONS else ""
-                corpo.append(Linha(f" {ind}  {ic}{cor}{e.name}{R}", ("f", e.path)))
+                body.append(Row(f" {ind}  {ic}{color}{e.name}{R}", ("f", e.path)))
 
-    descer(REPO, 0)
-    return cab, corpo
+    descend(REPO, 0)
+    return header, body
 
 
-RENAME = {"ativo": False, "chave": None, "nome": ""}
+RENAME = {"active": False, "key": None, "name": ""}
 
 
 def footer(v):
     """Full name of the selected entry (the row itself is cut at the pane width). While renaming,
     shows the prompt and the inline buffer with a block cursor."""
-    if RENAME["ativo"]:
-        return f"{B}{t('tree.rename_prompt')}{R} {RENAME['nome']}█"
-    if not v.chave or v.chave[1] == REPO:
+    if RENAME["active"]:
+        return f"{B}{t('tree.rename_prompt')}{R} {RENAME['name']}█"
+    if not v.key or v.key[1] == REPO:
         return ""
-    return os.path.relpath(v.chave[1], REPO) + ("/" if v.chave[0] == "d" else "")
+    return os.path.relpath(v.key[1], REPO) + ("/" if v.key[0] == "d" else "")
 
 
-def _popup_command(choice, caminho):
-    """tmux command string that opens `caminho` in `choice` (fullscreen gives a 100%x100% popup)."""
+def _popup_command(choice, path):
+    """tmux command string that opens `path` in `choice` (fullscreen gives a 100%x100% popup)."""
     size = "100%" if choice.get("fullscreen") else "92%"
-    line = f"{choice['command']} {shlex.quote(caminho)}"
+    line = f"{choice['command']} {shlex.quote(path)}"
     command = (f"display-popup -E -w {size} -h {size} -d {shlex.quote(REPO)} "
                f"{shlex.quote(line)}")
     return command.replace("#", "##")     # tmux expands formats in the command string
 
 
-def abrir_com_editor(caminho):
+def open_with_editor(path):
     """Editor menu for the file type: the configured entries that exist, or the fallback chain."""
-    escolhas = opener.choices(caminho)
-    if not escolhas:
+    choices = opener.choices(path)
+    if not choices:
         tmux.message(t("editor.none"))
         return
-    itens = [(e["name"], str(i + 1), _popup_command(e, caminho))
-             for i, e in enumerate(escolhas)]
-    tmux.menu(t("editor.menu_title", name=os.path.basename(caminho)), itens)
+    items = [(e["name"], str(i + 1), _popup_command(e, path))
+             for i, e in enumerate(choices)]
+    tmux.menu(t("editor.menu_title", name=os.path.basename(path)), items)
 
 
-def enter(v, chave, tecla):
-    tipo, caminho = chave
-    if tipo == "d":
-        ABERTAS.toggle(caminho)
-        v.recoletar.set()
-    elif opener.use_system(caminho) and opener.open_system(caminho):
+def enter(v, key, _pressed):
+    kind, path = key
+    if kind == "d":
+        OPEN_FOLDERS.toggle(path)
+        v.redraw.set()
+    elif opener.use_system(path) and opener.open_system(path):
         return
     else:
-        abrir_com_editor(caminho)
+        open_with_editor(path)
 
 
 def _state(v):
-    return getattr(v, "recoletar", None)
+    return getattr(v, "redraw", None)
 
 
-def _renomear_erro(nome):
+def _rename_error(name):
     """i18n message for an invalid new name, or "" when it is acceptable."""
-    if not nome:
+    if not name:
         return t("tree.rename_empty")
-    if os.path.isabs(nome) or "/" in nome or "\\" in nome or nome in (".", ".."):
+    if os.path.isabs(name) or "/" in name or "\\" in name or name in (".", ".."):
         return t("tree.rename_invalid")
     return ""
 
 
-def renomear_para(v, chave, nome):
-    """Renames the file in `chave` to `nome` (same folder). Returns True on success and moves the
+def rename_to(v, key, name):
+    """Renames the file in `key` to `name` (same folder). Returns True on success and moves the
     cursor to the new path; on any failure shows an i18n message and keeps the old path."""
-    tipo, atual = chave
-    if tipo != "f":
+    kind, current = key
+    if kind != "f":
         return False
-    erro = _renomear_erro(nome)
-    if erro:
-        tmux.message(erro)
+    error = _rename_error(name)
+    if error:
+        tmux.message(error)
         return False
-    novo = os.path.join(os.path.dirname(atual), nome)
-    if os.path.normpath(novo) == os.path.normpath(atual):   # Enter without editing: nothing to do
+    new = os.path.join(os.path.dirname(current), name)
+    if os.path.normpath(new) == os.path.normpath(current):   # Enter without editing: nothing to do
         return True
-    if os.path.lexists(novo):
-        tmux.message(t("tree.rename_exists", name=nome))
+    if os.path.lexists(new):
+        tmux.message(t("tree.rename_exists", name=name))
         return False
-    rel_old, rel_new = os.path.relpath(atual, REPO), os.path.relpath(novo, REPO)
+    rel_old, rel_new = os.path.relpath(current, REPO), os.path.relpath(new, REPO)
     if lib.git(REPO, "ls-files", "--error-unmatch", rel_old)[0] == 0:
         ok = lib.git(REPO, "mv", "--", rel_old, rel_new)[0] == 0
     else:
         try:
-            os.rename(atual, novo)
+            os.rename(current, new)
             ok = True
         except OSError:
             ok = False
     if ok:
-        v.chave = ("f", novo)
-        evento = _state(v)
-        if evento:
-            evento.set()
-        tmux.message(t("tree.renamed", name=nome))
+        v.key = ("f", new)
+        event = _state(v)
+        if event:
+            event.set()
+        tmux.message(t("tree.renamed", name=name))
     else:
-        tmux.message(t("tree.rename_failed", name=nome))
+        tmux.message(t("tree.rename_failed", name=name))
     return ok
 
 
-def renomear(v, chave):
-    """Starts the inline text input with the current basename: the main Viewer's `entrada` callback
+def rename(v, key):
+    """Starts the inline text input with the current basename: the main Viewer's `on_input` callback
     consumes the keys until Enter (commit) or Esc (cancel)."""
-    if chave[0] != "f":
+    if key[0] != "f":
         return
-    RENAME.update(ativo=True, chave=chave, nome=os.path.basename(chave[1]))
-    v.recoletar.set()
+    RENAME.update(active=True, key=key, name=os.path.basename(key[1]))
+    v.redraw.set()
 
 
 def on_input(v, k):
     """Inline rename editor. Returns True while it consumes the key, so navigation is blocked."""
-    if not RENAME["ativo"]:
+    if not RENAME["active"]:
         return False
     if k == "esc":
-        RENAME.update(ativo=False, chave=None, nome="")
-        v.recoletar.set()
+        RENAME.update(active=False, key=None, name="")
+        v.redraw.set()
         return True
     if k.startswith("\x1b"):        # arrows and other escape sequences do not edit or cancel
         return True
     if k in ("\r", "\n"):
-        chave, nome = RENAME["chave"], RENAME["nome"]
-        RENAME.update(ativo=False, chave=None, nome="")
-        renomear_para(v, chave, nome)
-        v.recoletar.set()
+        key, name = RENAME["key"], RENAME["name"]
+        RENAME.update(active=False, key=None, name="")
+        rename_to(v, key, name)
+        v.redraw.set()
         return True
     if k in ("\x7f", "\x08"):       # Backspace
-        RENAME["nome"] = RENAME["nome"][:-1]
-        v.recoletar.set()
+        RENAME["name"] = RENAME["name"][:-1]
+        v.redraw.set()
         return True
     if k.isprintable():
-        RENAME["nome"] += k
-        v.recoletar.set()
+        RENAME["name"] += k
+        v.redraw.set()
     return True
 
 
@@ -255,39 +255,39 @@ def _copied(path):
         return None
 
 
-def copiar(v, chave):
-    """Puts the file on the clipboard as a file, to paste elsewhere. Only files reach here (see acoes)."""
-    if _copied(chave[1]):
-        msg = t("tree.copied", name=os.path.basename(chave[1]))
+def copy(v, key):
+    """Puts the file on the clipboard as a file, to paste elsewhere. Only files reach here (see actions)."""
+    if _copied(key[1]):
+        msg = t("tree.copied", name=os.path.basename(key[1]))
     else:
         msg = t("tree.copy_failed")
     tmux.message(msg)
 
 
-def acoes(v, chave):
-    """Context menu (Espaço or right click). On a folder the actions are shown but unavailable."""
-    arquivo = chave[0] == "f"
-    return [(t("tree.menu_copy"), arquivo, copiar),
-            (t("tree.menu_rename"), arquivo, renomear)]
+def actions(v, key):
+    """Context menu (Space or right click). On a folder the actions are shown but unavailable."""
+    file = key[0] == "f"
+    return [(t("tree.menu_copy"), file, copy),
+            (t("tree.menu_rename"), file, rename)]
 
 
-def pai_de(caminho):
+def parent_of(path):
     """Parent folder inside the repo, or None (the repo root is not a row)."""
-    parent = os.path.dirname(caminho)
+    parent = os.path.dirname(path)
     return parent if parent != REPO and parent.startswith(REPO + "/") else None
 
 
 def on_key(v, k):
     """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
-    if k not in ("left", "right") or not v.chave:
+    if k not in ("left", "right") or not v.key:
         return
-    tipo, caminho = v.chave
-    novo = ABERTAS.handle_arrow(k, caminho, pai=pai_de, pasta=tipo == "d")
-    if novo != caminho:
-        v.chave = ("d", novo)
-    v.recoletar.set()
+    kind, path = v.key
+    new = OPEN_FOLDERS.handle_arrow(k, path, parent=parent_of, folder=kind == "d")
+    if new != path:
+        v.key = ("d", new)
+    v.redraw.set()
 
 
 if __name__ == "__main__":
-    Viewer(coletar, intervalo=2.0, cursor=True, ao_enter=enter, ao_tecla=on_key, chave_inicial=("d", REPO), rodape=footer,
-           acoes=acoes, entrada=on_input).rodar()
+    Viewer(collect, interval=2.0, cursor=True, on_enter=enter, on_key=on_key, initial_key=("d", REPO), footer=footer,
+           actions=actions, on_input=on_input).run()

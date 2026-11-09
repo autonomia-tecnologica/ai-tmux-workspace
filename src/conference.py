@@ -45,35 +45,35 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
     fcntl = None
 
 BASE = Path(__file__).resolve().parent.parent
-NO_ANSWER = "<<SEM_RESPOSTA>>"      # worker stdout sentinel: the message is not about that repo
+NO_ANSWER = "<<NO_ANSWER>>"      # worker stdout sentinel: the message is not about that repo
 MAX_TOOL_STEPS = 20                 # tool steps one participant may take before it must answer
 MAX_FILES_READ = 12                 # distinct files one participant may read in a run
 COUNTED_TOOLS = ("Read", "Grep", "Glob")     # read tools the budget counts as a step
 WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")  # only the repo's BACKLOG.md may be edited
 
 
-def estado_dir():
-    """ESTADO/conference, following WS_ESTADO (same default as lib.ESTADO)."""
-    return Path(os.environ.get("WS_ESTADO", Path.home() / ".cache" / "workspace")) / "conference"
+def state_dir():
+    """STATE/conference, following WS_STATE (same default as lib.STATE)."""
+    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "conference"
 
 
 def active_path():
-    return estado_dir() / "active.json"
+    return state_dir() / "active.json"
 
 
 def log_path():
-    return estado_dir() / "log.jsonl"
+    return state_dir() / "log.jsonl"
 
 
 def _lock_path():
-    return estado_dir() / ".lock"
+    return state_dir() / ".lock"
 
 
 @contextlib.contextmanager
 def _lock():
     """Exclusive lock shared by the commands and the hook (concurrent Stops included)."""
-    pasta = estado_dir()
-    pasta.mkdir(parents=True, exist_ok=True)
+    folder = state_dir()
+    folder.mkdir(parents=True, exist_ok=True)
     with open(_lock_path(), "a") as lock:
         if fcntl is not None:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -175,7 +175,7 @@ def _default_repos(lib, repo=None):
     `siblings` written on a `groups` entry and every repo inside `parent_folder`. Sharing a `groups`
     folder is not siblinghood. The repo itself participates, first in the list; [] when it has no
     siblings, because a conference with only the repo it was opened from makes no sense."""
-    base = lib.expandir(repo or lib.repo_atual())
+    base = lib.expand_path(repo or lib.current_repo())
     siblings = [p for p in lib.siblings(base) if p != base]
     return [base] + siblings if siblings else []
 
@@ -186,19 +186,19 @@ def start(repos=None, repo=None, screen=None):
     it goes away, the conference ends with it."""
     import lib
 
-    want = [lib.expandir(p) for p in (repos or [])]
+    want = [lib.expand_path(p) for p in (repos or [])]
     if not want:
         want = _default_repos(lib, repo)
         if not want:
             print(_t("conference.no_repos"), file=sys.stderr)
             return 2
     ordered = []
-    for caminho in want:
-        if not os.path.isdir(caminho):
-            print(_t("cli.not_exists", path=caminho), file=sys.stderr)
+    for path in want:
+        if not os.path.isdir(path):
+            print(_t("cli.not_exists", path=path), file=sys.stderr)
             return 2
-        if caminho not in ordered:
-            ordered.append(caminho)
+        if path not in ordered:
+            ordered.append(path)
     with _lock():
         active = read_active()
         if active and read_log():   # a conference with a live screen is never replaced by accident
@@ -225,15 +225,15 @@ def _launch_answer(repo, prompt, message_id, created, others=None):
     detached so the screen keeps updating while it thinks, and it writes the answer itself;
     nothing here waits for it. An answer that arrives after the screen was closed finds no active
     conference and is discarded (`conference_worker.answer`)."""
-    arquivo = None
+    file = None
     try:
-        pasta = estado_dir() / "prompts"
-        pasta.mkdir(parents=True, exist_ok=True)
-        fd, arquivo = tempfile.mkstemp(dir=str(pasta), prefix="msg-", suffix=".txt")
+        folder = state_dir() / "prompts"
+        folder.mkdir(parents=True, exist_ok=True)
+        fd, file = tempfile.mkstemp(dir=str(folder), prefix="msg-", suffix=".txt")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(prompt)
         argv = [sys.executable, str(BASE / "src" / "conference_worker.py"),
-                repo, arquivo, message_id, str(created)]
+                repo, file, message_id, str(created)]
         argv += [str(p) for p in (others or []) if str(p) != repo]
         subprocess.Popen(
             argv,
@@ -241,9 +241,9 @@ def _launch_answer(repo, prompt, message_id, created, others=None):
             stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     except Exception:
-        if arquivo:
+        if file:
             try:
-                os.unlink(arquivo)
+                os.unlink(file)
             except OSError:
                 pass
         return False
@@ -344,7 +344,7 @@ def _printed(fn, *args, **kwargs):
 def _screen_frame(state):
     """One frame of the conference screen: (header rows, body rows, number of log entries)."""
     import help
-    from viewer import DIM, Linha, R, popup_header, term_cols
+    from viewer import DIM, Row, R, popup_header, term_cols
 
     active = read_active()
     entries = read_log()
@@ -368,11 +368,11 @@ def _screen_frame(state):
         header = popup_header(_t("conference.screen.title_inactive"),
                               _t("conference.screen.keys_inactive"), cols)
         text = _t("conference.not_active")
-    body = [Linha()]
+    body = [Row()]
     if active:
-        body += [Linha(f" {DIM}{_t('conference.screen.hint')}{R}"), Linha()]
+        body += [Row(f" {DIM}{_t('conference.screen.hint')}{R}"), Row()]
     if state["notice"]:
-        body += [Linha(f" {DIM}{state['notice']}{R}"), Linha()]
+        body += [Row(f" {DIM}{state['notice']}{R}"), Row()]
     return header, body + help.render(text, cols), len(entries)
 
 
@@ -406,7 +406,7 @@ def converse(repo=None):
             return False
         if k == "\x18":                            # Ctrl+X ends the conference
             state["notice"] = _printed(stop)
-            v.recoletar.set()
+            v.redraw.set()
             return True
         if k in ("\r", "\n"):
             text = state["text"].strip()
@@ -417,22 +417,22 @@ def converse(repo=None):
                     if not read_active():          # no siblings: keep what was typed
                         state["text"] = text
                         state["notice"] = notice
-                        v.recoletar.set()
+                        v.redraw.set()
                         return True
                 state["notice"] = _printed(say, text)
-                v.recoletar.set()
+                v.redraw.set()
             return True
         if k in ("\x7f", "\x08"):                  # Backspace
             state["text"] = state["text"][:-1]
-            v.recoletar.set()
+            v.redraw.set()
             return True
         if k.isprintable():
             state["text"] += k
-            v.recoletar.set()
+            v.redraw.set()
         return True                                # other control keys are ignored
 
-    Viewer(collect, intervalo=1.0, ao_tecla=close_on_esc, entrada=on_input,
-           rodape=footer).rodar()
+    Viewer(collect, interval=1.0, on_key=close_on_esc, on_input=on_input,
+           footer=footer).run()
     if read_active():      # Esc closes the screen, and the conference goes with it
         _printed(stop)
     return 0

@@ -67,7 +67,7 @@ def _entry(item):
 
 def _from_config(kind):
     """Configured editors of `kind` whose command exists, or None when the key/type is absent."""
-    config = lib.ler_config().get("editor")
+    config = lib.read_config().get("editor")
     if not isinstance(config, dict):
         return None
     raw = config.get(kind)

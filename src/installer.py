@@ -8,7 +8,7 @@ belong to backlog item 35, so this installer never runs sudo/pkexec or installs 
 
 Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` keys).
 
-Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_ESTADO,
+Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_STATE,
 AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE and SHELL.
 """
 import hashlib
@@ -59,13 +59,7 @@ ZSH_COMPLETION = """#compdef workspace
 _workspace_completion() {
   local -a commands
   commands=(
-    'open:Abrir um repo'
-    'install:Criar o link do comando workspace'
-    'install-hooks:Registrar os hooks do Claude Code'
-    'restart:Derrubar e subir o workspace'
-    'reload:Recarregar config, tmux.conf e paineis'
-    'fit:Reaplicar os tamanhos dos paineis'
-    'stop:Parar o servidor do perfil'
+__COMMANDS__
   )
   _describe -t commands 'workspace' commands
 }
@@ -94,6 +88,14 @@ ZSH_BLOCK = """# >>> ai-tmux-workspace >>>
 [ -f "$HOME/.local/share/ai-tmux-workspace/completions/workspace.zsh" ] && . "$HOME/.local/share/ai-tmux-workspace/completions/workspace.zsh"
 # <<< ai-tmux-workspace >>>
 """
+
+def completion_text(template):
+    """Fill the completion template with the translated command descriptions."""
+    names = ("open", "install", "install-hooks", "restart", "reload", "fit", "stop")
+    commands = "\n".join(
+        f"    '{name}:{t('installer.completion.cmd.' + name.replace('-', '_'))}'" for name in names)
+    return template.replace("__COMMANDS__", commands)
+
 
 BASH_BLOCK = """# >>> ai-tmux-workspace >>>
 [ -f "$HOME/.local/share/ai-tmux-workspace/completions/workspace.bash" ] && . "$HOME/.local/share/ai-tmux-workspace/completions/workspace.bash"
@@ -134,14 +136,14 @@ def state_dir():
     override = os.environ.get("AT_WS_INSTALL_STATE")
     if override:
         return Path(override).expanduser()
-    base = os.environ.get("WS_ESTADO")
+    base = os.environ.get("WS_STATE")
     root = Path(base).expanduser() if base else HOME / ".cache" / "workspace"
     return root / "installer"
 
 
 def generated_settings_dir():
-    """The workspace-generated per-profile settings: WS_ESTADO/settings, exactly as lib.py uses."""
-    base = os.environ.get("WS_ESTADO")
+    """The workspace-generated per-profile settings: WS_STATE/settings, exactly as lib.py uses."""
+    base = os.environ.get("WS_STATE")
     root = Path(base).expanduser() if base else HOME / ".cache" / "workspace"
     return root / "settings"
 
@@ -250,27 +252,27 @@ class UI:
 
     def section(self, text):
         self.line()
-        self.line(self._style(f"=== {text} ===", colors.B + colors.AZUL))
+        self.line(self._style(f"=== {text} ===", colors.B + colors.BLUE))
 
     def ok(self, text):
-        self.line(self._style("ok: ", colors.VERDE) + text)
+        self.line(self._style(t("installer.status.ok"), colors.GREEN) + text)
 
     def warn(self, text):
-        self.line(self._style("aviso: ", colors.AMARELO) + text)
+        self.line(self._style(t("installer.status.warn"), colors.YELLOW) + text)
 
     def error(self, text):
-        self.err.write(self._style("erro: ", colors.VERMELHO) + text + "\n")
+        self.err.write(self._style(t("installer.status.error"), colors.RED) + text + "\n")
         self.err.flush()
 
     def confirm(self, key, **kw):
-        """Explicit confirmation; EOF and anything but s/sim/y/yes abort the step."""
+        """Explicit confirmation; EOF and any answer not listed as yes abort the step."""
         self.out.write(t(key, **kw) + t("installer.answer.hint"))
         self.out.flush()
         answer = self.inp.readline()
         if answer == "":
             self.line(t("installer.abort.no_answer"))
             raise Aborted()
-        if answer.strip().lower() not in ("s", "sim", "y", "yes"):
+        if answer.strip().lower() not in t("installer.answer.yes").split():
             self.line(t("installer.abort.declined"))
             raise Aborted()
 
@@ -587,6 +589,8 @@ class Assistant:
                            dir=display(HOME / COMPLETION_DIR)))
         self.ui.confirm("installer.completion.confirm")
         for relative, content, _rc, _block in files.values():
+            if content is ZSH_COMPLETION:
+                content = completion_text(content)
             self.write(HOME / relative, content)
         if shell in files:
             relative, _content, rc_name, block = files[shell]

@@ -164,7 +164,9 @@ escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, ite
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
 agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
 migração aparece uma vez só por mudança; ver acima). O resto vem do `config.yaml` e dos arquivos do repo.
-O estado de runtime fica em `~/.cache/workspace` (`WS_ESTADO`). O desenho aprovado separa
+O estado de runtime fica em `~/.cache/workspace` (`WS_STATE`). Os nomes de contrato interno agora são em inglês
+(`WS_STATE`/`WS_PROFILE`, opções `@ws_*`, `@role`, papéis e chaves de estado); o estado antigo é descartável e um
+`workspace restart` é necessário depois desta mudança. O desenho aprovado separa
 config/estado em `~/.config/ai-tmux-workspace` (`state/`, `conference/`) do código e do
 `HARNESS.md` em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`), com escopo por
 repo/home/conferência; está no `BACKLOG.md`, item 72. O harness instalado guarda um `source.json`

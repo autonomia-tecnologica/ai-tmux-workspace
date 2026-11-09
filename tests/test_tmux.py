@@ -62,8 +62,8 @@ class MenuTest(unittest.TestCase):
         items = [("Dawn", "1", "display-popup -E -w 100% -h 100% -d /r 'dawn x'"),
                  ("nvim", "2", "display-popup -E -w 92% -h 92% -d /r 'nvim x'")]
         with mock.patch("tmux.run") as run:
-            tmux.menu("Abrir x com:", items)
-        run.assert_called_once_with("display-menu", "-T", "Abrir x com:",
+            tmux.menu("Open x with:", items)
+        run.assert_called_once_with("display-menu", "-T", "Open x with:",
                                     "Dawn", "1", items[0][2],
                                     "nvim", "2", items[1][2], timeout=None)
 

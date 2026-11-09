@@ -32,7 +32,7 @@ class BacklogTest(unittest.TestCase):
         return {i["id"]: i for i in items}
 
     # --- parser -------------------------------------------------------------------------------
-    def test_caminhos_parsing(self):
+    def test_paths_parsing(self):
         items = self.parse("""Próximo id: 100
 
 ## Refinadas

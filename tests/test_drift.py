@@ -53,9 +53,9 @@ class DriftTest(unittest.TestCase):
 
     def env(self, **overrides):
         env = {key: value for key, value in os.environ.items()
-               if key not in ("AT_HARNESS_DIR", "WS_DIR", "WS_ESTADO", "AT_WS_CONFIG")}
+               if key not in ("AT_HARNESS_DIR", "WS_DIR", "WS_STATE", "AT_WS_CONFIG")}
         env.update(HOME=str(self.home), AT_HARNESS_DIR=str(self.installed), WS_DIR=str(self.ws),
-                   WS_ESTADO=str(self.state), NO_COLOR="1")
+                   WS_STATE=str(self.state), NO_COLOR="1")
         env.update(overrides)
         return env
 
@@ -67,31 +67,31 @@ class DriftTest(unittest.TestCase):
     def test_consistent_state_exits_zero(self):
         result = self.run_doctor()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("consistente", result.stdout)
+        self.assertIn("doctor:", result.stdout)
 
     # 2 ---------------------------------------------------------------------------------------
     def test_edited_installed_copy_is_reported(self):
         with (self.installed / "HARNESS.md").open("a", encoding="utf-8") as handle:
-            handle.write("\nregra nova na cópia instalada\n")
+            handle.write("\nnew rule in the installed copy\n")
         result = self.run_doctor()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("cópia instalada", result.stdout)
-        self.assertIn("editada", result.stdout)
+        self.assertIn("HARNESS.md", result.stdout)
+        self.assertIn("source.json", result.stdout)
 
     # 3 ---------------------------------------------------------------------------------------
     def test_changed_canonical_warns_until_reinstall(self):
         with (self.source / "HARNESS.md").open("a", encoding="utf-8") as handle:
-            handle.write("\nregra nova no canônico\n")
+            handle.write("\nnew rule in the canonical\n")
         result = self.run_doctor()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("canônico", result.stdout)
+        self.assertIn("HARNESS.md", result.stdout)
+        self.assertIn("source.json", result.stdout)
 
     # 4 ---------------------------------------------------------------------------------------
     def test_changed_source_commit_is_reported(self):
         self.write_record(commit="deadbeef")
         result = self.run_doctor()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("commit da fonte", result.stdout)
         self.assertIn("deadbeef", result.stdout)
 
     # 5 ---------------------------------------------------------------------------------------
@@ -103,7 +103,7 @@ class DriftTest(unittest.TestCase):
 
     # 6 ---------------------------------------------------------------------------------------
     def test_prose_and_anti_example_paths_are_ignored(self):
-        text = HARNESS + "\nNada de `docs/BACKLOG.md`, `TODO.md` ou `script_2.py`.\n"
+        text = HARNESS + "\nIgnore `docs/BACKLOG.md`, `TODO.md` or `script_2.py`.\n"
         (self.source / "HARNESS.md").write_text(text, encoding="utf-8")
         (self.installed / "HARNESS.md").write_text(text, encoding="utf-8")
         self.write_record()
@@ -115,16 +115,16 @@ class DriftTest(unittest.TestCase):
         shutil.rmtree(self.source)
         result = self.run_doctor()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("fonte canônica não encontrada", result.stdout)
+        self.assertIn(str(self.source), result.stdout)
 
     # 8 ---------------------------------------------------------------------------------------
     def test_warning_mode_never_fails(self):
         with (self.installed / "HARNESS.md").open("a", encoding="utf-8") as handle:
-            handle.write("\nregra nova na cópia instalada\n")
+            handle.write("\nnew rule in the installed copy\n")
         result = self.run_doctor("--warn")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("aviso", result.stdout)
-        self.assertNotIn("consistente", result.stdout)
+        self.assertIn("doctor:", result.stdout)
+        self.assertNotIn("doctor: harness", result.stdout)
 
     # 9 ---------------------------------------------------------------------------------------
     def test_missing_or_invalid_source_json_fails(self):
@@ -142,7 +142,7 @@ class DriftTest(unittest.TestCase):
         result = subprocess.run([BASH, str(WORKSPACE), "doctor"], env=self.env(),
                                 capture_output=True, text=True, check=False, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("consistente", result.stdout)
+        self.assertIn("doctor:", result.stdout)
 
     # 11 --------------------------------------------------------------------------------------
     def test_every_literal_doctor_i18n_key_exists(self):

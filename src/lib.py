@@ -1,4 +1,4 @@
-"""Base comum dos painéis do workspace: lista de repos, estado dos agentes, repo da janela."""
+"""Common base for the workspace panels: repo list, agent state, window repo."""
 import copy
 import fcntl
 import hashlib
@@ -16,101 +16,101 @@ import permission_state
 import tmux
 import yaml_min
 
-BASE = Path(__file__).resolve().parent.parent   # raiz do repo
+BASE = Path(__file__).resolve().parent.parent   # repo root
 WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # the `workspace` script
 HOME = Path.home()
-ESTADO = Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace"))
-SESSOES = ESTADO / "sessoes"
-ESPERA_S = 8                 # ferramenta aberta há mais que isso = "esperando as coisas acontecerem"
-ESPERA_TETO_S = 30 * 60      # sem nenhum evento há isso, a espera por ferramenta vira ocioso
-SEM_EVENTO_S = 10 * 60       # trabalha sem ferramenta aberta e sem evento há isso = ocioso
-OCIOSO_APOS_S = 6 * 3600     # sem evento há isso = ocioso (vermelho de Stop também envelhece)
-ORFAO_IDADE_S = 24 * 3600    # arquivo de sessão morta há mais que isso é apagado
-PRIO = {"ocioso": 0, "trabalha": 1, "espera": 2, "pergunta": 3}
+STATE = Path(os.environ.get("WS_STATE", HOME / ".cache" / "workspace"))
+SESSIONS = STATE / "sessions"
+WAIT_S = 8                 # a tool open for longer than this = "waiting for things to happen"
+WAIT_CAP_S = 30 * 60       # no event for this long: the wait on a tool turns idle
+NO_EVENT_S = 10 * 60       # working with no open tool and no event for this long = idle
+IDLE_AFTER_S = 6 * 3600    # no event for this long = idle (a Stop red also ages out)
+ORPHAN_AGE_S = 24 * 3600   # a dead session file older than this is deleted
+PRIORITY = {"idle": 0, "working": 1, "waiting": 2, "question": 3}
 
 
-def expandir(p):
+def expand_path(p):
     return os.path.realpath(os.path.expanduser(p))
 
 
-class ErroConfig(ValueError):
+class ConfigError(ValueError):
     """The config file exists but cannot be read, so nothing may be written over it."""
 
 
-class ErroSettings(ValueError):
+class SettingsError(ValueError):
     """The workspace-generated settings for a profile cannot be built safely (literal key, bad shape, I/O)."""
 
 
 def config_path():
-    """config.yaml único; mora fora do repo (o repo só guarda a estrutura). AT_WS_CONFIG troca o caminho."""
+    """Single config.yaml; lives outside the repo (the repo holds only the structure). AT_WS_CONFIG overrides the path."""
     return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "config.yaml"))
 
 
-def legado_path():
-    """settings.json antigo (JSON), lido enquanto o config.yaml não existir. Com AT_WS_CONFIG, é o mesmo caminho em .json."""
+def legacy_path():
+    """Old settings.json (JSON), read while config.yaml does not exist. With AT_WS_CONFIG, it is the same path with .json."""
     if "AT_WS_CONFIG" in os.environ:
         return config_path().with_suffix(".json")
     return HOME / ".config" / "ai-tmux-workspace" / "settings.json"
 
 
-ERRO_CONFIG = None   # (caminho, linha ou None) da última leitura que falhou; None quando leu bem
+CONFIG_ERROR = None   # (path, line or None) of the last failed read; None when it read fine
 
 
-def _ler_arquivo(path):
-    """dict de um arquivo de config: JSON se o caminho terminar em .json, senão YAML."""
-    texto = path.read_text(encoding="utf-8")
-    dados = json.loads(texto) if path.suffix == ".json" else (yaml_min.loads(texto) or {})
-    if not isinstance(dados, dict):
+def _read_file(path):
+    """dict from a config file: JSON when the path ends with .json, else YAML."""
+    text = path.read_text(encoding="utf-8")
+    data = json.loads(text) if path.suffix == ".json" else (yaml_min.loads(text) or {})
+    if not isinstance(data, dict):
         raise ValueError("config root is not a mapping")
-    return dados
+    return data
 
 
-def ler_config():
-    """Config como dict: config_path() se existir; senão o settings.json antigo; senão {}. Erro de leitura dá {} e marca ERRO_CONFIG."""
-    global ERRO_CONFIG
-    ERRO_CONFIG = None
+def read_config():
+    """Config as a dict: config_path() when it exists; else the old settings.json; else {}. A read error gives {} and marks CONFIG_ERROR."""
+    global CONFIG_ERROR
+    CONFIG_ERROR = None
     try:
         if config_path().exists():
-            return _ler_arquivo(config_path())
-        if legado_path().exists():
-            return _ler_arquivo(legado_path())
+            return _read_file(config_path())
+        if legacy_path().exists():
+            return _read_file(legacy_path())
     except (OSError, ValueError) as e:
-        ERRO_CONFIG = (str(config_path()), getattr(e, "linha", None))
+        CONFIG_ERROR = (str(config_path()), getattr(e, "line", None))
     return {}
 
 
-def precisa_migrar():
-    """True quando só o settings.json antigo existe; a migração é oferecida, nunca feita sozinha."""
-    return config_path().suffix != ".json" and not config_path().exists() and legado_path().exists()
+def needs_migration():
+    """True when only the old settings.json exists; migration is offered, never done on its own."""
+    return config_path().suffix != ".json" and not config_path().exists() and legacy_path().exists()
 
 
-def migrar_config():
-    """Grava config_path() em YAML a partir do settings.json antigo, depois de reler o YAML e conferir que é igual.
-    Não altera nem apaga o JSON. Devolve o caminho gravado; levanta OSError/ValueError se falhar."""
-    dados = _ler_arquivo(legado_path())
-    texto = yaml_min.dumps(dados)
-    if yaml_min.loads(texto) != dados:
+def migrate_config():
+    """Write config_path() as YAML from the old settings.json, after reading the YAML back and checking it is equal.
+    Does not change or delete the JSON. Returns the written path; raises OSError/ValueError on failure."""
+    data = _read_file(legacy_path())
+    text = yaml_min.dumps(data)
+    if yaml_min.loads(text) != data:
         raise ValueError("YAML does not read back to the same config")
-    destino = config_path()
-    if destino.exists():
-        raise FileExistsError(str(destino))
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    tmp = destino.with_name(destino.name + ".tmp")
-    tmp.write_text(texto, encoding="utf-8")
-    tmp.replace(destino)
-    return destino
+    destination = config_path()
+    if destination.exists():
+        raise FileExistsError(str(destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_name(destination.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(destination)
+    return destination
 
 
 def agent_name():
     """Chosen agent (config.yaml "agent"); falls back to "claude" when unset or not in "profiles"."""
-    profiles = ler_config().get("profiles", {})
-    name = ler_config().get("agent", "claude")
+    profiles = read_config().get("profiles", {})
+    name = read_config().get("agent", "claude")
     return name if name in profiles or name == "claude" else "claude"
 
 
 def _profile_value(name):
     """Raw value of a profile in config.yaml: a command string (legacy) or a mapping."""
-    profiles = ler_config().get("profiles", {})
+    profiles = read_config().get("profiles", {})
     return profiles.get(name) if isinstance(profiles, dict) else None
 
 
@@ -135,7 +135,7 @@ def profile_settings(name=None):
     if settings is None:
         return {}
     if not isinstance(settings, dict):
-        raise ErroSettings(t("settings.err.profile", profile=str(name or agent_name())))
+        raise SettingsError(t("settings.err.profile", profile=str(name or agent_name())))
     return settings
 
 
@@ -175,8 +175,8 @@ _KEY_LITERAL = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{10,}|sk-or-v1-[A-Za-z0-9]{
 
 def settings_dir():
     """Directory of the generated per-profile settings. Read at call time, like the other state under
-    WS_ESTADO, so a caller that changes it (tests, a different state dir) gets its own files."""
-    return Path(os.environ.get("WS_ESTADO", HOME / ".cache" / "workspace")) / "settings"
+    WS_STATE, so a caller that changes it (tests, a different state dir) gets its own files."""
+    return Path(os.environ.get("WS_STATE", HOME / ".cache" / "workspace")) / "settings"
 
 
 def _has_settings_flag(command):
@@ -188,7 +188,7 @@ def _harness_module():
     """Load harness/harness.py without importing from src/ (the file is installed on its own)."""
     spec = importlib.util.spec_from_file_location("ws_harness_render", HARNESS_PY)
     if spec is None or spec.loader is None:
-        raise ErroSettings(t("settings.err.base", path=str(HARNESS_PY), error="module not found"))
+        raise SettingsError(t("settings.err.base", path=str(HARNESS_PY), error="module not found"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -230,17 +230,17 @@ def harness_base_settings():
         try:
             module = _harness_module()
             return _set_hook_command(module.build_settings(module.load_rules(installed)), command)
-        except ErroSettings:
+        except SettingsError:
             raise
         except Exception as error:
-            raise ErroSettings(t("settings.err.render_harness", path=str(installed), error=str(error)))
+            raise SettingsError(t("settings.err.render_harness", path=str(installed), error=str(error)))
     try:
         base = json.loads(HARNESS_SETTINGS.read_text(encoding="utf-8"))
         if not isinstance(base, dict):
             raise ValueError("settings root is not a mapping")
         return _set_hook_command(base, command)
     except (OSError, ValueError) as error:
-        raise ErroSettings(t("settings.err.base", path=str(HARNESS_SETTINGS), error=str(error)))
+        raise SettingsError(t("settings.err.base", path=str(HARNESS_SETTINGS), error=str(error)))
 
 
 def _merge_settings(base, profile):
@@ -277,13 +277,13 @@ def _check_secrets(value, path="settings"):
             if key == "env" and isinstance(item, dict):
                 for name, val in item.items():
                     if isinstance(val, str) and val and _SECRET_ENV.search(str(name)):
-                        raise ErroSettings(t("settings.err.secret", name=f"{path}.env.{name}"))
+                        raise SettingsError(t("settings.err.secret", name=f"{path}.env.{name}"))
             _check_secrets(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _check_secrets(item, f"{path}[{index}]")
     elif isinstance(value, str) and _KEY_LITERAL.search(value):
-        raise ErroSettings(t("settings.err.secret_value", path=path))
+        raise SettingsError(t("settings.err.secret_value", path=path))
 
 
 def validate_settings(settings, profile=""):
@@ -298,7 +298,7 @@ def _safe_profile_name(name):
 
 def ensure_profile_settings(name=None):
     """Write the profile's generated settings and return its path. None means a legacy string profile
-    that already owns `--settings`. Raises ErroSettings when the settings cannot be generated safely."""
+    that already owns `--settings`. Raises SettingsError when the settings cannot be generated safely."""
     name = name or agent_name()
     if _has_settings_flag(profile_command(name)):
         return None
@@ -314,7 +314,7 @@ def ensure_profile_settings(name=None):
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except OSError as error:
-        raise ErroSettings(t("settings.err.write", path=str(path), error=str(error)))
+        raise SettingsError(t("settings.err.write", path=str(path), error=str(error)))
     return path
 
 
@@ -330,7 +330,7 @@ def agent_launch_command(mode=""):
     cmd = agent_command()
     if _KEY_LITERAL.search(cmd):
         # a key in the command would travel in argv; F08 forbids it
-        raise ErroSettings(t("settings.err.secret_value", path=f"profiles[{name}].command"))
+        raise SettingsError(t("settings.err.secret_value", path=f"profiles[{name}].command"))
     if not _has_settings_flag(cmd):
         settings_path = ensure_profile_settings(name)
         if settings_path is not None:
@@ -342,7 +342,7 @@ def agent_launch_command(mode=""):
 # Per-repo agent command of the last opening: {repo path: {"command": ...}}, plus a reserved "__notice__"
 # key with the command whose migration prompt was already shown. A different command means the Claude Code
 # environment changed (other profile/settings/API), so the old transcript must not be resumed.
-AGENT_STATE = ESTADO / "agent.json"
+AGENT_STATE = STATE / "agent.json"
 NOTICE = "__notice__"
 
 
@@ -380,13 +380,13 @@ def _newest_jsonl(folder):
 def previous_transcript(repo):
     """Newest transcript of the repo: ~/.claude/projects/<project>/*.jsonl, else the `transcript_path`
     recorded in the session cache. Returns a Path or None."""
-    repo = expandir(repo)
+    repo = expand_path(repo)
     found = _newest_jsonl(project_dir(repo))
     if found:
         return found
     best = None
     try:
-        files = list(SESSOES.glob("*.json"))
+        files = list(SESSIONS.glob("*.json"))
     except OSError:
         return None
     for f in files:
@@ -395,7 +395,7 @@ def previous_transcript(repo):
         except (OSError, ValueError):
             continue
         cwd = d.get("cwd") if isinstance(d, dict) else None
-        if not isinstance(cwd, str) or not cwd or expandir(cwd) != repo:
+        if not isinstance(cwd, str) or not cwd or expand_path(cwd) != repo:
             continue
         path = d.get("transcript_path")
         if not isinstance(path, str) or not path.strip():
@@ -416,10 +416,10 @@ def opening_command(repo):
     prompt (the "__notice__" key remembers that this command was already announced); the other repos start
     the new session silently. The command is recorded before the launch, so the prompt is never repeated
     for the same repo and change."""
-    repo = expandir(repo)
+    repo = expand_path(repo)
     cmd = agent_identity()
     mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
-    launch = agent_launch_command(mode)     # may raise ErroSettings: do not record a launch that did not happen
+    launch = agent_launch_command(mode)     # may raise SettingsError: do not record a launch that did not happen
     permission_state.record_launch(repo, cmd, mode)
     state = _read_agent_state()
     previous = state.get(repo)
@@ -441,45 +441,45 @@ def opening_command(repo):
 
 def set_agent(name):
     """Persists the chosen agent in the config (other keys untouched). Refuses to overwrite a config that
-    failed to read (ErroConfig). With only the old settings.json, the whole config is written as YAML."""
-    cfg = ler_config()
-    if ERRO_CONFIG:
-        raise ErroConfig(str(config_path()))
+    failed to read (ConfigError). With only the old settings.json, the whole config is written as YAML."""
+    cfg = read_config()
+    if CONFIG_ERROR:
+        raise ConfigError(str(config_path()))
     cfg["agent"] = name
     path = config_path()
-    texto = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n" if path.suffix == ".json" else yaml_min.dumps(cfg)
+    text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n" if path.suffix == ".json" else yaml_min.dumps(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(texto, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
 
-def _entradas(caminhos):
+def _entries(paths):
     """Paths of a group list: each entry is a string, or {"path": ..., "siblings": [...]}. Bad entries are skipped."""
     res = []
-    for c in caminhos if isinstance(caminhos, list) else []:
+    for c in paths if isinstance(paths, list) else []:
         if isinstance(c, dict):
             c = c.get("path")
         if isinstance(c, str) and c:
-            res.append(expandir(c))
+            res.append(expand_path(c))
     return res
 
 
-def ler_repos():
-    """[(grupo, [(nome, caminho), ...]), ...] a partir de "groups" (categoria; cada entrada é caminho ou {path, siblings})."""
-    grupos = []
-    for nome_grupo, caminhos in ler_config().get("groups", {}).items():
-        repos = [(os.path.basename(p) or p, p) for p in _entradas(caminhos)]
-        grupos.append((nome_grupo, repos))
-    return grupos
+def read_repos():
+    """[(group, [(name, path), ...]), ...] from "groups" (category; each entry is a path or {path, siblings})."""
+    groups = []
+    for group_name, paths in read_config().get("groups", {}).items():
+        repos = [(os.path.basename(p) or p, p) for p in _entries(paths)]
+        groups.append((group_name, repos))
+    return groups
 
 
-def ler_relacoes():
-    """[(nome, [caminho, ...]), ...] de "relations": agrupamento por relação, independente de "groups". Não abre janelas."""
-    relacoes = ler_config().get("relations", {})
-    if not isinstance(relacoes, dict):
+def read_relations():
+    """[(name, [path, ...]), ...] from "relations": grouping by relation, independent of "groups". Opens no windows."""
+    relations = read_config().get("relations", {})
+    if not isinstance(relations, dict):
         return []
-    return [(nome, _entradas(caminhos)) for nome, caminhos in relacoes.items()]
+    return [(name, _entries(paths)) for name, paths in relations.items()]
 
 
 def _sibling_pairs(cfg):
@@ -489,11 +489,11 @@ def _sibling_pairs(cfg):
         for entry in paths if isinstance(paths, list) else []:
             if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not entry["path"]:
                 continue
-            repo = expandir(entry["path"])
+            repo = expand_path(entry["path"])
             declared = entry.get("siblings")
             for path in declared if isinstance(declared, list) else []:
-                if isinstance(path, str) and path and expandir(path) != repo:
-                    other = expandir(path)
+                if isinstance(path, str) and path and expand_path(path) != repo:
+                    other = expand_path(path)
                     pairs.setdefault(repo, set()).add(other)
                     pairs.setdefault(other, set()).add(repo)
     return pairs
@@ -507,29 +507,29 @@ def siblings(path):
     """Siblings of a repo, without itself, sorted. Two sources:
     (a) "parent_folder": when the repo is inside it, every listed repo (main and groups) also inside it;
     (b) "siblings" written on a "groups" entry, which holds in both directions (even outside the parent folder)."""
-    cfg = ler_config()
-    target = expandir(path)
+    cfg = read_config()
+    target = expand_path(path)
     found = set(_sibling_pairs(cfg).get(target, set()))
     folder = cfg.get("parent_folder")
     if isinstance(folder, str) and folder:
-        folder = expandir(folder)
+        folder = expand_path(folder)
         if _inside(target, folder):
-            listed = _entradas([cfg.get("main")]) + [p for _, rs in ler_repos() for _, p in rs]
+            listed = _entries([cfg.get("main")]) + [p for _, rs in read_repos() for _, p in rs]
             found |= {p for p in listed if p != target and _inside(p, folder)}
     return sorted(found)
 
 
-def ler_principal():
-    """(nome, caminho) do repo principal de config.yaml ("main"), ou None. Fica fora dos grupos."""
-    c = ler_config().get("main")
+def read_main():
+    """(name, path) of the main repo from config.yaml ("main"), or None. It stays outside the groups."""
+    c = read_config().get("main")
     if not isinstance(c, str) or not c:
         return None
-    p = expandir(c)
+    p = expand_path(c)
     return (os.path.basename(p) or p, p)
 
 
-def repo_atual():
-    """Repo da janela onde este painel roda (opção @ws_repo da janela do tmux)."""
+def current_repo():
+    """Repo of the window where this panel runs (the @ws_repo option of the tmux window)."""
     pane = os.environ.get("TMUX_PANE")
     if pane:
         try:
@@ -541,53 +541,53 @@ def repo_atual():
     return os.getcwd()
 
 
-def _cor(d, agora):
-    est, ts = d.get("estado", "ocioso"), d.get("ts", 0)
-    # erro: true keeps the red state until the next event; other red states age out like the rest.
-    if agora - ts > OCIOSO_APOS_S and not (est == "pergunta" and d.get("erro") is True):
-        return "ocioso"
-    if est == "trabalha":
-        f = d.get("ferramenta")
+def _color(d, now):
+    state, ts = d.get("state", "idle"), d.get("ts", 0)
+    # error: true keeps the red state until the next event; other red states age out like the rest.
+    if now - ts > IDLE_AFTER_S and not (state == "question" and d.get("error") is True):
+        return "idle"
+    if state == "working":
+        f = d.get("tool")
         if f and f not in ("Task", "Agent"):
-            if agora - ts > ESPERA_TETO_S:  # nenhum evento há 30 min: a ferramenta não vai voltar
-                return "ocioso"
-            if agora - d.get("ferr_ts", ts) > ESPERA_S:
-                return "espera"
-        if not f and agora - ts > SEM_EVENTO_S:     # sem evento há 10 min: sessão morreu sem avisar
-            return "ocioso"
-    return est
+            if now - ts > WAIT_CAP_S:  # no event for 30 min: the tool is not coming back
+                return "idle"
+            if now - d.get("tool_ts", ts) > WAIT_S:
+                return "waiting"
+        if not f and now - ts > NO_EVENT_S:     # no event for 10 min: the session died without notice
+            return "idle"
+    return state
 
 
-def cor_sessao(d, agora):
+def session_color(d, now):
     """Displayed state of one session file. `agents` is informational only: the hook keeps the state
-    at "trabalha" while background tasks run, so nothing here masks a red state."""
-    return _cor(d, agora)
+    at "working" while background tasks run, so nothing here masks a red state."""
+    return _color(d, now)
 
 
 def repo_of(cwd, paths):
     """Longest path in `paths` that contains `cwd`, or None."""
-    melhor = None
+    best = None
     for p in paths:
-        if (cwd == p or cwd.startswith(p + "/")) and (melhor is None or len(p) > len(melhor)):
-            melhor = p
-    return melhor
+        if (cwd == p or cwd.startswith(p + "/")) and (best is None or len(p) > len(best)):
+            best = p
+    return best
 
 
-def _pid_do(d):
+def _pid_of(d):
     try:
         return max(0, int(d.get("claude_pid") or 0))
     except (TypeError, ValueError):
         return 0
 
 
-def _pid_vivo(pid):
-    """True se `pid` é um processo claude vivo; False se morreu, virou zumbi ou foi reaproveitado por
-    outro programa; None se não dá para saber. Sem /proc (macOS) basta o kill(pid, 0)."""
+def _pid_alive(pid):
+    """True when `pid` is a live claude process; False when it died, became a zombie or was reused by
+    another program; None when it cannot be told. Without /proc (macOS) kill(pid, 0) is enough."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except PermissionError:     # existe, mas é de outro usuário
+    except PermissionError:     # it exists, but belongs to another user
         pass
     except OSError:
         return None
@@ -595,114 +595,114 @@ def _pid_vivo(pid):
         return True
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
-            estado = f.read().rsplit(")", 1)[1].split()[0]
-        if estado == "Z":
+            state = f.read().rsplit(")", 1)[1].split()[0]
+        if state == "Z":
             return False
         with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
-            nome = f.read()
+            name = f.read()
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             argv = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
     except (OSError, IndexError):
         return False
-    return "claude" in f"{nome} {argv}".lower()
+    return "claude" in f"{name} {argv}".lower()
 
 
-def _outro_servidor(d, socket_atual):
+def _other_server(d, current_socket):
     """True when the session was recorded on a tmux server other than the one in use."""
     sock = d.get("tmux_socket")
-    return bool(sock and socket_atual and os.path.realpath(sock) != os.path.realpath(socket_atual))
+    return bool(sock and current_socket and os.path.realpath(sock) != os.path.realpath(current_socket))
 
 
-def _vida(d, vivos, socket_atual):
-    """True = viva, False = morta (pode apagar), None = não dá para saber.
+def _is_alive(d, live, current_socket):
+    """True = alive, False = dead (may be deleted), None = cannot be told.
 
-    Com claude_pid > 0 o teste é o processo. Sem ele (arquivo antigo), o teste é o pane no servidor
-    atual: pane que voltou ao shell já está fora de `vivos`.
+    With claude_pid > 0 the test is the process. Without it (old file), the test is the pane on the
+    current server: a pane back at the shell is already out of `live`.
     """
-    pid = _pid_do(d)
+    pid = _pid_of(d)
     if pid > 0:
-        return _pid_vivo(pid)
+        return _pid_alive(pid)
     if not d.get("pane"):
         return False
-    if _outro_servidor(d, socket_atual) or vivos is None:
+    if _other_server(d, current_socket) or live is None:
         return None
-    return d["pane"] in vivos
+    return d["pane"] in live
 
 
-def _sessoes_vivas(agora):
-    """[(sid, state_json, color)] das sessões vivas no servidor tmux atual, mais nova primeiro.
+def _live_sessions(now):
+    """[(sid, state_json, color)] of live sessions on the current tmux server, newest first.
 
-    Lê só <sid>.json (pula *.status.json e *.lock). Apaga o arquivo de sessão morta há mais de
-    ORFAO_IDADE_S; nunca apaga sessão viva nem a que não se consegue testar. Falha de unlink é ignorada.
+    Reads only <sid>.json (skips *.status.json and *.lock). Deletes a dead session file older than
+    ORPHAN_AGE_S; never deletes a live session or one that cannot be tested. An unlink failure is ignored.
     """
     try:
-        arquivos = [f for f in SESSOES.glob("*.json") if "." not in f.stem]
+        files = [f for f in SESSIONS.glob("*.json") if "." not in f.stem]
     except OSError:
         return []
-    vivos = tmux.live_panes()
-    socket_atual = tmux.server_socket()
+    live = tmux.live_panes()
+    current_socket = tmux.server_socket()
     res = []
-    for f in arquivos:
+    for f in files:
         try:
             d = json.loads(f.read_text())
             if not isinstance(d, dict):
                 d = {}
-        except Exception:       # ilegível: sem pane nem pid, então órfão pela idade do arquivo
+        except Exception:       # unreadable: no pane or pid, so orphaned by the file age
             d = {}
         try:
             ref = d["ts"] if isinstance(d.get("ts"), (int, float)) else f.stat().st_mtime
         except OSError:
-            ref = agora
-        vida = _vida(d, vivos, socket_atual)
-        if vida is False and agora - ref > ORFAO_IDADE_S:
+            ref = now
+        alive = _is_alive(d, live, current_socket)
+        if alive is False and now - ref > ORPHAN_AGE_S:
             try:
                 f.unlink()
             except OSError:
                 pass
             continue
-        # Não mostrada: sem pane, morta, ou de outro servidor (pane id pode repetir entre servidores).
-        if vida is False or not d.get("pane") or _outro_servidor(d, socket_atual):
+        # Not shown: no pane, dead, or from another server (a pane id may repeat across servers).
+        if alive is False or not d.get("pane") or _other_server(d, current_socket):
             continue
-        res.append((f.stem, d, cor_sessao(d, agora)))
+        res.append((f.stem, d, session_color(d, now)))
     res.sort(key=lambda x: x[1].get("ts", 0), reverse=True)
     return res
 
 
-def session_for_pane(pane_id, agora=None):
-    """(sid, state_json, color) da sessão viva do pane no servidor atual (a mais nova, se houver
-    mais de uma), ou None. Para a statusbar e quem precisa da sessão de um pane só."""
+def session_for_pane(pane_id, now=None):
+    """(sid, state_json, color) of the live session of the pane on the current server (the newest, if
+    there is more than one), or None. For the statusbar and whoever needs one pane's session."""
     if not pane_id:
         return None
-    for entrada in _sessoes_vivas(agora or time.time()):
-        if entrada[1].get("pane") == pane_id:
-            return entrada
+    for entry in _live_sessions(now or time.time()):
+        if entry[1].get("pane") == pane_id:
+            return entry
     return None
 
 
-def live_sessions(paths, agora=None):
+def live_sessions(paths, now=None):
     """{repo_path: [(sid, state_json, color)]} of live Claude sessions inside `paths`, newest first.
 
-    See _sessoes_vivas for what counts as live. Sessions without a cwd are skipped.
+    See _live_sessions for what counts as live. Sessions without a cwd are skipped.
     """
-    agora = agora or time.time()
+    now = now or time.time()
     res = {}
-    for sid, d, cor in _sessoes_vivas(agora):
+    for sid, d, color in _live_sessions(now):
         cwd = d.get("cwd")
         if not isinstance(cwd, str) or not cwd:
             continue
-        repo = repo_of(expandir(cwd), paths)
+        repo = repo_of(expand_path(cwd), paths)
         if repo:
-            res.setdefault(repo, []).append((sid, d, cor))
+            res.setdefault(repo, []).append((sid, d, color))
     return res
 
 
-def estados_por_repo(repos, agora=None):
-    """{caminho_do_repo: 'ocioso'|'trabalha'|'espera'|'pergunta'} — vale a pior sessão do repo."""
-    caminhos = [p for _, rs in repos for _, p in rs]
+def states_by_repo(repos, now=None):
+    """{repo_path: 'idle'|'working'|'waiting'|'question'} — the worst session of the repo wins."""
+    paths = [p for _, rs in repos for _, p in rs]
     res = {}
-    for repo, sessoes in live_sessions(caminhos, agora).items():
-        for _, _, c in sessoes:
-            if PRIO[c] >= PRIO[res.get(repo, "ocioso")]:
+    for repo, sessions in live_sessions(paths, now).items():
+        for _, _, c in sessions:
+            if PRIORITY[c] >= PRIORITY[res.get(repo, "idle")]:
                 res[repo] = c
     return res
 
@@ -725,28 +725,28 @@ def git(repo, *args, timeout=15, input=None):
 
 
 def git_status(repo, untracked=True):
-    """`git status` como {caminho: xy}, ou None se não for repo. Usa -z: caminho sem aspas,
-    e renomeio/cópia traz o caminho antigo num campo extra, que é pulado."""
+    """`git status` as {path: xy}, or None when it is not a repo. Uses -z: unquoted paths,
+    and a rename/copy carries the old path in an extra field, which is skipped."""
     rc, out = git(repo, "status", "--porcelain", "-z", "-uall" if untracked else "-uno")
     if rc != 0:
         return None
     res = {}
-    campos = out.split("\0")
+    fields = out.split("\0")
     i = 0
-    while i < len(campos):
-        campo = campos[i]
+    while i < len(fields):
+        field = fields[i]
         i += 1
-        if len(campo) < 4:
+        if len(field) < 4:
             continue
-        xy = campo[:2]
-        res[campo[3:]] = xy
+        xy = field[:2]
+        res[field[3:]] = xy
         if xy[0] in "RC":
             i += 1
     return res
 
 
 def git_branch(repo):
-    """Ramo atual; em HEAD solto, o hash curto."""
+    """Current branch; on a detached HEAD, the short hash."""
     rc, out = git(repo, "symbolic-ref", "--short", "-q", "HEAD")
     if rc == 0 and out.strip():
         return out.strip()
@@ -754,11 +754,11 @@ def git_branch(repo):
     return out.strip() if rc == 0 and out.strip() else "?"
 
 
-_GH_CACHE = {}        # repo -> (ts, estado)
-_FETCH_TS = {}        # repo -> ts do último fetch, só quando não dá para marcar em disco
-GH_TTL = 10           # s entre releituras locais
-FETCH_TTL = 300       # s entre fetches em segundo plano (só assim dá pra saber se está atrás)
-_FETCH_DIR = ESTADO / "fetch"   # um marcador por repo: compartilhado entre as janelas (processos)
+_GH_CACHE = {}        # repo -> (ts, state)
+_FETCH_TS = {}        # repo -> last fetch ts, only when it cannot be marked on disk
+GH_TTL = 10           # seconds between local re-reads
+FETCH_TTL = 300       # seconds between background fetches (only this tells whether it is behind)
+_FETCH_DIR = STATE / "fetch"   # one marker per repo: shared across windows (processes)
 
 
 def _fetch_bg(repo):
@@ -771,17 +771,17 @@ def _fetch_bg(repo):
 
 
 def _fetch_head(repo):
-    """FETCH_HEAD do repo. Em worktree (ou submodulo) '.git' é arquivo com 'gitdir: <caminho>'."""
+    """Repo FETCH_HEAD. In a worktree (or submodule) '.git' is a file with 'gitdir: <path>'."""
     g = os.path.join(repo, ".git")
     if os.path.isfile(g):
         try:
             with open(g, encoding="utf-8") as fh:
-                linha = fh.read().strip()
+                line = fh.read().strip()
         except OSError:
             return None
-        if not linha.startswith("gitdir:"):
+        if not line.startswith("gitdir:"):
             return None
-        d = linha[len("gitdir:"):].strip()
+        d = line[len("gitdir:"):].strip()
         g = d if os.path.isabs(d) else os.path.join(repo, d)
     return os.path.join(g, "FETCH_HEAD")
 
@@ -793,72 +793,72 @@ def _mtime(p):
         return 0
 
 
-def _fetch_devido(repo, agora):
-    """True se nenhuma janela buscou esse repo nos últimos FETCH_TTL s; None se não dá para marcar.
+def _fetch_due(repo, now):
+    """True when no window fetched this repo in the last FETCH_TTL seconds; None when it cannot be marked.
 
-    Último fetch = o mais recente entre o FETCH_HEAD do git e um marcador em ESTADO/fetch (o marcador
-    cobre fetch que falhou, que não reescreve FETCH_HEAD). O marcador fica travado enquanto checa e
-    grava, então duas janelas no mesmo instante não disparam dois fetches.
+    Last fetch = the newest between git FETCH_HEAD and a marker in STATE/fetch (the marker covers a
+    fetch that failed, which does not rewrite FETCH_HEAD). The marker stays locked while it checks and
+    writes, so two windows at the same instant do not trigger two fetches.
     """
-    marca = _FETCH_DIR / hashlib.sha1(repo.encode("utf-8")).hexdigest()
+    mark = _FETCH_DIR / hashlib.sha1(repo.encode("utf-8")).hexdigest()
     try:
         _FETCH_DIR.mkdir(parents=True, exist_ok=True)
-        with open(marca, "a+", encoding="utf-8") as f:
+        with open(mark, "a+", encoding="utf-8") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             f.seek(0)
             try:
-                marcado = float(f.read() or 0)
+                marked = float(f.read() or 0)
             except ValueError:
-                marcado = 0
-            ultimo = max(marcado, _mtime(_fetch_head(repo)))
-            if agora - ultimo < FETCH_TTL:
+                marked = 0
+            last = max(marked, _mtime(_fetch_head(repo)))
+            if now - last < FETCH_TTL:
                 return False
             f.seek(0)
             f.truncate()
-            f.write(repr(agora))
+            f.write(repr(now))
             f.flush()
             return True
     except OSError:
         return None
 
 
-def estado_git(repo):
-    """(estado, sujo): estado = None sem git · 'local' git criado mas não subiu · 'ok' subiu e em dia ·
-    'dessinc' ahead/behind. sujo = há trabalho não commitado (modificado ou novo, fora do stash)."""
-    agora = time.time()
+def git_state(repo):
+    """(state, dirty): state = None without git · 'local' git created but not pushed · 'ok' pushed and up to date ·
+    'diverged' ahead/behind. dirty = there is uncommitted work (modified or new, outside the stash)."""
+    now = time.time()
     c = _GH_CACHE.get(repo)
-    if c and agora - c[0] < GH_TTL:
+    if c and now - c[0] < GH_TTL:
         return c[1]
     if not os.path.exists(os.path.join(repo, ".git")):
-        est = None
+        state = None
     else:
-        due = _fetch_devido(repo, agora)
-        if due is None:    # sem como marcar em disco: volta ao temporizador desta janela
-            due = agora - _FETCH_TS.get(repo, 0) > FETCH_TTL
+        due = _fetch_due(repo, now)
+        if due is None:    # cannot mark on disk: fall back to this window's timer
+            due = now - _FETCH_TS.get(repo, 0) > FETCH_TTL
             if due:
-                _FETCH_TS[repo] = agora
+                _FETCH_TS[repo] = now
         if due:
             import threading
             threading.Thread(target=_fetch_bg, args=(repo,), daemon=True).start()
         rc, out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", timeout=5)
         if rc != 0:
-            # sem upstream: só é "local" se não houver remoto nenhum; com remoto (público ou
-            # privado) o ícone do GitHub fica normal mesmo sem a branch rastreando
+            # no upstream: it is only "local" when there is no remote at all; with a remote (public or
+            # private) the GitHub icon stays normal even without a tracking branch
             rc2, remotes = git(repo, "remote", timeout=5)
-            est = "ok" if rc2 == 0 and remotes.strip() else "local"
+            state = "ok" if rc2 == 0 and remotes.strip() else "local"
         else:
             ahead, behind = (int(x) for x in out.split())
-            est = "dessinc" if ahead or behind else "ok"
-    sujo = False
-    if est is not None:
+            state = "diverged" if ahead or behind else "ok"
+    dirty = False
+    if state is not None:
         rc, out = git(repo, "status", "--porcelain", timeout=5)
-        sujo = rc == 0 and bool(out.strip())
-    _GH_CACHE[repo] = (agora, (est, sujo))
-    return est, sujo
+        dirty = rc == 0 and bool(out.strip())
+    _GH_CACHE[repo] = (now, (state, dirty))
+    return state, dirty
 
 
 # --- Plugins -----------------------------------------------------------------------------------
-# Listed in config.yaml ("plugins": {perfil: [{"id", "path"}]}). Nothing is discovered: a folder
+# Listed in config.yaml ("plugins": {profile: [{"id", "path"}]}). Nothing is discovered: a folder
 # is loaded only when its entry is there, and only from the fixed path written in the entry.
 # The folder holds plugin.json: id, label (key of the plugin's own i18n/pt-BR.json), layout (same
 # line format as REPO_TREE in bin/workspace; the root pane is the window itself and has role claude),
@@ -869,93 +869,93 @@ PLUGIN_SPLIT = re.compile(r"[vh][bf]*")
 PLUGIN_SIZE = re.compile(r"(\d+%?|TERM|LEFT|RIGHT)?")
 
 
-class ErroPlugin(Exception):
+class PluginError(Exception):
     """Message already translated (i18n), ready to show the person."""
 
 
-def plugins_listados(perfil):
-    """Raw entries of config.yaml["plugins"][perfil]: only what is listed there is ever loaded."""
-    return ler_config().get("plugins", {}).get(perfil, [])
+def listed_plugins(profile):
+    """Raw entries of config.yaml["plugins"][profile]: only what is listed there is ever loaded."""
+    return read_config().get("plugins", {}).get(profile, [])
 
 
-def _layout_plugin(id_, texto):
+def _layout_plugin(id_, text):
     """Checks the layout lines and returns them in the REPO_TREE format (role|parent|split|size|cmd)."""
-    linhas, papeis = [], {"claude"}
-    for n, linha in enumerate(texto.splitlines(), 1):
-        s = linha.strip()
+    lines, roles = [], {"claude"}
+    for n, line in enumerate(text.splitlines(), 1):
+        s = line.strip()
         if not s or s.startswith("#"):
             continue
 
-        def falha(chave):
-            return ErroPlugin(t("plugin.err.layout", id=id_, line=n, detail=t(chave)))
+        def fail(key):
+            return PluginError(t("plugin.err.layout", id=id_, line=n, detail=t(key)))
 
-        campos = s.split("|", 4)
-        if len(campos) != 5:
-            raise falha("plugin.err.layout_fields")
-        papel, pai, divisao, tamanho, comando = campos
-        if papel == "rtabs":
-            raise falha("plugin.err.layout_reserved")
-        if not PLUGIN_ROLE.fullmatch(papel) or papel in papeis:
-            raise falha("plugin.err.layout_role")
-        if pai not in papeis:
-            raise falha("plugin.err.layout_parent")
-        if not PLUGIN_SPLIT.fullmatch(divisao):
-            raise falha("plugin.err.layout_split")
-        if not PLUGIN_SIZE.fullmatch(tamanho):
-            raise falha("plugin.err.layout_size")
-        if comando != "shell":
-            raise falha("plugin.err.layout_cmd")
-        papeis.add(papel)
-        linhas.append(f"{papel}|{pai}|{divisao}|{tamanho}|{comando}")
-    if not linhas:
-        raise ErroPlugin(t("plugin.err.field", id=id_, field="layout"))
-    return "\n".join(linhas)
+        fields = s.split("|", 4)
+        if len(fields) != 5:
+            raise fail("plugin.err.layout_fields")
+        role, parent, split, size, command = fields
+        if role == "rtabs":
+            raise fail("plugin.err.layout_reserved")
+        if not PLUGIN_ROLE.fullmatch(role) or role in roles:
+            raise fail("plugin.err.layout_role")
+        if parent not in roles:
+            raise fail("plugin.err.layout_parent")
+        if not PLUGIN_SPLIT.fullmatch(split):
+            raise fail("plugin.err.layout_split")
+        if not PLUGIN_SIZE.fullmatch(size):
+            raise fail("plugin.err.layout_size")
+        if command != "shell":
+            raise fail("plugin.err.layout_cmd")
+        roles.add(role)
+        lines.append(f"{role}|{parent}|{split}|{size}|{command}")
+    if not lines:
+        raise PluginError(t("plugin.err.field", id=id_, field="layout"))
+    return "\n".join(lines)
 
 
-def carregar_plugin(entrada):
-    """(id, pasta, label traduzido, layout) of one config.yaml entry; raises ErroPlugin if invalid."""
-    if not isinstance(entrada, dict) or not isinstance(entrada.get("id"), str) \
-            or not isinstance(entrada.get("path"), str):
-        raise ErroPlugin(t("plugin.err.entry", entry=json.dumps(entrada, ensure_ascii=False)))
-    id_ = entrada["id"]
+def load_plugin(entry):
+    """(id, folder, translated label, layout) of one config.yaml entry; raises PluginError if invalid."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) \
+            or not isinstance(entry.get("path"), str):
+        raise PluginError(t("plugin.err.entry", entry=json.dumps(entry, ensure_ascii=False)))
+    id_ = entry["id"]
     if not PLUGIN_ID.fullmatch(id_):
-        raise ErroPlugin(t("plugin.err.id", id=id_))
-    pasta = expandir(entrada["path"])
-    arq = Path(pasta) / "plugin.json"
+        raise PluginError(t("plugin.err.id", id=id_))
+    folder = expand_path(entry["path"])
+    file = Path(folder) / "plugin.json"
     try:
-        dados = json.loads(arq.read_text(encoding="utf-8"))
+        data = json.loads(file.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise ErroPlugin(t("plugin.err.not_found", id=id_, path=pasta))
+        raise PluginError(t("plugin.err.not_found", id=id_, path=folder))
     except (OSError, ValueError):
-        raise ErroPlugin(t("plugin.err.json", id=id_, path=str(arq)))
-    if not isinstance(dados, dict):
-        raise ErroPlugin(t("plugin.err.json", id=id_, path=str(arq)))
-    if dados.get("id") != id_:
-        raise ErroPlugin(t("plugin.err.id_mismatch", id=id_, found=str(dados.get("id"))))
-    label = dados.get("label")
+        raise PluginError(t("plugin.err.json", id=id_, path=str(file)))
+    if not isinstance(data, dict):
+        raise PluginError(t("plugin.err.json", id=id_, path=str(file)))
+    if data.get("id") != id_:
+        raise PluginError(t("plugin.err.id_mismatch", id=id_, found=str(data.get("id"))))
+    label = data.get("label")
     if not isinstance(label, str) or not label:
-        raise ErroPlugin(t("plugin.err.field", id=id_, field="label"))
-    layout = dados.get("layout")
+        raise PluginError(t("plugin.err.field", id=id_, field="label"))
+    layout = data.get("layout")
     if not isinstance(layout, str):
-        raise ErroPlugin(t("plugin.err.field", id=id_, field="layout"))
-    necessita = dados.get("needs", [])
-    if not isinstance(necessita, list) or not all(isinstance(x, str) for x in necessita):
-        raise ErroPlugin(t("plugin.err.field", id=id_, field="needs"))
+        raise PluginError(t("plugin.err.field", id=id_, field="layout"))
+    needs = data.get("needs", [])
+    if not isinstance(needs, list) or not all(isinstance(x, str) for x in needs):
+        raise PluginError(t("plugin.err.field", id=id_, field="needs"))
     try:
-        textos = json.loads((Path(pasta) / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
+        texts = json.loads((Path(folder) / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        textos = {}
-    if label not in textos:
-        raise ErroPlugin(t("plugin.err.label", id=id_, chave=label))
-    return id_, pasta, textos[label], _layout_plugin(id_, layout)
+        texts = {}
+    if label not in texts:
+        raise PluginError(t("plugin.err.label", id=id_, key=label))
+    return id_, folder, texts[label], _layout_plugin(id_, layout)
 
 
 if __name__ == "__main__":
     import sys
-    comando = sys.argv[1]
-    perfil = sys.argv[2] if len(sys.argv) > 2 else ""
-    if comando == "perfil-cmd":        # bash: the command line of the chosen agent (mode per repo when given)
-        repo = expandir(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
+    command = sys.argv[1]
+    profile = sys.argv[2] if len(sys.argv) > 2 else ""
+    if command == "profile-cmd":        # bash: the command line of the chosen agent (mode per repo when given)
+        repo = expand_path(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
         try:
             if repo:
                 cmd = agent_identity()
@@ -965,47 +965,47 @@ if __name__ == "__main__":
                 print(launch)
             else:
                 print(agent_launch_command())
-        except ErroSettings as error:
+        except SettingsError as error:
             print(error, file=sys.stderr)
             sys.exit(2)
-    elif comando == "ensure-settings":   # bash reload: generate a profile's settings without launching
+    elif command == "ensure-settings":   # bash reload: generate a profile's settings without launching
         try:
-            path = ensure_profile_settings(perfil or agent_name())
-        except ErroSettings as error:
+            path = ensure_profile_settings(profile or agent_name())
+        except SettingsError as error:
             print(error, file=sys.stderr)
             sys.exit(2)
         if path:
             print(path)
-    elif comando == "profile-names":     # bash reload: every profile whose generated settings must be refreshed
-        profiles = ler_config().get("profiles", {})
+    elif command == "profile-names":     # bash reload: every profile whose generated settings must be refreshed
+        profiles = read_config().get("profiles", {})
         names = sorted(set(profiles) | {agent_name()}) if isinstance(profiles, dict) else [agent_name()]
         print("\n".join(names))
-    elif comando == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
+    elif command == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
         try:
             print(opening_command(sys.argv[2]))
-        except ErroSettings as error:
+        except SettingsError as error:
             print(error, file=sys.stderr)
             sys.exit(2)
-    elif comando == "repo-inicial":    # bash: path of the first repo to open on a fresh start (main, else first listed)
-        print((ler_principal() or ler_repos()[0][1][0])[1])
-    elif comando == "nomes-janelas":   # bash: names a window of profile PERFIL may have (for prune); empty = keep all
+    elif command == "initial-repo":    # bash: path of the first repo to open on a fresh start (main, else first listed)
+        print((read_main() or read_repos()[0][1][0])[1])
+    elif command == "window-names":   # bash: names a window of profile PROFILE may have (for prune); empty = keep all
         from worktrees import all_window_names   # lazy: worktrees imports lib
-        names = [ler_principal()[0]] if ler_principal() else []
-        names += [n for g, r in ler_repos() for n, p in r]
+        names = [read_main()[0]] if read_main() else []
+        names += [n for g, r in read_repos() for n, p in r]
         names += all_window_names()              # worktree windows: window_name is the path's basename
-        names += ["plugin:" + e["id"] for e in plugins_listados(perfil)
+        names += ["plugin:" + e["id"] for e in listed_plugins(profile)
                   if isinstance(e, dict) and isinstance(e.get("id"), str)]
         print("\n".join(names))
-    elif comando == "plugins":           # bash reads: "@@id<TAB>pasta<TAB>rótulo", then the layout lines
-        for entrada in plugins_listados(perfil):
+    elif command == "plugins":           # bash reads: "@@id<TAB>folder<TAB>label", then the layout lines
+        for entry in listed_plugins(profile):
             try:
-                id_, pasta, rotulo, arvore = carregar_plugin(entrada)
-            except ErroPlugin as e:
+                id_, folder, label, tree = load_plugin(entry)
+            except PluginError as e:
                 print(e, file=sys.stderr)
                 continue
-            print(f"@@{id_}\t{pasta}\t{rotulo}")
-            print(arvore)
-    elif comando == "plugin-ids":      # listed ids, valid or not (a broken plugin keeps its window)
-        for entrada in plugins_listados(perfil):
-            if isinstance(entrada, dict) and isinstance(entrada.get("id"), str):
-                print(entrada["id"])
+            print(f"@@{id_}\t{folder}\t{label}")
+            print(tree)
+    elif command == "plugin-ids":      # listed ids, valid or not (a broken plugin keeps its window)
+        for entry in listed_plugins(profile):
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                print(entry["id"])

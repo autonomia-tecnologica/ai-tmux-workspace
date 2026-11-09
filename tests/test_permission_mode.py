@@ -2,7 +2,7 @@
 bypassPermissions on the first opening of a non-Claude profile, the last mode reapplied for the same
 agent command, and a fallback on profile switches.
 
-Every test uses a temporary HOME, WS_ESTADO and AT_WS_CONFIG, so the real cache and config are never
+Every test uses a temporary HOME, WS_STATE and AT_WS_CONFIG, so the real cache and config are never
 read or written. `lib.py` and `hook.py` run in child processes, like the workspace runs them."""
 import json
 import os
@@ -33,7 +33,7 @@ class PermissionModeTest(unittest.TestCase):
         self.repo.mkdir()
         self.config = self.root / "config.json"
         self.set_command("claude", "claude")
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.state)})
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.state)})
         env.start()
         self.addCleanup(env.stop)
 
@@ -44,7 +44,7 @@ class PermissionModeTest(unittest.TestCase):
             json.dumps({"agent": agent, "profiles": {agent: command}}), encoding="utf-8")
 
     def env(self):
-        return dict(os.environ, HOME=str(self.home), WS_ESTADO=str(self.state),
+        return dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state),
                     AT_WS_CONFIG=str(self.config))
 
     def opening(self, repo=None):
@@ -54,8 +54,8 @@ class PermissionModeTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def perfil_cmd(self, repo=""):
-        argv = [sys.executable, str(SRC / "lib.py"), "perfil-cmd", self.agent]
+    def profile_cmd(self, repo=""):
+        argv = [sys.executable, str(SRC / "lib.py"), "profile-cmd", self.agent]
         if repo:
             argv.append(str(repo))
         proc = subprocess.run(argv, env=self.env(), capture_output=True, text=True, check=False)
@@ -121,13 +121,13 @@ class PermissionModeTest(unittest.TestCase):
         out = self.opening()
         self.assertIn("--permission-mode plan", out)
 
-    def test_perfil_cmd_without_repo_has_no_mode(self):
-        self.assertNotIn("--permission-mode", self.perfil_cmd())
+    def test_profile_cmd_without_repo_has_no_mode(self):
+        self.assertNotIn("--permission-mode", self.profile_cmd())
 
-    def test_perfil_cmd_with_repo_uses_the_saved_mode(self):
+    def test_profile_cmd_with_repo_uses_the_saved_mode(self):
         self.opening()
         permission_state.record_mode(str(self.repo), "bypassPermissions")
-        out = self.perfil_cmd(self.repo)
+        out = self.profile_cmd(self.repo)
         self.assertIn("--permission-mode bypassPermissions", out)
 
 
@@ -142,12 +142,12 @@ class HookPermissionModeTest(unittest.TestCase):
         self.repo.mkdir()
         self.config = self.root / "config.json"
         self.config.write_text('{"notifications": false}', encoding="utf-8")
-        env = mock.patch.dict(os.environ, {"WS_ESTADO": str(self.state)})
+        env = mock.patch.dict(os.environ, {"WS_STATE": str(self.state)})
         env.start()
         self.addCleanup(env.stop)
 
     def run_hook(self, payload):
-        env = dict(os.environ, WS_ESTADO=str(self.state), AT_WS_CONFIG=str(self.config))
+        env = dict(os.environ, WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config))
         return subprocess.run([sys.executable, str(SRC / "hook.py")], input=json.dumps(payload),
                               text=True, capture_output=True, env=env, timeout=60)
 

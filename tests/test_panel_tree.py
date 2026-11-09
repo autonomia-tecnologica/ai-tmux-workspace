@@ -42,47 +42,47 @@ class RenameTest(unittest.TestCase):
         self.git("commit", "-qm", "add")
 
     def viewer(self, path):
-        return SimpleNamespace(chave=("f", path), recoletar=mock.Mock())
+        return SimpleNamespace(key=("f", path), redraw=mock.Mock())
 
     def test_tracked_file_uses_git_mv(self):
         old = self.write("old.txt")
         self.commit("old.txt")
         v = self.viewer(old)
         with mock.patch.object(panel_tree.tmux, "message") as message:
-            ok = panel_tree.renomear_para(v, ("f", old), "new.txt")
+            ok = panel_tree.rename_to(v, ("f", old), "new.txt")
         self.assertTrue(ok)
         new = os.path.join(self.repo, "new.txt")
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.exists(new))
         status = self.git("status", "--porcelain").strip()
         self.assertTrue(status.startswith("R"), status)     # staged rename, as `git mv` does
-        self.assertEqual(v.chave, ("f", new))
-        v.recoletar.set.assert_called_once()
+        self.assertEqual(v.key, ("f", new))
+        v.redraw.set.assert_called_once()
         message.assert_called_once_with(i18n.t("tree.renamed", name="new.txt"))
 
     def test_untracked_file_uses_os_rename(self):
         old = self.write("old.txt")
         v = self.viewer(old)
         with mock.patch.object(panel_tree.tmux, "message"):
-            ok = panel_tree.renomear_para(v, ("f", old), "new.txt")
+            ok = panel_tree.rename_to(v, ("f", old), "new.txt")
         self.assertTrue(ok)
         new = os.path.join(self.repo, "new.txt")
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.exists(new))
         self.assertEqual(self.git("status", "--porcelain").strip(), "?? new.txt")
-        self.assertEqual(v.chave, ("f", new))
-        v.recoletar.set.assert_called_once()
+        self.assertEqual(v.key, ("f", new))
+        v.redraw.set.assert_called_once()
 
     def test_existing_destination_is_refused(self):
         old = self.write("old.txt")
         self.write("other.txt")
         v = self.viewer(old)
         with mock.patch.object(panel_tree.tmux, "message") as message:
-            ok = panel_tree.renomear_para(v, ("f", old), "other.txt")
+            ok = panel_tree.rename_to(v, ("f", old), "other.txt")
         self.assertFalse(ok)
         self.assertTrue(os.path.exists(old))
-        self.assertEqual(v.chave, ("f", old))
-        v.recoletar.set.assert_not_called()
+        self.assertEqual(v.key, ("f", old))
+        v.redraw.set.assert_not_called()
         message.assert_called_once_with(i18n.t("tree.rename_exists", name="other.txt"))
 
     def test_invalid_names_are_refused(self):
@@ -90,36 +90,36 @@ class RenameTest(unittest.TestCase):
         for name in ("", "a/b", "a\\b", ".", "..", "/abs/path"):
             v = self.viewer(old)
             with mock.patch.object(panel_tree.tmux, "message") as message:
-                ok = panel_tree.renomear_para(v, ("f", old), name)
+                ok = panel_tree.rename_to(v, ("f", old), name)
             self.assertFalse(ok, name)
             self.assertTrue(os.path.exists(old), name)
-            self.assertEqual(v.chave, ("f", old), name)
+            self.assertEqual(v.key, ("f", old), name)
             message.assert_called_once()
 
     def test_unchanged_name_is_a_noop(self):
         old = self.write("old.txt")
         v = self.viewer(old)
         with mock.patch.object(panel_tree.tmux, "message") as message:
-            ok = panel_tree.renomear_para(v, ("f", old), "old.txt")
+            ok = panel_tree.rename_to(v, ("f", old), "old.txt")
         self.assertTrue(ok)
         self.assertTrue(os.path.exists(old))
         message.assert_not_called()
 
     def tearDown(self):
-        panel_tree.RENAME.update(ativo=False, chave=None, nome="")
+        panel_tree.RENAME.update(active=False, key=None, name="")
 
     def test_inline_input_cancels_on_esc(self):
         old = self.write("old.txt")
         self.commit("old.txt")
         v = self.viewer(old)
-        panel_tree.renomear(v, ("f", old))
-        self.assertTrue(panel_tree.RENAME["ativo"])
-        self.assertEqual(panel_tree.RENAME["nome"], "old.txt")
+        panel_tree.rename(v, ("f", old))
+        self.assertTrue(panel_tree.RENAME["active"])
+        self.assertEqual(panel_tree.RENAME["name"], "old.txt")
         with mock.patch.object(panel_tree.tmux, "message") as message:
             self.assertTrue(panel_tree.on_input(v, "esc"))
-        self.assertFalse(panel_tree.RENAME["ativo"])
+        self.assertFalse(panel_tree.RENAME["active"])
         self.assertTrue(os.path.exists(old))
-        self.assertEqual(v.chave, ("f", old))
+        self.assertEqual(v.key, ("f", old))
         message.assert_not_called()
         self.assertEqual(self.git("status", "--porcelain").strip(), "")
 
@@ -127,7 +127,7 @@ class RenameTest(unittest.TestCase):
         old = self.write("old.txt")
         self.commit("old.txt")
         v = self.viewer(old)
-        panel_tree.renomear(v, ("f", old))
+        panel_tree.rename(v, ("f", old))
         for _ in "old.txt":
             panel_tree.on_input(v, "\x7f")
         for ch in "new.txt":
@@ -135,8 +135,8 @@ class RenameTest(unittest.TestCase):
         with mock.patch.object(panel_tree.tmux, "message"):
             self.assertTrue(panel_tree.on_input(v, "\r"))
         new = os.path.join(self.repo, "new.txt")
-        self.assertFalse(panel_tree.RENAME["ativo"])
-        self.assertEqual(v.chave, ("f", new))
+        self.assertFalse(panel_tree.RENAME["active"])
+        self.assertEqual(v.key, ("f", new))
         self.assertTrue(os.path.exists(new))
         self.assertFalse(os.path.exists(old))
 
