@@ -40,7 +40,8 @@ profiles:
       env:
         ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
         ANTHROPIC_MODEL: deepseek-flash
-        ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-flash
+        # slot Opus: o modelo mais forte, escolhido com /model opus
+        ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-v4-pro
         ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-flash
         ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-flash
         CLAUDE_CODE_SUBAGENT_MODEL: deepseek-flash

@@ -47,11 +47,12 @@ profiles:
       env:
         ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
         ANTHROPIC_MODEL: deepseek-flash
+        ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-v4-pro   # slot Opus = modelo mais forte
       model: deepseek-flash
       apiKeyHelper: "pass show deepseek/api-key"
 ```
 
-Uma linha de comando que já passa `--settings` continua como está: é o formato antigo, e o arquivo continua sendo seu. Para migrar, leve o conteúdo não secreto para `settings` e troque a chave por `apiKeyHelper`, um comando que imprime a chave na hora de subir. A chave de acesso nunca entra no `config.yaml`, na settings gerada nem no ambiente: a settings só aponta para o cofre, e o Claude Code executa o helper no launch. O arquivo gerado fica com modo 0600 e o workspace recusa gerar se encontrar valor literal em `ANTHROPIC_AUTH_TOKEN`, `*_API_KEY`, `*_ACCESS_TOKEN` ou algo com cara de chave.
+Uma linha de comando que já passa `--settings` continua como está: é o formato antigo, e o arquivo continua sendo seu. Para migrar, leve o conteúdo não secreto para `settings` e troque a chave por `apiKeyHelper`, um comando que imprime a chave na hora de subir. A chave de acesso nunca entra no `config.yaml`, na settings gerada nem no ambiente: a settings só aponta para o cofre, e o Claude Code executa o helper no launch. O arquivo gerado fica com modo 0600 e o workspace recusa gerar se encontrar valor literal em `ANTHROPIC_AUTH_TOKEN`, `*_API_KEY`, `*_ACCESS_TOKEN` ou algo com cara de chave. O slot Opus pode apontar para um modelo mais forte (ex.: `deepseek-v4-pro`) mantendo `ANTHROPIC_MODEL` e `CLAUDE_CODE_SUBAGENT_MODEL` em `deepseek-flash`; no Claude Code, `/model opus` escolhe esse slot.
 
 O `settings.json` da pessoa e as settings gerenciadas da empresa continuam valendo: o `--settings` é uma camada a mais, e o workspace não controla a precedência. No teste local, uma chave repetida no `--settings` venceu a do `settings.json` da pessoa; as gerenciadas da empresa ficam acima das duas pela documentação do Claude Code (não exercitamos uma gerenciada aqui). `workspace reload` regenera os arquivos: sessões abertas depois dele usam a settings nova; o Claude Code também observa os settings e reaplica a maioria sem reiniciar (documentação dele; não testamos o hot reload aqui).
 
@@ -141,7 +142,8 @@ confere o caminho e nega qualquer outro arquivo, e `Write`, Bash, subagentes e f
 O backlog é só o que você mandar virar backlog. As respostas aparecem no log conforme cada Claude termina (o topo
 mostra quem ainda está aguardando e o passo atual); a caixa **Mensagem:** cresce conforme o texto e mantém o fim
 visível. Não há comando de conferência na CLI: a CLI do `workspace` é para instalação e ações administrativas, nunca
-para o uso do tmux.
+para o uso do tmux. O desenho aprovado para a próxima versão — persistência da conferência, `/clear`,
+escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, item 70.
 
 ## Comandos
 `workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks`.
@@ -150,15 +152,20 @@ para o uso do tmux.
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
 agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
 migração aparece uma vez só por mudança; ver acima). O resto vem do `config.yaml` e dos arquivos do repo.
+O estado de runtime fica em `~/.cache/workspace` (`WS_ESTADO`). O desenho aprovado para unificar
+estado, harness instalado e conferência em `~/.config/ai-tmux-workspace`, com a separação de
+escopo por repo/home/conferência, está no `BACKLOG.md`, item 72.
 
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
 `src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
-`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os irmãos) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py`.
+`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os irmãos) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `docs/threat-model.md` (modelagem de ameaças) · `docs/threat-model.json` (requisitos; fonte da verdade).
 
-## Segurança: modelagem de ameaças (pendente)
+## Segurança: modelagem de ameaças
 
-A modelagem de ameaças deste ambiente será feita em breve e está pendente; até lá, tudo aqui está sujeito a falhas. Acredita-se que o ambiente já seja melhor que usar o Claude diretamente, mas isso não é garantia.
+A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
+
+**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a política central existe mas não está ativa para sessões normais (falta `WS_SESSION_ROLE`/`WS_SESSION_ROOT`); não há sandbox de SO nem usuário dedicado; o papel `home` ainda permite escrita ampla; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
 
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 
