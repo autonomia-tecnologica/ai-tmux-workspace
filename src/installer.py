@@ -630,6 +630,7 @@ class Assistant:
             command = shlex.join(["git", "clone", "--depth", "1", CLONE_URL, str(target)])
             self.ui.line(t("installer.harness.clone", command=command))
             self.ui.confirm("installer.harness.clone_confirm")
+            self.ensure_dir(target.parent)
             self.manifest_for().record_clone(target, CLONE_URL)
             result = subprocess.run(["git", "clone", "--depth", "1", CLONE_URL, str(target)],
                                     check=False)

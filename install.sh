@@ -12,6 +12,11 @@ set -eu
 REPO_URL="${AT_WS_REPO_URL:-https://github.com/autonomia-tecnologica/ai-tmux-workspace.git}"
 INSTALL_DIR="${AT_WS_INSTALL_DIR:-$HOME/.local/share/ai-tmux-workspace/app}"
 
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'ai-tmux-workspace: python3 is required to run the installer.\n' >&2
+  exit 1
+fi
+
 # $0 is the script path when run from a file and the shell name when piped.
 ROOT=""
 if [ -f "$0" ]; then
@@ -33,11 +38,6 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/src/installer.py" ] || [ ! -f "$ROOT/bin/work
     git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
   fi
   ROOT="$INSTALL_DIR"
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-  printf 'ai-tmux-workspace: python3 is required to run the installer.\n' >&2
-  exit 1
 fi
 
 exec python3 "$ROOT/src/installer.py" "$@"
