@@ -135,11 +135,13 @@ mandar ler). Se a mensagem não for do repo, ou for dirigida a outro participant
 responde**: nem linha no log. O prompt lista os participantes e diz a cada um qual é o seu. A conferência é
 análise rápida, não trabalho longo: a resposta vem em um parágrafo curto e o run tem um **orçamento** imposto pelo
 hook do workspace (12 arquivos lidos e 20 passos de ferramenta); quando ele acaba, o participante responde com o que já sabe e
-diz que uma análise mais profunda precisa de mais tempo. Nesse modo o run é **somente leitura**: `Edit`/`Write`
-são negados (nem o `BACKLOG.md` muda), e Bash, subagentes e ferramentas de rede ficam desligados. O backlog é só
-o que você mandar virar backlog. As respostas aparecem no log conforme cada Claude termina (o topo mostra quem ainda está aguardando e
-o passo atual). Não há comando de conferência na CLI: a CLI do `workspace` é para instalação e ações
-administrativas, nunca para o uso do tmux.
+diz que uma análise mais profunda precisa de mais tempo. Nesse modo o run não altera código: `Edit` só é aceito no
+`BACKLOG.md` do próprio repo, e só quando você pedir na mensagem para salvar algo no backlog; o hook do workspace
+confere o caminho e nega qualquer outro arquivo, e `Write`, Bash, subagentes e ferramentas de rede ficam desligados.
+O backlog é só o que você mandar virar backlog. As respostas aparecem no log conforme cada Claude termina (o topo
+mostra quem ainda está aguardando e o passo atual); a caixa **Mensagem:** cresce conforme o texto e mantém o fim
+visível. Não há comando de conferência na CLI: a CLI do `workspace` é para instalação e ações administrativas, nunca
+para o uso do tmux.
 
 ## Comandos
 `workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks`.

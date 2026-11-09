@@ -9,7 +9,9 @@ sobre um item abre um overlay; setas/j/k navegam, Enter executa `funcao(viewer, 
 Lista vazia não abre menu. Item inativo aparece apagado e Enter nele só fecha.
 
 Text input: `entrada(viewer, chave)` runs before navigation and returns True when it consumed the key;
-`rodape(viewer)` draws the fixed footer where the screen shows the text being typed.
+`rodape(viewer)` draws the footer where the screen shows the text being typed. The footer wraps its
+text and grows as needed, up to `MAX_FOOTER_LINES`; past that, it keeps the end visible (the cursor
+of a message box is at the end).
 """
 import os
 import re
@@ -41,7 +43,7 @@ def direcao(k):
     return None
 
 
-FOOTER_ROWS = 3
+MAX_FOOTER_LINES = 10    # the footer text grows up to this many rows, then keeps the tail
 
 
 def _larg(c):
@@ -127,6 +129,7 @@ class Viewer:
         self._rp, self._wp = os.pipe()
         self._frame = None
         self._tam = None
+        self._rod_n = 0         # rows taken by the footer (separator + text) in the last frame
         self.menu = None        # {"chave", "itens", "sel", "linha", "coluna"} while the context menu is open
         self._caixa = None      # (x, y, largura, altura) of the menu box as last drawn
 
@@ -177,15 +180,22 @@ class Viewer:
         with self._lock:
             cab, corpo = self.cab, self.corpo
         self._localizar_cursor()
-        h = max(0, lins - len(cab) - self._rod_h())
-        self.top = max(0, min(self.top, max(0, len(corpo) - h)))
-        end = self.idx + 1
-        while self.cursor and end < len(corpo) and corpo[end].cont:
-            end += 1
         rows = []
         for l in cab[:lins]:
             rows.append(cortar(l.texto, cols)[0])
         n_cab = len(rows)
+        rod = []
+        self._rod_n = 0
+        if self.rodape:
+            room = max(0, lins - n_cab - 1)     # at least the separator plus one text row
+            if room:
+                rod = self._footer_lines(cols, min(room, MAX_FOOTER_LINES))
+                self._rod_n = len(rod) + 1
+        h = max(0, lins - n_cab - self._rod_n)
+        self.top = max(0, min(self.top, max(0, len(corpo) - h)))
+        end = self.idx + 1
+        while self.cursor and end < len(corpo) and corpo[end].cont:
+            end += 1
         for r in range(h):
             i = self.top + r
             if i >= len(corpo):
@@ -198,8 +208,8 @@ class Viewer:
         self._caixa = None
         if self.menu is not None:
             self._sobrepor_menu(rows, n_cab, h, cols)
-        if self.rodape and lins >= len(rows) + FOOTER_ROWS:
-            rows = self._com_rodape(rows, cols, lins)
+        if self._rod_n:
+            rows = self._com_footer(rows, cols, lins, rod)
         while len(rows) < lins:
             rows.append("")
         if forcar or self._frame is None or self._tam != (cols, lins):
@@ -234,29 +244,38 @@ class Viewer:
         self._caixa = (x0, y0, w, alt)
 
     def _rod_h(self):
-        return FOOTER_ROWS if self.rodape else 0
+        """Footer height from the last frame (0 when there is no footer)."""
+        return self._rod_n if self.rodape else 0
 
-    def _com_rodape(self, rows, cols, lins):
-        """Pads the body up to the footer area, then draws a separator and the selection wrapped in
-        the last FOOTER_ROWS - 1 rows (the tail is cut with an ellipsis when it still does not fit)."""
-        rows = rows[:lins - FOOTER_ROWS]
-        while len(rows) < lins - FOOTER_ROWS:
-            rows.append("")
+    def _footer_lines(self, cols, room):
+        """Footer text wrapped to the terminal width, at most `room` rows.
+
+        A text longer than the room keeps its tail, because the message box shows the cursor at the
+        end; the first visible row gets an ellipsis so the cut is visible."""
         try:
             texto = self.rodape(self) or ""
         except Exception:
             texto = ""
-        linhas, w = [], max(1, cols - 1)
-        while texto and len(linhas) < FOOTER_ROWS - 1:
-            parte, n = cortar(texto, w)
-            if len(parte) >= len(texto):
-                linhas.append(parte)
-                break
+        w = max(1, cols - 1)
+        linhas = []
+        while texto:
+            parte, _n = cortar(texto, w)
+            if not parte:                    # a single wide char that does not fit: never loop
+                parte, texto = texto[:1], texto[1:]
+            else:
+                texto = texto[len(parte):]
             linhas.append(parte)
-            texto = texto[len(parte):]
-        else:
-            if texto:
-                linhas[-1] = cortar(linhas[-1], max(1, w - 1))[0] + "…"
+        if len(linhas) > room:
+            linhas = linhas[-room:]
+            mark = "… " if w >= 3 else "…"
+            linhas[0] = mark + cortar(linhas[0], max(1, w - _largura(mark)))[0]
+        return linhas
+
+    def _com_footer(self, rows, cols, lins, linhas):
+        """Pads the body up to the footer area, then draws a separator and the footer rows."""
+        rows = rows[:lins - self._rod_n]
+        while len(rows) < lins - self._rod_n:
+            rows.append("")
         rows.append(f"{CINZA}{'─' * cols}{R}")
         rows += [f"{DIM}{l}{R}" for l in linhas]
         return rows

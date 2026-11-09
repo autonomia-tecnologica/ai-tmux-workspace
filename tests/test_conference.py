@@ -167,8 +167,9 @@ class ConferenceTest(unittest.TestCase):
         self.assertIn("dirigida a outro participante", calls[0][1])
         self.assertIn(f"{conference.MAX_FILES_READ} arquivos", calls[0][1])
         self.assertIn(f"{conference.MAX_TOOL_STEPS} passos", calls[0][1])
-        self.assertNotIn("registre no BACKLOG", calls[0][1])   # the backlog is Rafael's call
-        self.assertIn("somente leitura", calls[0][1])
+        self.assertIn("BACKLOG.md", calls[0][1])              # the only allowed write
+        self.assertIn("salvar algo no backlog", calls[0][1])
+        self.assertIn("não altera código", calls[0][1])
         for repo in self.repos:                            # every participant is named
             self.assertIn(f"{conference._sender(repo)} ({repo})", calls[0][1])
         self.assertIn(conference_worker.NO_ANSWER, calls[0][1])
@@ -393,7 +394,7 @@ class WorkerTest(unittest.TestCase):
             io.StringIO("\n".join(json.dumps(line) for line in lines)), self.repos[0])
         self.assertEqual(out, "")
 
-    def test_the_run_is_headless_isolated_read_only_and_budgeted(self):
+    def test_the_run_is_headless_isolated_restricted_and_budgeted(self):
         cmd = conference_worker.answer_command([self.repos[1]])
         self.assertIn("-p ", cmd + " ")
         self.assertIn("--add-dir", cmd)              # siblings are readable for cross-validation
@@ -410,12 +411,20 @@ class WorkerTest(unittest.TestCase):
         settings_path = Path(argv[argv.index("--settings") + 1])
         self.assertEqual(settings_path, self.tmp / "settings" / "claude.json")
         self.assertTrue(settings_path.is_file())
-        self.assertIn("Read,Grep,Glob", cmd)         # the only allowed tools
-        denied = cmd.split("--disallowedTools", 1)[1]
-        for tool in ("Bash", "Task", "Edit", "Write", "WebFetch", "WebSearch"):
-            self.assertIn(tool, denied)              # read-only: nothing is written
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Grep,Glob,Edit")
+        denied = argv[argv.index("--disallowedTools") + 1].split(",")
+        for tool in ("Bash", "Task", "Write", "NotebookEdit", "MultiEdit", "WebFetch", "WebSearch"):
+            self.assertIn(tool, denied)              # Edit is the only write, path-checked by the hook
+        self.assertNotIn("Edit", denied)
         self.assertNotIn("--resume", cmd)
         self.assertNotIn("--continue", cmd)
+
+    def test_the_installed_harness_is_readable_so_its_write_gate_can_be_satisfied(self):
+        harness = self.tmp / "harness"
+        harness.mkdir()
+        with mock.patch.dict(os.environ, {"AT_HARNESS_DIR": str(harness)}):
+            cmd = conference_worker.answer_command([self.repos[1]])
+        self.assertIn(f"--add-dir {shlex.quote(str(harness))}", cmd)
 
     def test_mapping_profile_env_and_model_reach_the_conference_run(self):
         """A mapping profile keeps its URL, model and apiKeyHelper in the generated settings; without
@@ -445,13 +454,14 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(settings["model"], "deepseek-flash")
         self.assertEqual(settings["apiKeyHelper"], "printf from-vault")
 
-        # the harness base still comes along; the command keeps the read-only controls
+        # the harness base still comes along; the command keeps the write controls
         self.assertIn("Bash(sudo:*)", settings["permissions"]["deny"])
         self.assertIn("--permission-mode default", cmd)
-        self.assertIn("Read,Grep,Glob", cmd)
-        denied = cmd.split("--disallowedTools", 1)[1]
-        for tool in ("Bash", "Edit", "Write"):
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Grep,Glob,Edit")
+        denied = argv[argv.index("--disallowedTools") + 1].split(",")
+        for tool in ("Bash", "Write", "NotebookEdit"):
             self.assertIn(tool, denied)
+        self.assertNotIn("Edit", denied)
 
 
 BUDGET_HOOK = SRC / "conference_budget.py"
@@ -467,7 +477,7 @@ class BudgetHookTest(unittest.TestCase):
         self.state = self.tmp / "budget.json"
 
     def hook(self, tool="Read", file_path=None, max_steps=20, max_files=12, with_state=True,
-             tool_use_id=None):
+             tool_use_id=None, repo=None):
         payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {}}
         if file_path is not None:
             payload["tool_input"]["file_path"] = file_path
@@ -475,6 +485,9 @@ class BudgetHookTest(unittest.TestCase):
             payload["tool_use_id"] = tool_use_id
         env = dict(os.environ, WS_CONFERENCE_MAX_STEPS=str(max_steps),
                    WS_CONFERENCE_MAX_FILES=str(max_files))
+        env.pop("WS_CONFERENCE_REPO", None)
+        if repo is not None:
+            env["WS_CONFERENCE_REPO"] = str(repo)
         if with_state:
             env["WS_CONFERENCE_BUDGET"] = str(self.state)
         proc = subprocess.run([sys.executable, str(BUDGET_HOOK)], input=json.dumps(payload),
@@ -512,6 +525,45 @@ class BudgetHookTest(unittest.TestCase):
         self.assertEqual(self.hook(file_path="/x/a.md", with_state=False), {})
         self.assertFalse(self.state.exists())
 
+    def test_a_write_to_the_repos_own_backlog_is_allowed(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        self.assertEqual(self.hook(tool="Edit", file_path=str(repo / "BACKLOG.md"), repo=repo), {})
+        self.assertEqual(self.hook(tool="Edit", file_path="BACKLOG.md", repo=repo), {})
+
+    def test_a_write_to_any_other_file_is_denied(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        denied = self.hook(tool="Edit", file_path=str(repo / "src" / "x.py"), repo=repo)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.write_denied"),
+                      denied.get("permissionDecisionReason"))
+
+    def test_a_write_to_a_sibling_backlog_is_denied(self):
+        repo, sibling = self.tmp / "repo", self.tmp / "sibling"
+        repo.mkdir()
+        sibling.mkdir()
+        denied = self.hook(tool="Edit", file_path=str(sibling / "BACKLOG.md"), repo=repo)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+
+    def test_the_write_restriction_holds_without_a_budget_state(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        denied = self.hook(tool="Edit", file_path=str(repo / "README.md"), repo=repo,
+                           with_state=False)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertFalse(self.state.exists())
+
+    def test_a_write_counts_as_a_step(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        self.assertEqual(self.hook(tool="Edit", file_path=str(repo / "BACKLOG.md"), repo=repo,
+                                   max_steps=1), {})
+        denied = self.hook(tool="Edit", file_path=str(repo / "BACKLOG.md"), repo=repo, max_steps=1)
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.budget.steps", max_steps=1),
+                      denied.get("permissionDecisionReason"))
+
     def test_a_broken_state_file_does_not_block_the_run(self):
         self.state.write_text("not json", encoding="utf-8")
         self.assertEqual(self.hook(file_path="/x/a.md", max_files=1), {})
@@ -548,6 +600,29 @@ class BudgetHookTest(unittest.TestCase):
                               env=env, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "")
+
+    def test_the_workspace_hook_restricts_writes_without_a_budget_file(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        payload = {"hook_event_name": "PreToolUse", "session_id": "sess-1",
+                   "tool_name": "Edit", "tool_input": {"file_path": str(repo / "README.md")}}
+        env = dict(os.environ, WS_ESTADO=str(self.tmp), WS_CONFERENCE_REPO=str(repo))
+        env.pop("WS_CONFERENCE_BUDGET", None)
+
+        def run():
+            proc = subprocess.run([sys.executable, str(SRC / "hook.py")],
+                                  input=json.dumps(payload), capture_output=True, text=True,
+                                  env=env, check=False)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return proc.stdout.strip()
+
+        denied = json.loads(run())["hookSpecificOutput"]
+        self.assertEqual(denied.get("permissionDecision"), "deny")
+        self.assertIn(i18n.t("conference.write_denied"),
+                      denied.get("permissionDecisionReason"))
+
+        payload["tool_input"]["file_path"] = str(repo / "BACKLOG.md")
+        self.assertEqual(run(), "")
 
 
 class FakeViewer:

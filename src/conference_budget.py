@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Budget check for a conference participant: caps tool steps and distinct files read.
+"""Hook for a conference participant: caps tool steps and distinct files read, and restricts writes.
 
 The conference is a quick analysis, not long work, and the limit must be a mechanism rather than a
 prompt request. `src/hook.py` (already registered in the user's Claude Code settings) calls `check`
@@ -9,7 +9,12 @@ run still ends with an answer instead of being killed at a turn limit. The state
 named by `WS_CONFERENCE_BUDGET` (one per run, set by `conference_worker`); limits come from
 `WS_CONFERENCE_MAX_STEPS` and `WS_CONFERENCE_MAX_FILES`.
 
-Fail open on purpose: a missing env or a broken state file never blocks the run.
+A write is only allowed to the conference repo's own `BACKLOG.md` (`WS_CONFERENCE_REPO`, also set by
+`conference_worker`); any other target is denied. That check does not depend on the budget file, so
+a run whose budget state could not be created still cannot edit anything else.
+
+Fail open on purpose for the budget: a missing env or a broken state file never blocks the run. The
+write restriction is the exception: it fails closed whenever the repo is known.
 """
 import json
 import os
@@ -52,16 +57,49 @@ def _read_state(path):
     }
 
 
-def check(data):
-    """Denial reason when this tool call is past the budget, else None (allowed calls are counted).
+def _write_target(data, repo):
+    """Absolute path the tool is about to write, or None when the input has no usable path."""
+    tool_input = data.get("tool_input") if isinstance(data, dict) else None
+    if not isinstance(tool_input, dict):
+        return None
+    path = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not isinstance(path, str) or not path:
+        return None
+    target = Path(path).expanduser()
+    if not target.is_absolute():
+        target = Path(repo).expanduser() / target
+    try:
+        return target.resolve()
+    except OSError:
+        return None
 
-    The file budget counts distinct Read paths, so re-reading a file is not charged twice; a new
-    file is denied when the limit is already full. Every counted tool call charges one step.
+
+def _own_backlog(data, repo):
+    """Whether the write targets exactly the conference repo's BACKLOG.md."""
+    target = _write_target(data, repo)
+    if target is None:
+        return False
+    try:
+        expected = (Path(repo).expanduser() / "BACKLOG.md").resolve()
+    except OSError:
+        return False
+    return target == expected
+
+
+def check(data):
+    """Denial reason when this tool call is denied, else None (allowed calls are counted).
+
+    A write is only allowed to the conference repo's BACKLOG.md. The file budget counts distinct
+    Read paths, so re-reading a file is not charged twice; a new file is denied when the limit is
+    already full. Every counted tool call charges one step, writes included.
     """
     if not isinstance(data, dict) or data.get("hook_event_name") != "PreToolUse":
         return None
     tool = data.get("tool_name")
-    if tool not in conference.COUNTED_TOOLS:
+    repo = os.environ.get("WS_CONFERENCE_REPO")
+    if tool in conference.WRITE_TOOLS and repo and not _own_backlog(data, repo):
+        return _t("conference.write_denied")
+    if tool not in conference.COUNTED_TOOLS and tool not in conference.WRITE_TOOLS:
         return None
     state_path = os.environ.get("WS_CONFERENCE_BUDGET")
     if not state_path:

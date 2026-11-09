@@ -12,9 +12,10 @@ cross-validation between repos. When the message is not its subject, the model a
 While the run works, its tool steps update the repo's `status` in the active state, which the
 conference screen shows in the header ("analisando…", "lendo docs/x.md", "buscando conflito").
 
-The run is read-only: Edit/Write are disallowed outright, so nothing — not even the `BACKLOG.md` —
-is changed by the conference; the backlog is only what Rafael decides. Bash/NotebookEdit/Task are
-also disallowed, and sessions are not persisted (they must not show up in the session panel). The
+The run is read-only except for the repo's own `BACKLOG.md`: Edit is allowed, and the workspace hook
+denies any edit whose target is not that file, so code and every other file stay untouched. The
+backlog item is written only when Rafael asks for it in the message. Bash/Write/NotebookEdit/Task
+are also disallowed, and sessions are not persisted (they must not show up in the session panel). The
 prompt carries only Rafael's message, never the previous ones: there is no history to read. The
 workspace hook (`hook.py`, registered in the user's Claude Code settings) reads the run's
 environment and caps tool steps and distinct files read (`conference_budget.py`); when the budget
@@ -42,12 +43,19 @@ TIMEOUT_S = 300
 NO_ANSWER = conference.NO_ANSWER      # the prompt's sentinel: the message is not about this repo
 MAX_TURNS = conference.MAX_TOOL_STEPS + 4     # last-resort exit; the hook budget comes first
 
-# Everything not listed here needs a permission request, which a headless run denies. The run is
-# read-only: deny rules win over any allow rule from the user's settings, so Edit/Write (and the
-# tools that can change files indirectly) are blocked outright, never just left out of the allow
-# list.
-ALLOWED_TOOLS = "Read,Grep,Glob"
-DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,Edit,Write,WebFetch,WebSearch"
+# Everything not listed here needs a permission request, which a headless run denies. Edit is the
+# single write allowed: the workspace hook (`conference_budget.py`) denies it unless the target is
+# the repo's own BACKLOG.md, and Write and the tools that can change files indirectly are denied
+# outright. Deny rules win over any allow rule from the user's settings.
+ALLOWED_TOOLS = "Read,Grep,Glob,Edit"
+DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,Write,WebFetch,WebSearch"
+
+
+def _harness_dir():
+    """Installed harness directory: what the harness hook itself reads (same rule as lib)."""
+    return Path(os.environ.get(
+        "AT_HARNESS_DIR",
+        Path.home() / ".local" / "share" / "ai-tmux-workspace" / "harness")).expanduser()
 
 
 def answer_command(others=None):
@@ -56,11 +64,17 @@ def answer_command(others=None):
     A shell string, like the profile itself is written in the config: the profile may carry `env`
     prefixes, `~` paths and quotes, which only a shell expands. `others` are the sibling repos,
     added as extra readable directories: the conference is a cross-validation between repos. The
+    installed harness is readable too when it exists: its gate denies a write until one of its
+    files is read in the session, and the `BACKLOG.md` write must be able to satisfy it. The
     stream is parsed line by line so the screen can show what the run is doing while it works."""
     import lib
 
     system = _t("conference.system_prompt", no_answer=NO_ANSWER)
-    dirs = "".join(f"--add-dir {shlex.quote(str(p))} " for p in (others or []))
+    readable = [str(p) for p in (others or [])]
+    harness = _harness_dir()
+    if harness.is_dir() and str(harness) not in readable:
+        readable.append(str(harness))
+    dirs = "".join(f"--add-dir {shlex.quote(p)} " for p in readable)
     return (f"{lib.agent_launch_command()} -p --output-format stream-json --verbose "
             f"--no-session-persistence --permission-mode default --max-turns {MAX_TURNS} {dirs}"
             f"--append-system-prompt {shlex.quote(system)} "
@@ -156,15 +170,16 @@ def _execute(cmd, repo, prompt, on_status=None):
     """(answer, stderr, returncode) of the headless run; the prompt comes from stdin.
 
     A watchdog kills the whole process group at TIMEOUT_S. stderr goes to a temporary file so a
-    talkative child cannot fill the pipe while stdout is being read. The budget state file goes in
-    the child's environment, so the PreToolUse hook sees it, and is removed afterwards."""
+    talkative child cannot fill the pipe while stdout is being read. The repo and the budget state
+    file go in the child's environment, so the PreToolUse hook sees them (the repo check must hold
+    even when the budget file cannot be created), and the file is removed afterwards."""
     try:
         budget = _budget_state()
     except OSError:
         budget = None
-    env = None
+    env = dict(os.environ, WS_CONFERENCE_REPO=str(repo))
     if budget:
-        env = dict(os.environ, WS_CONFERENCE_BUDGET=budget,
+        env.update(WS_CONFERENCE_BUDGET=budget,
                    WS_CONFERENCE_MAX_STEPS=str(conference.MAX_TOOL_STEPS),
                    WS_CONFERENCE_MAX_FILES=str(conference.MAX_FILES_READ))
     try:
@@ -230,7 +245,7 @@ def answer(repo, prompt, message_id, created, execute=None, others=None):
     answer was written.
 
     `others` are the sibling repos the run may read for the cross-validation. A `NO_ANSWER` output
-    means the message is not about this repo: nothing is appended and the run is read-only anyway.
+    means the message is not about this repo: nothing is appended.
     An answer is only written while that same conference is still active: a late worker must not
     fall into a conference started after this one. A failed run writes a visible note instead of
     leaving Rafael waiting; the details go to errors.log, never into the log that feeds the next
