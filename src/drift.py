@@ -20,6 +20,7 @@ import sys
 from pathlib import Path, PurePosixPath
 
 from i18n import t
+from session import harness_managed
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME") or Path.home())
@@ -126,6 +127,8 @@ def check(installed=None):
     level is "fail" (the doctor rejects the state), "drift" (the installed state changed) or
     "note" (informational, does not change the exit code).
     """
+    if not harness_managed():
+        return [("note", t("doctor.not_managed"))]
     installed = Path(installed) if installed is not None else harness_dir()
     issues = []
     record, error = read_record(installed)

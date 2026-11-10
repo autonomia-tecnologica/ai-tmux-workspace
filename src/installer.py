@@ -582,6 +582,7 @@ class Assistant:
         self.ui = ui
         self.manifest = None
         self.manage = True      # `manage: false` only when the person says the workspace does not manage
+        self.harness_managed = True     # separate switch: `manage: true` always manages the harness
 
     def manifest_for(self):
         if self.manifest is None:
@@ -610,11 +611,11 @@ class Assistant:
         path.write_text(content, encoding="utf-8")
         os.chmod(path, mode)
 
-    def append_block(self, path, block):
+    def append_block(self, path, block, marker=">>> ai-tmux-workspace >>>"):
         path = Path(path)
         self.ensure_dir(path.parent)
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        if ">>> ai-tmux-workspace >>>" in existing:
+        if marker in existing:
             return
         self.manifest_for().record(path)
         prefix = "" if not existing or existing.endswith("\n") else "\n"
@@ -736,6 +737,10 @@ class Assistant:
             self.ui.warn(t("installer.config.legacy", legacy=display(legacy), config=display(path)))
             return
         self.manage = self.ui.yes_no("installer.manage.question")
+        if self.manage:
+            self.harness_managed = True
+        else:
+            self.harness_managed = self.ui.yes_no("installer.harness_managed.question")
         selected = self.ui.providers("installer.providers.question")
         agent = selected[0] if selected else "claude"
         if existing:
@@ -754,6 +759,7 @@ class Assistant:
         for name in selected:
             profiles[name] = copy.deepcopy(PROVIDER_PROFILES[name])
         data["manage"] = self.manage
+        data["harness_managed"] = self.harness_managed
         data["agent"] = agent
         if profiles or "profiles" in data:
             data["profiles"] = profiles
@@ -771,6 +777,9 @@ class Assistant:
                      path=display(path)))
 
     def install_harness(self):
+        if not self.harness_managed:
+            self.ui.line(t("installer.harness_managed.skipped"))
+            return
         self.ui.section(t("installer.harness.title"))
         source = harness_source()
         if source is None:
@@ -836,6 +845,19 @@ class Assistant:
         if (target / "HARNESS.md").is_file():
             os.chmod(target / "HARNESS.md", 0o444)
         self.ui.ok(t("installer.harness.installed", path=display(target)))
+        if not self.manage:
+            self.install_harness_shim()
+
+    def install_harness_shim(self):
+        """Without the SessionStart hook, point ~/.claude/CLAUDE.md at the installed HARNESS.md."""
+        path = HOME / ".claude" / "CLAUDE.md"
+        block = "\n".join((
+            ">>> ai-tmux-workspace harness >>>",
+            t("installer.harness.shim"),
+            "<<< ai-tmux-workspace harness <<<",
+        ))
+        self.append_block(path, block, marker=">>> ai-tmux-workspace harness >>>")
+        self.ui.ok(t("installer.harness.shim_ok", path=display(path)))
 
     def install_hooks(self):
         """Register the workspace hooks/statusLine in the person's Claude Code settings.

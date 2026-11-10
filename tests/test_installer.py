@@ -383,16 +383,25 @@ class InstallerTest(unittest.TestCase):
     # 19 (item 93) ----------------------------------------------------------------------------
     def test_install_without_management_writes_pure_claude_and_no_settings_or_hooks(self):
         before = snapshot(self.home)
-        # install, cli, completion, manage (no), providers (only claude), config, harness x2
-        installed = self.install("s\ns\ns\nn\n1\ns\ns\ns\n")
+        # install, cli, completion, manage (no), harness_managed (yes), providers (only claude),
+        # config, harness x2
+        installed = self.install("s\ns\ns\nn\ns\n1\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, path = self.config()
         self.assertIs(cfg["manage"], False)
+        self.assertIs(cfg["harness_managed"], True)
         self.assertEqual(cfg["profiles"], {"claude": "claude"})
         self.assertEqual(cfg["agent"], "claude")
+        harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
+        self.assertTrue((harness / "HARNESS.md").is_file())
+        self.assertEqual(stat.S_IMODE((harness / "HARNESS.md").stat().st_mode), 0o444)
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        shim = claude_md.read_text(encoding="utf-8")
+        self.assertEqual(shim.count(">>> ai-tmux-workspace harness >>>"), 1)
+        self.assertIn("~/.local/share/ai-tmux-workspace/harness/HARNESS.md", shim)
+        self.assertIn(i18n.t("installer.harness.shim"), shim)
         self.assertFalse((self.home / ".claude" / "settings.json").exists(),
                          "manage: false must not register hooks")
-        self.assertFalse((self.home / ".claude").exists())
         self.assertFalse((self.state / "settings").exists(),
                          "manage: false must not generate settings")
         self.assertIn(i18n.t("installer.hooks.skipped"), installed.stdout)
@@ -486,16 +495,48 @@ class InstallerTest(unittest.TestCase):
         }
         path.write_text(yaml_min.dumps(original), encoding="utf-8")
         before = snapshot(self.home)
-        # install, cli, completion, manage (no), providers (only claude), update config, harness x2
-        installed = self.install("s\ns\ns\nn\n1\ns\ns\ns\n")
+        # install, cli, completion, manage (no), harness_managed (yes), providers (only claude),
+        # update config, harness x2
+        installed = self.install("s\ns\ns\nn\ns\n1\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
         self.assertIs(cfg["manage"], False)
+        self.assertIs(cfg["harness_managed"], True)
         self.assertEqual(cfg["agent"], "claude")
         self.assertEqual(cfg["profiles"]["antigo"], "claude --settings ~/.claude/antigo.json")
         self.assertEqual(cfg["profiles"]["claude"], "claude")
         for key in ("main", "groups", "editor", "prompts", "options"):
             self.assertEqual(cfg[key], original[key], f"{key} must be preserved")
+        removed = self.remove()
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(snapshot(self.home), before)
+
+    # 23 (item 95) ----------------------------------------------------------------------------
+    def test_installing_twice_with_harness_managed_does_not_duplicate_the_shim(self):
+        # install, cli, completion, manage (no), harness_managed (yes), providers, config, harness x2
+        stdin = "s\ns\ns\nn\ns\n1\ns\ns\ns\n"
+        self.assertEqual(self.install(stdin).returncode, 0)
+        # The second run updates the existing config and must see the shim already in place.
+        second = self.install("s\ns\ns\nn\ns\n1\ns\ns\ns\n")
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        shim = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertEqual(shim.count(">>> ai-tmux-workspace harness >>>"), 1)
+        self.assertEqual(shim.count("<<< ai-tmux-workspace harness <<<"), 1)
+        cfg, _path = self.config()
+        self.assertIs(cfg["harness_managed"], True)
+
+    # 24 (item 95) ----------------------------------------------------------------------------
+    def test_install_without_harness_management_installs_nothing(self):
+        before = snapshot(self.home)
+        # install, cli, completion, manage (no), harness_managed (no), providers, config
+        installed = self.install("s\ns\ns\nn\nn\n1\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], False)
+        self.assertIs(cfg["harness_managed"], False)
+        self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace" / "harness").exists())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertIn(i18n.t("installer.harness_managed.skipped"), installed.stdout)
         removed = self.remove()
         self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
         self.assertEqual(snapshot(self.home), before)

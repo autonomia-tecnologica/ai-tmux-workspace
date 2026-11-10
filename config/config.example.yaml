@@ -10,6 +10,13 @@ icons: true
 # `manage: false` deixa o agente como está: nenhuma settings é gerada, nenhum hook é registrado e o
 # `claude` sobe puro (sem --settings, --permission-mode nem ENABLE_TOOL_SEARCH=false).
 manage: true
+
+# O workspace gerencia o HARNESS.md instalado em ~/.local/share/ai-tmux-workspace/harness.
+# `manage: true` implica `harness_managed: true` (o hook SessionStart já injeta o HARNESS.md).
+# Com `manage: false` e `harness_managed: true`, o instalador copia o harness e aponta para ele em
+# ~/.claude/CLAUDE.md: é o `claude` bruto com o HARNESS.md apontado, sem settings nem hooks.
+# `harness_managed: false`: nada é instalado em nenhum dos dois lugares. Sem a chave, o padrão é true.
+harness_managed: true
 agent: claude
 
 # Editores do menu ao abrir um arquivo pelo painel. O tipo vem da extensão: prosa (md, markdown,

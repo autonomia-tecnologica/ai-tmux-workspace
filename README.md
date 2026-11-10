@@ -50,6 +50,8 @@ Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspac
 
 `manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (o `--continue` de retomada continua). Sem a chave, o comportamento histórico vale (`manage: true`).
 
+`harness_managed` (padrão `true`) é um interruptor separado: com `manage: false` e `harness_managed: true`, o instalador instala o `HARNESS.md` em `~/.local/share/ai-tmux-workspace/harness/` e acrescenta um bloco idempotente em `~/.claude/CLAUDE.md` mandando ler e seguir essa cópia — é o `claude` bruto com o harness apontado, sem settings nem hooks (o `remove.sh` restaura o arquivo). Com `harness_managed: false`, nada é copiado para o harness nem escrito em `~/.claude`. `manage: true` implica `harness_managed: true`, sem pergunta.
+
 O instalador pergunta, antes de configurar, se o workspace gerencia as opções e quais provedores incluir, entre exatamente `claude`, `claude-deepseek`, `opencode-deepseek` e `opencode-free`. Ele grava só os marcados em `profiles` (o `agent` é o primeiro marcado na ordem canônica, ou `claude`) e preserva o resto da config: `groups`, `main`, editores, prompts e perfis que já existiam, com os nomes antigos como estão (`deepseek` e `opencode` não são renomeados).
 
 `profiles` aceita o formato antigo (linha de comando, ex. `claude`) e o novo:

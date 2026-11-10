@@ -59,6 +59,11 @@ def _real(value):
     return os.path.realpath(os.path.normpath(os.path.abspath(os.path.expanduser(str(value)))))
 
 
+def harness_managed():
+    """Whether the workspace manages the installed harness/HARNESS.md (default true)."""
+    return _read_config().get("harness_managed", True) is not False
+
+
 def main_repo():
     """Real path of the config's main repo, or None. It is the only `home` session."""
     value = _read_config().get("main")
