@@ -10,6 +10,8 @@
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace privileged <cmd...>  system step: full command on a separate screen, exit code returned
 #   workspace stop [profile]   kill the profile's tmux server
+#   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
+#                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
 #   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <profile>
 set -u
@@ -651,6 +653,7 @@ case "${1:-}" in
   worktree) shift; worktree_cmd "$@" ;;
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" "${4:-1}" ;;
+  request) shift; python3 "$SRC/conference.py" request "$@" ;;
   type) type_prompt "$2" "$3" ;;
   options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "python3 $SRC/options.py $3" ;;
   resume) shift; resume "$@" ;;

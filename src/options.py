@@ -6,12 +6,12 @@ restarts the whole workspace), "Prompts" (config["prompts"], else the i18n defau
 the prompt into the window's active Claude tab, without submitting), "Ask Claude" (one-off question to
 `claude -p --model haiku` in the window's repo) and "Conference" (two start modes: the window's
 repo plus its config siblings, or a picker of the workspace repos; both create the conference and
-open the conversation screen with a message box in the footer (Enter sends, Ctrl+X stops). Every
-answer comes from an isolated headless Claude, never from the window's session; each participant
+open the conversation screen with a message box in the footer (Enter sends, /clear resets the
+context, Ctrl+X and Esc only close the screen). Every answer comes from an isolated headless agent
+of the window profile (Claude or OpenCode), never from the window's session; each participant
 answers only about its own repo (silent when the message is not its subject or is addressed to
-another participant), may read the sibling repos for the cross-validation, reads the repo's harness
-and is read-only; a hook caps its files read and tool steps, and it then answers with what it
-knows).
+another participant), reads only its own README.md/BACKLOG.md, and is read-only except for the
+proposed writes; a hook caps its files read and tool steps, and it then answers with what it knows).
 config["options"] appends more nodes:
   {"label": "...", "children": [...]}   folder (Enter, Space or the arrows collapse/expand)
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer
@@ -306,26 +306,47 @@ def choose_repos(window_repo):
     return [path for path in paths if path in state["selected"]]
 
 
+def window_profile(window):
+    """Profile of the tmux window (`@ws_profile`), or "" when the window has none.
+
+    The conference participants use the window profile, not the global `agent` from config.yaml:
+    a Claude window runs Claude and an OpenCode window runs OpenCode. Without a window profile the
+    caller falls back to the configured agent (and refuses an OpenCode guess, fail closed)."""
+    name = tmux.display("#{@ws_profile}", target=window)
+    if not isinstance(name, str) or not name.strip():
+        return ""
+    name = name.strip()
+    profiles = lib.read_config().get("profiles", {})
+    return name if name == "claude" or (isinstance(profiles, dict) and name in profiles) else ""
+
+
 def run_conference(node, window):
     """Conference leaves: start with the window repo plus its config siblings, or with the workspace
-    repos chosen on the picker; both open the conversation screen right after the start. The
-    conference is a Claude-only surface: an OpenCode profile gets a clear refusal, not a broken run."""
+    repos chosen on the picker; both open the conversation screen right after the start. An existing
+    conference is resumed instead of replaced (Esc and Ctrl+X only close the screen). The window
+    profile decides the agent (Claude or OpenCode)."""
     import conference
 
-    if not lib.is_claude_harness():
-        show(i18n.t("options.conference"),
-             i18n.t("agent.opencode_only", profile=lib.agent_name(),
-                    surface=i18n.t("agent.surface.conference")))
-        return
     action = node["conference"]
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
+    profile = window_profile(window)
+    if not profile:
+        profile = lib.agent_name()
+        if not lib.is_claude_harness(profile):
+            show(i18n.t("options.conference"),
+                 i18n.t("agent.opencode_only", profile=profile,
+                        surface=i18n.t("agent.surface.conference")))
+            return
+    if conference.read_active():    # a persistent conference is resumed, never replaced
+        conference.converse(repo=repo)
+        return
     if action == "selected":
         repos = choose_repos(repo)
         if not repos:
             return
-        text_out = conference_output(conference.start, repos=repos, repo=repo)
+        text_out = conference_output(conference.start, repos=repos, repo=repo, profile=profile)
     else:
-        text_out = conference_output(conference.start, repo=repo)
+        text_out = conference_output(conference.start, repo=repo, profile=profile)
     if conference.read_active():    # started: the point of starting is the message box
         conference.converse(repo=repo)
         return
