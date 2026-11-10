@@ -34,6 +34,13 @@ def t(key):
     return i18n.t(f"tabs.{key}")
 
 
+def kind_label(kind):
+    """Label of a tab kind: the agent strip is OPENCODE under the OpenCode harness, CLAUDE otherwise."""
+    if kind == "claude" and not lib.is_claude_harness():
+        return t("opencode")
+    return t(kind)
+
+
 SIDE_TABS = [(k, t(k)) for k in ("tree", "diff", "github")]
 VARS = {"claude": ("@ws_tabs", "@ws_active"), "terminal": ("@ws_ttabs", "@ws_term_active")}
 
@@ -97,7 +104,7 @@ def state():
     for p in ids:
         if tmux.run("display", "-p", "-t", p, "#{?pane_id,#{@role},}"):
             # the main tab has no number; the others are numbered by creation order (2, 3, ...)
-            tabs.append((p, t(KIND) if not tabs else f"{t(KIND)} ({len(tabs) + 1})"))
+            tabs.append((p, kind_label(KIND) if not tabs else f"{kind_label(KIND)} ({len(tabs) + 1})"))
     return win, tabs, active
 
 
