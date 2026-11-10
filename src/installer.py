@@ -5,8 +5,11 @@
 Every step asks for explicit confirmation, every path it touches is recorded in a manifest
 with a backup, and privileged commands are only shown: the system steps that ask for sudo
 belong to backlog item 35, so this installer never runs sudo/pkexec or installs packages.
+When a system step does run one (`--privileged`, also `workspace privileged`), it goes through
+tmux.privileged (item 61): a separate tmux screen with the full command visible first, the output
+kept until the person closes it, and the exit code returned. Outside tmux nothing runs.
 
-Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` keys).
+Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` and `privileged.*` keys).
 
 Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_STATE,
 AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE and SHELL.
@@ -21,6 +24,7 @@ import sys
 from pathlib import Path
 
 import colors
+import tmux
 from i18n import t
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -232,6 +236,25 @@ def install_command(name, manager):
         return f"brew install {package}"
     flags = "-S --needed" if manager == "pacman" else "install -y"
     return f"pkexec {manager} {flags} {package}"
+
+
+# --- privileged commands -----------------------------------------------------------------------
+
+PRIVILEGED_NOT_RUN = 125    # shell convention: the command was not executed
+
+
+def run_privileged(argv):
+    """Entry point for a privileged command (a system step or `workspace privileged`).
+
+    tmux.privileged runs it on a separate tmux screen and returns its exit code. Without an
+    attached client nothing runs: the command is printed and the person confirms; this returns
+    PRIVILEGED_NOT_RUN so a caller never mistakes it for success.
+    """
+    if not argv:
+        UI().error(t("privileged.usage"))
+        return 2
+    code = tmux.privileged(argv)
+    return PRIVILEGED_NOT_RUN if code is None else code
 
 
 # --- text UI -----------------------------------------------------------------------------------
@@ -885,6 +908,8 @@ def main(argv=None):
     if argv and argv[0] in ("-h", "--help"):
         ui.line(t("installer.usage"))
         return 0
+    if argv and argv[0] == "--privileged":
+        return run_privileged(argv[1:])
     assistant = Assistant(ui)
     if "--remove" in argv:
         return assistant.remove()

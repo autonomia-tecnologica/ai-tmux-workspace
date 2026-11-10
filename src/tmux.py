@@ -6,9 +6,14 @@ them (display-popup -E).
 """
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
+
+import i18n
 
 TIMEOUT = 3
+SH = shutil.which("sh") or "/bin/sh"
 
 
 def run(*args, timeout=TIMEOUT):
@@ -68,9 +73,14 @@ def message(text, ms=2000):
     run("display-message", "-d", str(ms), text)
 
 
-def popup(cmd, cwd, size="92%"):
-    """Opens `cmd` in a tmux popup at `size`x`size` in `cwd`, blocking until the user closes it."""
-    run("display-popup", "-E", "-w", size, "-h", size, "-d", cwd, cmd, timeout=None)
+def popup(cmd, cwd, size="92%", client=None):
+    """Opens `cmd` in a tmux popup at `size`x`size` in `cwd`, blocking until the user closes it.
+    `client` targets a specific attached client; without it tmux uses the current one."""
+    args = ["display-popup", "-E"]
+    if client is not None:
+        args += ["-c", client]
+    args += ["-w", size, "-h", size, "-d", cwd, cmd]
+    run(*args, timeout=None)
 
 
 def menu(title, items):
@@ -93,4 +103,81 @@ def quote_cmd(argv):
 def confirm_then(prompt, argv):
     """Asks `prompt` in the tmux status line (y/n) and, on yes, runs argv in the background."""
     run("confirm-before", "-p", prompt.replace("#", "##"), f"run-shell -b {quote_cmd(argv)}", timeout=20)
+
+
+def clients():
+    """Names of the clients attached to this tmux server, [] when not in tmux or none is attached."""
+    if not os.environ.get("TMUX"):
+        return []
+    return [line for line in run("list-clients", "-F", "#{client_name}").splitlines() if line]
+
+
+def _show_privileged(command):
+    """Outside tmux: prints the full command and waits for an explicit confirmation. Never runs it:
+    a privileged command only runs on its own tmux screen."""
+    print(i18n.t("privileged.outside", command=command))
+    try:
+        answer = input(i18n.t("privileged.confirm"))
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer.strip().lower() not in i18n.t("privileged.answer.yes").split():
+        print(i18n.t("privileged.declined"))
+        return None
+    print(i18n.t("privileged.not_run"))
+    return None
+
+
+def _privileged_script(command, code_file):
+    """Shell script run inside the popup: shows the full command before it runs, keeps the output
+    on screen until Enter and records the exit code in `code_file`."""
+    return "\n".join([
+        "#!/bin/sh",
+        "printf '%s\\n' " + shlex.quote(i18n.t("privileged.title")),
+        "printf '  %s\\n\\n' " + shlex.quote(command),
+        command,
+        "code=$?",
+        "printf '\\n%s %s\\n' " + shlex.quote(i18n.t("privileged.exit")) + ' "$code"',
+        'printf "%s" "$code" > ' + shlex.quote(code_file),
+        "printf '%s' " + shlex.quote(i18n.t("privileged.close")),
+        "read -r _",
+        'exit "$code"',
+        "",
+    ])
+
+
+def _exit_code(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def privileged(argv, cwd=None):
+    """Runs a command that needs root, only on its own screen (backlog item 61).
+
+    Inside tmux with an attached client, opens a display-popup that prints the full command before
+    anything runs (visible before the password prompt), keeps the output on screen until the person
+    presses Enter and records the exit code in a temp file, returned here. Without an attached
+    client, prints the command and waits for an explicit confirmation; nothing runs. Returns the
+    exit code, or None when the command did not run.
+    """
+    argv = [str(arg) for arg in argv]
+    if not argv:
+        return None
+    command = shlex.join(argv)
+    attached = clients()
+    if not attached:
+        return _show_privileged(command)
+    directory = tempfile.mkdtemp(prefix="ws-privileged-")
+    code_file = os.path.join(directory, "exit")
+    script = os.path.join(directory, "run.sh")
+    try:
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(_privileged_script(command, code_file))
+        os.chmod(script, 0o700)
+        popup(quote_cmd([SH, script]), str(cwd or os.getcwd()), client=attached[0])
+        return _exit_code(code_file)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 

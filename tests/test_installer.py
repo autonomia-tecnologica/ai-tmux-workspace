@@ -26,6 +26,20 @@ INSTALL = ROOT / "install.sh"
 REMOVE = ROOT / "remove.sh"
 INSTALLER = ROOT / "src" / "installer.py"
 CLONE_URL = "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
+# Stands in for tmux: an attached client and a popup that runs the command string it receives.
+FAKE_TMUX = """#!/bin/sh
+case "${1:-}" in
+  list-clients) printf 'client\\n' ;;
+  display-popup)
+    shift
+    while [ "$#" -gt 1 ]; do shift; done
+    command="$1"
+    command="${command#\\"}"
+    command="${command%\\"}"
+    printf '\\n' | /bin/sh -c "$command"
+    ;;
+esac
+"""
 
 
 def snapshot(root):
@@ -323,6 +337,37 @@ class InstallerTest(unittest.TestCase):
                     ("outside", "not_empty", "clone_dirty", "clone_url"))
         self.assertTrue(keys)
         self.assertEqual(sorted(key for key in keys if key not in strings), [])
+
+    # 16 --------------------------------------------------------------------------------------
+    def test_privileged_outside_tmux_prints_the_command_and_runs_nothing(self):
+        marker = self.root / "privileged-ran"
+        result = subprocess.run(
+            [sys.executable, str(INSTALLER), "--privileged", "sh", "-c", f"touch {marker}"],
+            input="s\n", env=self.env(TMUX=""), capture_output=True, text=True, check=False,
+            timeout=60)
+        self.assertEqual(result.returncode, 125, result.stdout + result.stderr)
+        self.assertIn(f"sh -c 'touch {marker}'", result.stdout)
+        self.assertFalse(marker.exists(), "nothing privileged may run outside tmux")
+
+    # 17 --------------------------------------------------------------------------------------
+    def test_privileged_inside_tmux_runs_on_the_popup_and_returns_the_exit_code(self):
+        executable(self.bin / "tmux", FAKE_TMUX)
+        result = subprocess.run(
+            [sys.executable, str(INSTALLER), "--privileged", "sh", "-c", "exit 7"],
+            input="", env=self.env(TMUX="/tmp/fake-tmux,1,0"), capture_output=True, text=True,
+            check=False, timeout=60)
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+
+    # 18 --------------------------------------------------------------------------------------
+    def test_workspace_privileged_uses_the_same_entry_point(self):
+        marker = self.root / "workspace-privileged-ran"
+        result = subprocess.run(
+            [BASH, str(ROOT / "bin" / "workspace"), "privileged", "sh", "-c", f"touch {marker}"],
+            input="s\n", env=self.env(TMUX=""), capture_output=True, text=True, check=False,
+            timeout=60)
+        self.assertEqual(result.returncode, 125, result.stdout + result.stderr)
+        self.assertIn(f"sh -c 'touch {marker}'", result.stdout)
+        self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":
