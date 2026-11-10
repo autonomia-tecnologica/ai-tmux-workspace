@@ -334,7 +334,7 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
   W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   [ -n "$W" ] || return 1
   if [ -z "$(tab_list "$W" s)" ]; then
-    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"
+    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)" || return 1
     P="$(pane_with_role "$W" claude)"; i=0
     while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
       sleep 0.1; i=$((i + 1))
@@ -354,7 +354,7 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
 type_prompt() { # $1=window id $2=text
   local W="$1" pane P i
   if [ -z "$(tab_list "$W" s)" ]; then
-    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"
+    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)" || return 1
     P="$(pane_with_role "$W" claude)"; i=0
     while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
       sleep 0.1; i=$((i + 1))
@@ -410,6 +410,22 @@ session_menu() { # $1=window: blocking profile menu for a new session
   python3 "$SRC/session_menu.py" "$1"
 }
 
+risk_check() { # $1=window $2=profile $3=path
+  local W="$1" profile="$2" path="$3" client status answer
+  python3 "$SRC/session_risk.py" --check "$profile" >/dev/null 2>&1 || return 0
+  client="$(tmux display -p '#{client_name}' 2>/dev/null)"
+  if [ -z "$client" ]; then
+    msg session.risk.no_client >&2
+    return 1
+  fi
+  status="$(mktemp "${TMPDIR:-/tmp}/ws-risk.XXXXXX")" || return 1
+  tmux display-popup -E -c "$client" -w 70% -h 40% -d "$path" \
+    "python3 '$SRC/session_risk.py' --confirm '$profile' --status '$status'"
+  answer="$(cat "$status" 2>/dev/null)"
+  rm -f "$status"
+  [ "$answer" = "yes" ]
+}
+
 session_new() { # $1=window $2=profile (default: the configured agent)
   local W="$1" profile="${2:-}" path S n P
   path="$(tmux show -wqv -t "$W" @ws_repo)"
@@ -420,6 +436,7 @@ session_new() { # $1=window $2=profile (default: the configured agent)
     msg session.unknown profile="$profile" >&2
     return 1
   fi
+  risk_check "$W" "$profile" "$path" || return 1
   if [ -z "$(tab_list "$W" s)" ]; then
     # first session: it takes the main slot (the pane that showed the placeholder)
     P="$(pane_with_role "$W" claude)"
