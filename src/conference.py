@@ -1,34 +1,30 @@
 #!/usr/bin/env python3
-"""Conference mode: a shared log between sibling repos and one isolated Claude run per repo.
+"""Conference mode: one persistent log per workspace and one isolated agent run per repo.
 
-Everything happens on the options screen (`ctrl+b o`): `converse` shows the log and updates it live
-while it is open; the footer is the message box, Enter sends the text to every participant (starting
-the conference with the window repo and its siblings when none is active: `siblings` and `parent_folder` in
-the config; sharing a `groups` folder alone is not enough). Closing the screen ends the conference
-(Ctrl+X explicitly, Esc by leaving the screen), and there is no persistence: the next conference
-starts with an empty log. `say` appends Rafael's message and starts, for every participant, a
-separate headless Claude (`conference_worker.py`) in that repo: the window's interactive session is
-never touched, and each answer goes straight into the log. In that mode the agent changes nothing
-except its own repo's `BACKLOG.md`, and only when Rafael asks in the message for something to be
-recorded; every other file is read-only. It answers in at most one paragraph. Each participant
-receives only Rafael's message, never the previous ones, but may read the sibling repos for the
-cross-validation between repos.
+The conference belongs to the workspace, not to the agent session: it lives under
+`~/.config/ai-tmux-workspace/conference` (override with `WS_CONFERENCE`), so closing the screen
+(Esc or Ctrl+X), reopening it or restarting the workspace resumes the same log and participants.
+`/clear` in the message box archives the log, starts an empty one and keeps the participants; the
+old log never comes back in a prompt.
 
-Participants answer only about their own repo: a message that is not theirs or is addressed to
-another participant gets no log entry (the worker replies with the `NO_ANSWER` sentinel). The prompt
-lists the participants and tells each run which one it is. The conference is a quick analysis, not
-long work: a tool budget (`MAX_TOOL_STEPS`, `MAX_FILES_READ`, enforced by the workspace hook
-`hook.py` through `conference_budget.py`) stops the run from turning into a long analysis, and the
-agent then answers with what it already knows and says a deeper analysis needs more time. The only
-write the conference accepts is the repo's own `BACKLOG.md`, on Rafael's request: the hook denies
-any other edit. The backlog is still what Rafael decides. While a participant works, the screen
-header shows what it is doing (`status` in the active state: "analisando…", "lendo docs/x.md",
-"buscando conflito").
+`say` appends Rafael's message and starts, for every participant, a separate headless agent
+(`conference_worker.py`) in that repo with the window's profile (Claude or OpenCode). The whole log
+goes in every prompt with a hard cap and a visible truncation note; the log is the context, not the
+window's agent session. A participant answers only about its own repo and only from its own
+`README.md` and `BACKLOG.md`: it reads those two files only when Rafael asks, and the only write it
+may propose is to them, also only when asked. Siblings, the installed harness, `Grep`/`Glob`,
+`Bash`, subagents and extra turns are out of scope; the worker hook enforces the two-file scope.
+A secret in either file blocks that participant's run before anything reaches the provider.
+
+A write to `README.md` is a proposal: the hook captures the diff, denies the direct edit, and the
+screen shows the diff until Rafael confirms (`y`) or discards (`n`). `BACKLOG.md` keeps the direct
+edit, still only when asked. The log is sanitized before it is stored or rendered.
 
 This module is stdlib-only at import time: it is imported by the worker itself. The heavier modules
 (lib, help, viewer, i18n) are imported inside the screen and command functions only.
 """
 import contextlib
+import difflib
 import io
 import json
 import os
@@ -46,15 +42,44 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
 
 BASE = Path(__file__).resolve().parent.parent
 NO_ANSWER = "<<NO_ANSWER>>"      # worker stdout sentinel: the message is not about that repo
-MAX_TOOL_STEPS = 20                 # tool steps one participant may take before it must answer
-MAX_FILES_READ = 12                 # distinct files one participant may read in a run
-COUNTED_TOOLS = ("Read", "Grep", "Glob")     # read tools the budget counts as a step
-WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")  # only the repo's BACKLOG.md may be edited
+MAX_TOOL_STEPS = 4                  # tool steps one participant may take before it must answer
+MAX_FILES_READ = 2                  # the two files a participant may read: README and BACKLOG
+MAX_PROMPT_CHARS = 24000            # hard cap of the log context sent in one prompt
+MAX_LINE_CHARS = 2000               # a single log line never grows without bound
+ARCHIVE_RETENTION_S = 30 * 24 * 3600    # keep archived logs for 30 days, newest always kept
+COUNTED_TOOLS = ("Read",)           # read tools the budget counts as a step
+WRITE_TOOLS = ("Edit",)             # only the two permitted files may be edited
+PERMITTED_FILES = ("README.md", "BACKLOG.md")
+SYSTEM_SENDER = "conference"
+
+# C0/C1 control characters except newline and tab, and ANSI/OSC escape sequences.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_ANSI = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"           # CSI
+    r"|\x1b\][^\x07]*(?:\x07|\x1b\\)"    # OSC
+    r"|\x1b[@-_]")                       # other two-byte escapes
+
+# High-signal credential shapes. A finding names the pattern, never the value.
+SECRET_PATTERNS = (
+    ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}")),
+    ("openrouter", re.compile(r"sk-or-v1-[A-Za-z0-9]{20,}")),
+    ("openai", re.compile(r"sk-[A-Za-z0-9_-]{24,}")),
+    ("aws", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("github", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}")),
+    ("github_pat", re.compile(r"github_pat_[A-Za-z0-9_]{20,}")),
+    ("slack", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("google", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+    ("private_key", re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY-----")),
+    ("credential", re.compile(
+        r"(?i)\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b"
+        r"\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{12,}")),
+)
 
 
 def state_dir():
-    """STATE/conference, following WS_STATE (same default as lib.STATE)."""
-    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "conference"
+    """Conference folder: ~/.config/ai-tmux-workspace/conference, or WS_CONFERENCE (tests)."""
+    return Path(os.environ.get(
+        "WS_CONFERENCE", Path.home() / ".config" / "ai-tmux-workspace" / "conference")).expanduser()
 
 
 def active_path():
@@ -65,16 +90,38 @@ def log_path():
     return state_dir() / "log.jsonl"
 
 
+def pending_path():
+    return state_dir() / "pending.json"
+
+
+def archive_dir():
+    return state_dir() / "archive"
+
+
 def _lock_path():
     return state_dir() / ".lock"
 
 
+def _chmod(path, mode=0o600):
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def _ensure_dir(path=None):
+    path = Path(path or state_dir())
+    path.mkdir(parents=True, exist_ok=True)
+    _chmod(path, 0o700)
+    return path
+
+
 @contextlib.contextmanager
 def _lock():
-    """Exclusive lock shared by the commands and the hook (concurrent Stops included)."""
-    folder = state_dir()
-    folder.mkdir(parents=True, exist_ok=True)
+    """Exclusive lock shared by the commands and the worker hooks (concurrent Stops included)."""
+    _ensure_dir()
     with open(_lock_path(), "a") as lock:
+        _chmod(_lock_path())
         if fcntl is not None:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         yield    # closing the file releases the lock
@@ -82,7 +129,7 @@ def _lock():
 
 def _alive(pid):
     """Whether `pid` is still running. Anything we cannot check counts as alive, so a bad read
-    never throws away a conference that is still on screen."""
+    never throws away a participant that may still answer."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -101,24 +148,21 @@ def _alive(pid):
 def read_active():
     """Active conference state, or {} when there is none (or it cannot be read).
 
-    A conference lives while its screen does: closing the screen process (Esc, the popup or the
-    window being closed) ends it, so the state left behind by a dead screen reads as inactive."""
+    The conference is a workspace-level record, not a screen process: it stays active after the
+    screen closes and after a workspace restart until `/clear` (keeps the conference) or `stop`."""
     try:
         data = json.loads(active_path().read_text(encoding="utf-8"))
     except Exception:
         return {}
-    if not isinstance(data, dict):
-        return {}
-    if "screen" in data and not _alive(data["screen"]):
-        return {}
-    return data
+    return data if isinstance(data, dict) else {}
 
 
 def _write_active(state):
-    active_path().parent.mkdir(parents=True, exist_ok=True)
+    _ensure_dir()
     tmp = active_path().with_name(f"active.json.{os.getpid()}.tmp")
     try:
-        tmp.write_text(json.dumps(state), encoding="utf-8")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        _chmod(tmp)
         os.replace(tmp, active_path())
     finally:
         tmp.unlink(missing_ok=True)
@@ -142,14 +186,23 @@ def read_log():
 
 
 def _append(entry):
-    log_path().parent.mkdir(parents=True, exist_ok=True)
+    _ensure_dir()
     with open(log_path(), "a", encoding="utf-8") as f:
+        _chmod(log_path())
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def sanitize(text):
+    """Text safe for the log and the viewer: no control/ANSI sequences, CRLF normalized."""
+    text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _ANSI.sub("", text)
+    text = _CONTROL.sub("", text)
+    return "\n".join(line[:MAX_LINE_CHARS] for line in text.split("\n"))
+
+
 def first_paragraph(text):
-    """Text up to the first blank line, stripped; no artificial length limit."""
-    text = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    """Text up to the first blank line, sanitized and stripped; no artificial length limit."""
+    text = sanitize(text).strip()
     if not text:
         return ""
     return re.split(r"\n[ \t]*\n", text, maxsplit=1)[0].strip()
@@ -180,15 +233,80 @@ def _default_repos(lib, repo=None):
     return [base] + siblings if siblings else []
 
 
-def start(repos=None, repo=None, screen=None):
+def _archive_log():
+    """Move the current log to the archive folder and leave an empty one. Returns the archive path
+    or None when there was nothing to archive. Prunes old archives, always keeping the newest."""
+    log = log_path()
+    _ensure_dir()
+    if not log.exists() or not log.stat().st_size:
+        log.write_text("", encoding="utf-8")
+        _chmod(log)
+        return None
+    folder = _ensure_dir(archive_dir())
+    archive = folder / f"log-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.jsonl"
+    os.replace(log, archive)
+    _chmod(archive)
+    log.write_text("", encoding="utf-8")
+    _chmod(log)
+    _prune_archives(folder)
+    return archive
+
+
+def _prune_archives(folder=None):
+    """Remove archives older than ARCHIVE_RETENTION_S, except the newest one (the last log is
+    always kept even when it is older than the retention window)."""
+    folder = Path(folder or archive_dir())
+    try:
+        files = sorted((f for f in folder.glob("log-*.jsonl") if f.is_file()),
+                       key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    cutoff = time.time() - ARCHIVE_RETENTION_S
+    for old in files[1:]:
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+
+
+def resume():
+    """Clears stale waiting/status marks left by a worker killed with the workspace or the screen.
+    A participant with no live worker is not awaited forever; the log stays."""
+    with _lock():
+        active = read_active()
+        if not active:
+            return 0
+        awaiting = dict(active.get("awaiting") or {})
+        status = dict(active.get("status") or {})
+        workers = dict(active.get("workers") or {})
+        changed = False
+        for repo in list(awaiting):
+            pid = workers.get(repo)
+            if pid is None or not _alive(pid):
+                awaiting.pop(repo, None)
+                status.pop(repo, None)
+                workers.pop(repo, None)
+                changed = True
+        for repo in list(workers):
+            if repo not in awaiting:
+                workers.pop(repo, None)
+                changed = True
+        if changed:
+            active["awaiting"] = awaiting
+            active["status"] = status
+            active["workers"] = workers
+            _write_active(active)
+    return 0
+
+
+def start(repos=None, repo=None, screen=None, profile=None):
     """Starts a conference with the given repos, or with `repo` (default: the current window's repo)
-    and its config siblings. `screen` is the pid of the process showing the conference screen: when
-    it goes away, the conference ends with it."""
+    and its config siblings. `profile` is the window profile (Claude or OpenCode); without it the
+    configured agent is used. An existing conference is never replaced: closing the screen does not
+    end it, so the next opening resumes it."""
     import lib
 
-    if not lib.is_claude_harness():
-        print(_t("conference.opencode", profile=lib.agent_name()), file=sys.stderr)
-        return 2
     want = [lib.expand_path(p) for p in (repos or [])]
     if not want:
         want = _default_repos(lib, repo)
@@ -202,47 +320,62 @@ def start(repos=None, repo=None, screen=None):
             return 2
         if path not in ordered:
             ordered.append(path)
+    profile = profile or lib.agent_name()
     with _lock():
-        active = read_active()
-        if active and read_log():   # a conference with a live screen is never replaced by accident
+        if read_active():
             print(_t("conference.already_active"), file=sys.stderr)
             return 2
-        # no persistence: a new conference starts empty; the previous log is kept only as a file
-        log_path().parent.mkdir(parents=True, exist_ok=True)
-        if log_path().exists() and log_path().stat().st_size:
-            archive = log_path().with_name(
-                f"log-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.jsonl")
-            os.replace(log_path(), archive)
+        _archive_log()
         log_path().write_text("", encoding="utf-8")
-        _write_active({"repos": ordered, "awaiting": {}, "status": {}, "created": time.time(),
-                       "screen": screen or os.getpid()})
+        _chmod(log_path())
+        _write_active({"repos": ordered, "awaiting": {}, "status": {}, "workers": {},
+                       "created": time.time(), "profile": profile})
     print(_t("conference.started", repos=", ".join(_sender(p) for p in ordered)))
     return 0
 
 
-def _launch_answer(repo, prompt, message_id, created, others=None):
-    """Starts one separate headless Claude for `repo` (never the window's interactive session).
+def clear():
+    """`/clear` of the conference: archives the log, starts an empty one and keeps the participants.
+    A new `created` invalidates answers from workers started before the clear."""
+    with _lock():
+        active = read_active()
+        if not active:
+            print(_t("conference.not_active"), file=sys.stderr)
+            return 2
+        archive = _archive_log()
+        active["awaiting"] = {}
+        active["status"] = {}
+        active["workers"] = {}
+        active["created"] = time.time()
+        _write_active(active)
+    if archive:
+        print(_t("conference.cleared", path=str(archive)))
+    else:
+        print(_t("conference.cleared_empty"))
+    return 0
 
-    The prompt goes through a temporary file, not argv, so it never has to fit a command line;
-    `others` are the sibling repos the worker may read for the cross-validation. The worker is
-    detached so the screen keeps updating while it thinks, and it writes the answer itself;
-    nothing here waits for it. An answer that arrives after the screen was closed finds no active
-    conference and is discarded (`conference_worker.answer`)."""
+
+def _launch_answer(repo, prompt, message_id, created, others=None, profile=None):
+    """Starts one separate headless agent for `repo` (never the window's session).
+
+    The prompt goes through a temporary file, not argv, so it never has to fit a command line.
+    The worker is detached so the screen keeps updating while it thinks, and it writes the answer
+    itself; nothing here waits for it. An answer that arrives after `/clear` or a new conference
+    finds a different `created` and is discarded (`conference_worker.answer`)."""
     file = None
     try:
-        folder = state_dir() / "prompts"
-        folder.mkdir(parents=True, exist_ok=True)
+        folder = _ensure_dir(state_dir() / "prompts")
         fd, file = tempfile.mkstemp(dir=str(folder), prefix="msg-", suffix=".txt")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(prompt)
+        _chmod(file)
         argv = [sys.executable, str(BASE / "src" / "conference_worker.py"),
                 repo, file, message_id, str(created)]
-        argv += [str(p) for p in (others or []) if str(p) != repo]
-        subprocess.Popen(
+        proc = subprocess.Popen(
             argv,
             cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True)
-        return True
+        return proc.pid
     except Exception:
         if file:
             try:
@@ -252,9 +385,81 @@ def _launch_answer(repo, prompt, message_id, created, others=None):
         return False
 
 
+def scan_secrets(repo):
+    """(file, pattern) of the first secret found in the repo's README.md/BACKLOG.md, or None.
+    Only the two permitted files are scanned; the value never enters the log or the prompt."""
+    for name in PERMITTED_FILES:
+        path = Path(repo) / name
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for pattern_name, regex in SECRET_PATTERNS:
+            if regex.search(text):
+                return name, pattern_name
+    return None
+
+
+def format_entry(entry):
+    """One log entry as markdown: heading with time and broker-side sender, then the text."""
+    when = time.strftime("%H:%M", time.localtime(float(entry.get("ts") or 0)))
+    sender = entry.get("sender") or "?"
+    who = _t("conference.rafael") if sender == "rafael" else (
+        _t("conference.system") if sender == SYSTEM_SENDER else sender)
+    return f"## {when} · {who}\n\n{sanitize(entry.get('text') or '')}"
+
+
+def format_log(entries):
+    """Markdown for help.render: one heading per message with sender and time."""
+    if not entries:
+        return _t("conference.log_empty")
+    return "\n\n".join(format_entry(entry) for entry in entries).strip()
+
+
+def prompt_log(entries, limit=None):
+    """(text, omitted) of the log context sent in a prompt.
+
+    The whole log goes in the prompt. A hard cap (MAX_PROMPT_CHARS) keeps a long conference from
+    growing without bound; when it is exceeded the oldest messages are dropped and a visible note
+    says how many were left out. The returned text never exceeds the limit.
+    """
+    limit = MAX_PROMPT_CHARS if limit is None else max(1, int(limit))
+    if not entries:
+        return _t("conference.log_empty"), 0
+    rendered = [format_entry(entry) for entry in entries]
+    whole = "\n\n".join(rendered)
+    if len(whole) <= limit:
+        return whole, 0
+    marker = _t("conference.log_truncated", omitted=len(rendered))
+    room = max(0, limit - len(marker) - 2)
+    kept = []
+    used = 0
+    for item in reversed(rendered):
+        extra = len(item) + (2 if kept else 0)
+        if used + extra > room:
+            break
+        kept.append(item)
+        used += extra
+    omitted = len(rendered) - len(kept)
+    marker = _t("conference.log_truncated", omitted=omitted)
+    body = "\n\n".join(reversed(kept))
+    text = f"{marker}\n\n{body}" if body else marker
+    if len(text) > limit:      # a single huge message: keep the visible note, cut the rest
+        text = text[: max(0, limit - len(marker) - 1)].rstrip() + "\n" + marker
+        text = text[:limit]
+    return text, omitted
+
+
+def _prompt(text, history, repo, profile):
+    log_text, _ = prompt_log(history)
+    return _t("conference.prompt", text=text, log=log_text, no_answer=NO_ANSWER,
+              you=_sender(repo), profile=profile or "", max_files=MAX_FILES_READ,
+              max_steps=MAX_TOOL_STEPS)
+
+
 def say(text, launch=None):
-    """Appends Rafael's message to the log and starts one isolated Claude per participant, each with
-    the log up to now. The answers arrive in the log as the workers finish."""
+    """Appends Rafael's message to the log and starts one isolated agent per participant, each with
+    the whole log up to now. The answers arrive in the log as the workers finish."""
     text = str(text or "").strip()
     if not text:
         print(_t("conference.say_empty"), file=sys.stderr)
@@ -266,54 +471,80 @@ def say(text, launch=None):
             return 2
         repos = [r for r in active.get("repos") or [] if isinstance(r, str)]
         created = active.get("created") or time.time()
+        profile = active.get("profile") or ""
+        history = read_log()          # the context before this message
         message_id = f"{time.time_ns()}-{os.getpid()}"      # unique even for two sends in one ms
         _append({"ts": time.time(), "sender": "rafael", "id": message_id, "text": text})
         awaiting = dict(active.get("awaiting") or {})
         status = dict(active.get("status") or {})
+        workers = dict(active.get("workers") or {})
         thinking = _t("conference.status.thinking")
         for repo in repos:
             awaiting[repo] = message_id
             status[repo] = thinking       # shown in the header until the worker reports a step
+            workers[repo] = 0             # replaced by the pid when the run actually starts
         active["awaiting"] = awaiting
         active["status"] = status
+        active["workers"] = workers
         _write_active(active)
 
     spawner = launch or _launch_answer
-    participants = ", ".join(f"{_sender(p)} ({p})" for p in repos)
     failed = []
+    blocked = []
     for repo in repos:
-        # Only Rafael's message, no history; each run is told who the participants are and which one
-        # it is, so it can stay silent when the message is addressed to another participant. The
-        # budget is also in the prompt, but the hook is what enforces it.
-        prompt = _t("conference.prompt", text=text, no_answer=NO_ANSWER,
-                    participants=participants, you=_sender(repo),
-                    max_files=MAX_FILES_READ, max_steps=MAX_TOOL_STEPS)
+        found = scan_secrets(repo)
+        if found:
+            blocked.append((repo, found))
+            failed.append(repo)
+            continue
+        prompt = _prompt(text, history, repo, profile)
         try:
-            ok = spawner(repo, prompt, message_id, created, others=repos)
+            ok = spawner(repo, prompt, message_id, created, others=[])
         except Exception:
             ok = False
         if not ok:
             failed.append(repo)
-    if failed:      # a repo whose Claude did not start will not answer: stop waiting on it
+            continue
+        if isinstance(ok, int) and ok > 0:      # a real pid: record it for stale-worker cleanup
+            with _lock():
+                active = read_active()
+                if active:
+                    workers = dict(active.get("workers") or {})
+                    workers[repo] = ok
+                    active["workers"] = workers
+                    _write_active(active)
+    if failed:      # a repo whose agent did not start will not answer: stop waiting on it
         with _lock():
             active = read_active()
             if active:
                 awaiting = dict(active.get("awaiting") or {})
                 status = dict(active.get("status") or {})
+                workers = dict(active.get("workers") or {})
                 for repo in failed:
                     awaiting.pop(repo, None)
                     status.pop(repo, None)
+                    workers.pop(repo, None)
                 active["awaiting"] = awaiting
                 active["status"] = status
+                active["workers"] = workers
                 _write_active(active)
+                for repo, (file, pattern) in blocked:
+                    _append({"ts": time.time(), "sender": SYSTEM_SENDER, "repo": repo,
+                             "text": _t("conference.secret_blocked", repo=_sender(repo),
+                                        file=file, pattern=pattern)})
+        for repo, (file, pattern) in blocked:
+            print(_t("conference.secret_blocked", repo=_sender(repo), file=file,
+                     pattern=pattern), file=sys.stderr)
         for repo in failed:
-            print(_t("conference.send_failed", repo=repo), file=sys.stderr)
-    print(_t("conference.said", n=len(repos) - len(failed)))
+            if not any(repo == item[0] for item in blocked):
+                print(_t("conference.send_failed", repo=repo), file=sys.stderr)
+    print(_t("conference.said", n=len(repos) - len(failed), profile=profile or "-"))
     return 0 if not failed else 1
 
 
 def stop():
-    """Closes the active conference; the log and the repos' files are left untouched."""
+    """Ends the active conference explicitly; the log and the repos' files are left untouched.
+    Closing the screen does not call this: Esc and Ctrl+X only close the view."""
     with _lock():
         if not read_active():
             print(_t("conference.not_active"), file=sys.stderr)
@@ -323,18 +554,98 @@ def stop():
     return 0
 
 
-def format_log(entries):
-    """Markdown for help.render: one heading per message with sender and time."""
-    if not entries:
-        return _t("conference.log_empty")
-    lines = []
-    for entry in entries:
-        when = time.strftime("%H:%M", time.localtime(float(entry.get("ts") or 0)))
-        sender = entry.get("sender") or "?"
-        who = _t("conference.rafael") if sender == "rafael" else sender
-        lines += [f"## {when} · {who}", "", str(entry.get("text") or ""), ""]
-    return "\n".join(lines).strip()
+# --- README proposal (diff + confirmation) -----------------------------------------------------
 
+def read_pending():
+    """{repo: proposal} of README edits waiting for Rafael's confirmation."""
+    try:
+        data = json.loads(pending_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_pending(data):
+    _ensure_dir()
+    if not data:
+        pending_path().unlink(missing_ok=True)
+        return
+    tmp = pending_path().with_name(f"pending.json.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _chmod(tmp)
+        os.replace(tmp, pending_path())
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def add_pending(repo, path, before, after, message_id=""):
+    """Records a proposed README change and returns its unified diff (without applying it).
+    The file content is kept as written; only the rendered diff is sanitized by the screen."""
+    before = str(before or "")
+    after = str(after or "")
+    diff = "".join(difflib.unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile=str(path), tofile=str(path)))
+    with _lock():
+        pending = read_pending()
+        pending[str(repo)] = {"repo": str(repo), "file": str(path), "before": before,
+                              "after": after, "diff": diff, "message_id": message_id,
+                              "ts": time.time()}
+        _write_pending(pending)
+    return diff
+
+
+def confirm_pending():
+    """Applies every pending README proposal whose file is still in the expected state."""
+    with _lock():
+        pending = read_pending()
+        if not pending:
+            print(_t("conference.pending.none"), file=sys.stderr)
+            return 2
+        written = []
+        stale = []
+        for repo, item in pending.items():
+            path = Path(item.get("file") or "")
+            try:
+                current = sanitize(path.read_text(encoding="utf-8"))
+            except OSError:
+                stale.append(str(path))
+                continue
+            if current != item.get("before"):
+                stale.append(str(path))
+                continue
+            try:
+                path.write_text(item.get("after") or "", encoding="utf-8")
+            except OSError:
+                stale.append(str(path))
+                continue
+            written.append(str(path))
+            _append({"ts": time.time(), "sender": SYSTEM_SENDER, "repo": repo,
+                     "text": _t("conference.readme_written", path=str(path))})
+        _write_pending({})
+    for path in stale:
+        print(_t("conference.pending.stale", path=path), file=sys.stderr)
+    print(_t("conference.pending.confirmed", n=len(written)))
+    return 0 if written else 1
+
+
+def reject_pending():
+    """Discards every pending README proposal without touching the files."""
+    with _lock():
+        pending = read_pending()
+        if not pending:
+            print(_t("conference.pending.none"), file=sys.stderr)
+            return 2
+        _write_pending({})
+        for repo in pending:
+            _append({"ts": time.time(), "sender": SYSTEM_SENDER, "repo": repo,
+                     "text": _t("conference.readme_rejected")})
+    print(_t("conference.pending.rejected"))
+    return 0
+
+
+# --- screen ------------------------------------------------------------------------------------
 
 def _printed(fn, *args, **kwargs):
     """Runs a conference action in-process and returns what it printed (stdout and stderr)."""
@@ -351,6 +662,7 @@ def _screen_frame(state):
 
     active = read_active()
     entries = read_log()
+    pending = read_pending()
     cols = term_cols()
     if active:
         repos = ", ".join(_sender(r) for r in active.get("repos") or [] if isinstance(r, str))
@@ -365,7 +677,8 @@ def _screen_frame(state):
             parts.append(f"{_sender(repo)} ({_short(doing)})" if doing else _sender(repo))
         if parts:
             title += _t("conference.screen.waiting", repos=", ".join(parts))
-        header = popup_header(title, _t("conference.screen.keys"), cols)
+        keys = _t("conference.pending.keys") if pending else _t("conference.screen.keys")
+        header = popup_header(title, keys, cols)
         text = format_log(entries)
     else:
         header = popup_header(_t("conference.screen.title_inactive"),
@@ -374,23 +687,31 @@ def _screen_frame(state):
     body = [Row()]
     if active:
         body += [Row(f" {DIM}{_t('conference.screen.hint')}{R}"), Row()]
+    if pending:
+        body += [Row(f" {DIM}{_t('conference.pending.title')}{R}"), Row()]
+        for item in pending.values():
+            for line in sanitize(item.get("diff") or "").splitlines():
+                body.append(Row(f" {line}"))
+        body.append(Row())
     if state["notice"]:
         body += [Row(f" {DIM}{state['notice']}{R}"), Row()]
+    if active:
+        _, omitted = prompt_log(entries)
+        if omitted:
+            body += [Row(f" {DIM}{_t('conference.log_truncated_screen', omitted=omitted)}{R}"),
+                     Row()]
     return header, body + help.render(text, cols), len(entries)
 
 
 def converse(repo=None):
-    """Interactive conference screen, everything on screen: the log updates live and the footer is the
-    message box. Enter sends the text to every participant, starting the conference with `repo` (the
-    window's repo) and its config siblings first when none is active. Closing the screen ends the
-    conference: Ctrl+X explicitly, Esc by leaving it. The log is kept. Returns when Esc closes it."""
+    """Interactive conference screen, everything on screen: the log updates live and the footer is
+    the message box. Enter sends the text to every participant, starting the conference with `repo`
+    (the window's repo) and its config siblings first when none is active. Esc and Ctrl+X only close
+    the screen: the conference, its log and its participants persist. `/clear` archives the log and
+    resets the context keeping the participants. Returns when the screen closes."""
     from viewer import ORANGE, R, Viewer, close_on_esc
 
-    with _lock():      # an open screen owns the conference: closing it closes the conference too
-        active = read_active()
-        if active:
-            active["screen"] = os.getpid()
-            _write_active(active)
+    resume()      # a worker killed with the workspace is not awaited forever
 
     state = {"notice": "", "seen": -1, "text": ""}
 
@@ -407,16 +728,29 @@ def converse(repo=None):
     def on_input(v, k):
         if k == "esc" or k.startswith("\x1b"):     # Esc, arrows and PgUp/PgDn stay with the viewer
             return False
-        if k == "\x18":                            # Ctrl+X ends the conference
-            state["notice"] = _printed(stop)
-            v.redraw.set()
+        if k == "\x18":                            # Ctrl+X closes the screen, not the conference
+            v.stopped = True
+            v._wake()
             return True
+        if read_pending():                         # a README diff waits for y/n
+            if k == "y":
+                state["notice"] = _printed(confirm_pending)
+                v.redraw.set()
+                return True
+            if k == "n":
+                state["notice"] = _printed(reject_pending)
+                v.redraw.set()
+                return True
         if k in ("\r", "\n"):
             text = state["text"].strip()
             if text:
                 state["text"] = ""
+                if text == "/clear":
+                    state["notice"] = _printed(clear)
+                    v.redraw.set()
+                    return True
                 if not read_active():
-                    notice = _printed(start, repo=repo, screen=os.getpid())
+                    notice = _printed(start, repo=repo)
                     if not read_active():          # no siblings: keep what was typed
                         state["text"] = text
                         state["notice"] = notice
@@ -436,6 +770,4 @@ def converse(repo=None):
 
     Viewer(collect, interval=1.0, on_key=close_on_esc, on_input=on_input,
            footer=footer).run()
-    if read_active():      # Esc closes the screen, and the conference goes with it
-        _printed(stop)
     return 0
