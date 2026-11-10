@@ -8,6 +8,7 @@
 #   workspace reload [profile] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
+#   workspace privileged <cmd...>  system step: full command on a separate screen, exit code returned
 #   workspace stop [profile]   kill the profile's tmux server
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
 #   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <profile>
@@ -660,6 +661,7 @@ case "${1:-}" in
   plugins-sync) plugin_sync "${2:-claude}" ;;
   install) install ;;
   install-hooks) install_hooks ;;
+  privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
   stop) tmux -L "ws-${2:-claude}" kill-server ;;
   restart) shift; restart "$@" ;;
