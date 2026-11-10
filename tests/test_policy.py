@@ -202,7 +202,9 @@ class PolicyTest(unittest.TestCase):
                 ({"tool_name": "Write",
                   "tool_input": {"file_path": str(self.home / "Codes" / "other" / "a.py")}},
                  "repo.write", "allow"),
-                (self.write(self.home / ".config" / "app.conf"), "config.write", "allow"),
+                # the declared root (the home) wins over the config roots: the decision is the same
+                # allow, now as the session's own repo instead of the machine config.
+                (self.write(self.home / ".config" / "app.conf"), "repo.write", "allow"),
                 (self.write("/opt/other/file.txt"), "repo.outside", "allow"),
                 (self.bash("curl https://example.com"), "net", "ask"),
                 (self.bash("pip install requests"), "install", "ask"),

@@ -97,7 +97,7 @@ Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENAB
 
 A credencial do provider fica no próprio OpenCode (`opencode auth login`, gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). No arquivo de config do perfil, `model` escolhe o modelo: `deepseek/deepseek-flash` para a API do DeepSeek e `opencode/deepseek-v4.1-flash-free` para o modelo free do provedor `opencode`.
 
-As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. A política central e o hook do workspace ainda não estão ligados ao plugin do OpenCode (backlog, itens 64 e 71); as aprovações são as do próprio OpenCode.
+As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. O plugin do OpenCode chama a mesma política central do hook: com papel de sessão declarado, a mesma ação recebe a mesma decisão (e `ask` bloqueia, porque o plugin não tem canal de confirmação).
 
 ## Platforms (Windows)
 Decision: Windows is supported only through WSL2, plus the system toast notification (see Notificações). There is no tmux clone and no custom multiplexer for native Windows.
@@ -109,6 +109,8 @@ Why:
 - `src/statusbar.py` uses `fcntl.flock`, which is also POSIX-only.
 
 Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution.
+
+The session box (item 64) is documented friction on Windows/WSL2 and in corporate environments: it is a policy enforced by the hook and the OpenCode plugin, not an OS sandbox, so it depends on the agent honouring those adapters.
 
 ## Bolinhas
 ○ parado · 🟢 agente/subagente trabalhando · 🟡 uma ferramenta rodando há mais de 8 s ·
@@ -213,7 +215,11 @@ A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-mode
 
 O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo; escrevê-lo só a sessão de dev, cujo `WS_SESSION_ROOT` está dentro dessa raiz. A home também é negada, e o caminho não entra na config nem em `siblings`.
 
-**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a política central existe mas não está ativa para sessões normais (falta `WS_SESSION_ROLE`/`WS_SESSION_ROOT`); não há sandbox de SO nem usuário dedicado; a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
+### Caixa da sessão
+
+A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. Configuração da máquina (`~/.config`, `~/.claude`, a cópia instalada) é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
+
+**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a caixa é política de harness, não usuário de SO nem sandbox (item 74); a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
 
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 
