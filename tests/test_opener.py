@@ -27,6 +27,17 @@ class TypeTest(unittest.TestCase):
         for name in ("a.py", "a.json", "a.svg", "a.png", "README", "a.text"):
             self.assertFalse(opener.is_prose(f"/tmp/{name}"), name)
 
+    def test_web_pages_use_the_system_opener(self):
+        for name in ("a.html", "a.htm", "a.xhtml"):
+            self.assertTrue(opener.use_system(f"/tmp/{name}"), name)
+            self.assertFalse(opener.is_prose(f"/tmp/{name}"), name)
+        self.assertFalse(opener.use_system("/tmp/a.py"))
+
+    def test_html_build_command_is_the_linux_opener(self):
+        cmd = opener.build_command("a.html", platform="linux", wsl=False,
+                                   which=which_for("xdg-open"))
+        self.assertEqual(cmd, ["xdg-open", "a.html"])
+
 
 class ChoicesTest(unittest.TestCase):
     def setUp(self):

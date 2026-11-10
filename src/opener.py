@@ -15,6 +15,8 @@ import lib
 SYSTEM_EXTENSIONS = {
     # documents
     "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp", "epub", "mobi",
+    # web pages open in the default browser
+    "html", "htm", "xhtml",
     # images (svg stays in the editor: it is text)
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "heic", "heif", "avif", "psd",
     # video
