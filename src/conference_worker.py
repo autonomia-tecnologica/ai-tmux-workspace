@@ -114,7 +114,8 @@ def _claude_command(profile):
     command = lib.profile_command(profile)
     command = _replace_settings(command, _conference_settings(profile, command))
     launch = command if profile == "claude" else f"env ENABLE_TOOL_SEARCH=false {command}"
-    system = _t("conference.system_prompt", no_answer=NO_ANSWER)
+    system = _t("conference.system_prompt", no_answer=NO_ANSWER,
+                max_files=conference.MAX_FILES_READ, max_steps=conference.MAX_TOOL_STEPS)
     return (f"{launch} -p --output-format stream-json --verbose --no-session-persistence "
             f"--permission-mode default "
             f"--append-system-prompt {shlex.quote(system)} "
@@ -388,6 +389,21 @@ def _tool_path(repo, tool_input):
         return None
 
 
+def _budget_reason(data):
+    """Step/file budget denial for one permitted call, or None.
+
+    `conference_worker._execute` names the per-run state file in `WS_CONFERENCE_BUDGET`; the
+    `conference_budget` hook owns the counting. A missing state file or a broken one never blocks
+    the run (fail open), like the rest of the budget."""
+    if not os.environ.get("WS_CONFERENCE_BUDGET"):
+        return None
+    try:
+        import conference_budget
+        return conference_budget.check(data)
+    except Exception:
+        return None
+
+
 def check_tool(data, repo=None):
     """Denial reason for one conference tool call, or None when the call is allowed.
 
@@ -406,10 +422,15 @@ def check_tool(data, repo=None):
         return _t("conference.tool_denied")
     path = _tool_path(base, data.get("tool_input"))
     if tool == "read":
-        return None if path in allowed else _t("conference.read_denied")
+        if path not in allowed:
+            return _t("conference.read_denied")
+        return _budget_reason(data)
     if tool == "edit":
         if path not in allowed:
             return _t("conference.write_denied")
+        budget = _budget_reason(data)
+        if budget:
+            return budget
         if path.name == "README.md":
             tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
             old = tool_input.get("old_string")

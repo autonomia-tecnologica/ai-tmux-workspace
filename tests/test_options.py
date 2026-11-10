@@ -67,7 +67,8 @@ class OptionsConferenceTest(unittest.TestCase):
             f"    - {self.sibling}\n",
             encoding="utf-8",
         )
-        env = mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.cfg), "WS_STATE": str(self.tmp)})
+        env = mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.cfg), "WS_STATE": str(self.tmp),
+                                           "WS_CONFERENCE": str(self.tmp / "conference")})
         env.start()
         self.addCleanup(env.stop)
 
@@ -137,17 +138,55 @@ class OptionsConferenceTest(unittest.TestCase):
     # --- OpenCode harness: Claude-only surfaces degrade with a warning ----------------------
     def opencode_workspace(self):
         self.cfg.write_text(
-            "profiles:\n  opencode:\n    harness: opencode\nagent: opencode\n", encoding="utf-8")
+            "profiles:\n  opencode:\n    harness: opencode\nagent: opencode\n"
+            "groups:\n  Pair:\n"
+            f"    - path: {self.repo}\n"
+            f"      siblings: [{self.sibling}]\n"
+            f"    - {self.sibling}\n",
+            encoding="utf-8")
 
-    def test_conference_degrades_on_an_opencode_profile(self):
+    def display(self, profile):
+        def display(option, **_kwargs):
+            if option == "#{@ws_profile}":
+                return profile
+            return str(self.repo)
+        return display
+
+    def test_a_window_opencode_profile_runs_the_conference_on_opencode(self):
         self.opencode_workspace()
-        with mock.patch.object(options, "show") as show, \
+        with mock.patch.object(options.tmux, "display", side_effect=self.display("opencode")), \
+                mock.patch("conference.converse") as converse:
+            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+        active = conference.read_active()
+        self.assertEqual(active["profile"], "opencode")
+        self.assertEqual(active["repos"], self.paths(self.repo, self.sibling))
+        converse.assert_called_once()
+
+    def test_a_claude_window_profile_is_recorded_for_the_participants(self):
+        with mock.patch.object(options.tmux, "display", side_effect=self.display("claude")), \
+                mock.patch("conference.converse"):
+            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+        self.assertEqual(conference.read_active()["profile"], "claude")
+
+    def test_without_a_window_profile_an_opencode_agent_is_refused(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display", side_effect=self.display("")), \
+                mock.patch.object(options, "show") as show, \
                 mock.patch.object(options, "choose_repos") as pick:
             options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
         show.assert_called_once()
         self.assertIn(i18n.t("agent.surface.conference"), show.call_args[0][1])
         pick.assert_not_called()
         self.assertEqual(conference.read_active(), {})
+
+    def test_an_active_conference_is_resumed_instead_of_started_again(self):
+        conference.start(self.paths(self.repo, self.sibling), profile="claude")
+        with mock.patch.object(options.tmux, "display", side_effect=self.display("claude")), \
+                mock.patch.object(options, "choose_repos") as pick, \
+                mock.patch("conference.converse") as converse:
+            options.run_conference({"label": "Selecionados", "conference": "selected"}, "%1")
+        pick.assert_not_called()
+        converse.assert_called_once()
 
     def test_ask_degrades_on_an_opencode_profile(self):
         self.opencode_workspace()

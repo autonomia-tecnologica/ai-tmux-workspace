@@ -207,6 +207,7 @@ class SessionTest(unittest.TestCase):
         import conference_worker
         with patched_env(AT_WS_CONFIG=str(self.config), WS_STATE=str(self.state),
                          WS_DIR=str(self.code), HOME=str(self.home),
+                         WS_CONFERENCE=str(self.root / "conference"),
                          AT_HARNESS_DIR=str(self.root / "no-harness")):
             command = conference_worker.answer_command([str(self.other)])
         self.assertNotIn("WS_SESSION_ROLE", command)
