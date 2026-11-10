@@ -167,7 +167,7 @@ def on_key(v, k):
 
 def repo_and_command(window):
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
-    return repo, shlex.split(lib.agent_launch_command())
+    return repo, shlex.split(lib.agent_launch_command(repo=repo))
 
 
 def confirm_security(name):

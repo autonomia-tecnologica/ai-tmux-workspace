@@ -4,7 +4,7 @@
 Reads the hook JSON from stdin and writes ~/.cache/workspace/sessions/<session>.json. On PreToolUse
 it also asks the central capability policy (`src/policy.py`) for a decision when the session has a
 declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so sessions opened before
-the launcher sets it keep working. Never fails."""
+the launcher sets it keep working. With a role, an engine failure is a denial (fail closed)."""
 import contextlib
 import json
 import os
@@ -390,13 +390,46 @@ def _policy_message(result):
         return result.get("reason") or "policy.reason.error"
 
 
+def _request_popup(d):
+    """Receiver side of session requests: shows the approval popup for a pending request.
+
+    Called on SessionStart and Stop, so the person decides in the receiving agent. The popup is
+    detached: the hook never waits for it and never fails because of it."""
+    if os.environ.get("WS_CONFERENCE_REPO") or os.environ.get("WS_CONFERENCE_BUDGET"):
+        return
+    try:
+        import conference
+        conference.spawn_approval(d.get("cwd") or os.getcwd())
+    except Exception:
+        pass
+
+
+def _request_context(d):
+    """Receiver side: hands an approved conversation request to the agent on its next prompt.
+
+    Only approved requests reach the agent; a refused or expired one is never read. The text is
+    handed over once (`delivered` in the request file)."""
+    try:
+        import conference
+        text = conference.conversation_context(d.get("cwd") or os.getcwd())
+    except Exception:
+        return
+    if not text:
+        return
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": text,
+    }}, ensure_ascii=False))
+
+
 def _policy_check(d):
     """PreToolUse decision from the central policy, the same engine the OpenCode adapter calls.
 
     No `WS_SESSION_ROLE`: the policy is inactive on purpose, so sessions from before the launcher
-    declares a box are untouched. Any failure in the engine also emits nothing: this hook must never
-    break a session. `allow` is emitted only for an `auto` upgrade, which is the one case the policy
-    has to make effective; a plain allow lets the harness's own permission flow continue.
+    declares a box are untouched. With a declared role, an engine failure becomes `deny`: the
+    OpenCode adapter already fails closed, and the two harnesses must answer the same way. `allow`
+    is emitted only for an `auto` upgrade, which is the one case the policy has to make effective; a
+    plain allow lets the harness's own permission flow continue.
     """
     if not os.environ.get("WS_SESSION_ROLE"):
         return
@@ -404,12 +437,13 @@ def _policy_check(d):
         import policy
         result = policy.check_event(d)
     except Exception:
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
     if not isinstance(result, dict):
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
     decision = result.get("decision")
     if decision not in ("allow", "ask", "deny"):
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
+        decision = "deny"
     if decision == "allow" and result.get("reason") != "policy.reason.auto":
         return
     print(json.dumps({"hookSpecificOutput": {
@@ -438,6 +472,10 @@ def main():
         _sweep_stale(sid, ctx)
     if ev == "Stop":
         _record_permission_mode(d)
+    if ev == "UserPromptSubmit":
+        _request_context(d)
+    if ev in ("SessionStart", "Stop"):
+        _request_popup(d)
 
 
 if __name__ == "__main__":

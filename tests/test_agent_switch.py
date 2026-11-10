@@ -46,18 +46,27 @@ class OpeningCommandTest(unittest.TestCase):
         self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: profile}}), encoding="utf-8")
         self.command = command
 
-    @property
-    def launch(self):
-        """Command line the workspace actually runs: every profile gets the workspace-generated
-        settings (`--settings`), except a legacy string command that already passes its own; non-Claude
-        profiles disable tool search (D9) and open in bypassPermissions, since the classifier does not
-        run there; the claude profile opens in acceptEdits (D10)."""
+    def box(self, repo=None):
+        """Session prefix the launcher puts in front of every repo launch (item 64)."""
+        root = str(Path(repo or self.repo).resolve())
+        return f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={root}"
+
+    def launch_for(self, repo=None):
+        """Command line the workspace actually runs: the session box, then the profile's line. Every
+        profile gets the workspace-generated settings (`--settings`), except a legacy string command
+        that already passes its own; non-Claude profiles disable tool search (D9) and open in
+        bypassPermissions, since the classifier does not run there; the claude profile opens in
+        acceptEdits (D10)."""
         cmd = self.command
         if "--settings" not in cmd:
             cmd = f"{cmd} --settings {shlex.quote(str(self.state / 'settings' / f'{self.agent}.json'))}"
         base = cmd if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
         mode = "acceptEdits" if self.agent == "claude" else "bypassPermissions"
-        return f"{base} --permission-mode {mode}"
+        return f"{self.box(repo)} {base} --permission-mode {mode}"
+
+    @property
+    def launch(self):
+        return self.launch_for(self.repo)
 
     def opening(self, repo=None):
         env = dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config),
@@ -101,7 +110,7 @@ class OpeningCommandTest(unittest.TestCase):
 
     def test_non_claude_profile_disables_tool_search(self):
         out = self.opening()
-        self.assertTrue(out.startswith("env ENABLE_TOOL_SEARCH=false "))
+        self.assertTrue(out.startswith(f"{self.box()} env ENABLE_TOOL_SEARCH=false "))
         self.assertIn(self.command, out)
 
     def test_claude_profile_keeps_tool_search(self):
@@ -144,7 +153,7 @@ class OpeningCommandTest(unittest.TestCase):
         self.set_command("claude --settings ~/.claude/settings.b.json")
         self.assert_prompt(self.opening(), old)             # first repo of the new environment
         out = self.opening(second)
-        self.assertEqual(out, self.launch)                  # new session, prompt not repeated
+        self.assertEqual(out, self.launch_for(second))                  # new session, prompt not repeated
         self.assertNotIn("migrado", out)
 
     def test_old_string_state_format_is_understood(self):
@@ -171,7 +180,7 @@ class OpeningCommandTest(unittest.TestCase):
         other.mkdir()
         self.opening(other)                     # last opening of `other` used command A
         self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(other), self.launch)
+        self.assertEqual(self.opening(other), self.launch_for(other))
 
     def test_newest_transcript_in_the_project_folder_wins(self):
         self.transcript(name="old.jsonl", mtime=1000)
@@ -202,20 +211,20 @@ class OpeningCommandTest(unittest.TestCase):
             "cwd": str(self.root / "elsewhere"), "ts": 1, "transcript_path": str(transcript)}),
             encoding="utf-8")
         self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(), self.launch)
+        self.assertEqual(self.opening(), self.launch_for(self.repo))
 
     # --- OpenCode harness ------------------------------------------------------------------
     def test_opencode_profile_runs_without_any_claude_flag(self):
         self.set_opencode()
         out = self.opening()
-        self.assertEqual(out, f"env OPENCODE_CONFIG={self.home / 'oc.json'} opencode")
+        self.assertEqual(out, f"{self.box()} env OPENCODE_CONFIG={self.home / 'oc.json'} opencode")
         for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
         self.assertFalse((self.state / "settings").exists())
 
     def test_opencode_profile_without_config_runs_the_command_as_written(self):
         self.set_opencode(config="")
-        self.assertEqual(self.opening(), "opencode")
+        self.assertEqual(self.opening(), f"{self.box()} opencode")
 
     def test_opencode_never_resumes_nor_sends_the_migration_prompt(self):
         self.set_opencode()
