@@ -24,16 +24,13 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 
 **Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`manage`, `profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
 
-tmux para os repos de `groups` do config.yaml. Comando: `workspace`. O agente que roda nos painéis do Claude é escolhido em `agent` do config.yaml (comandos em `profiles`,
-ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"); troca pelo menu de opções (Ctrl+b o) e reinicia o
-workspace inteiro. Cada repo lembra a linha de comando do agente com que foi aberto por último: a mesma linha retoma a
-sessão com `--continue`; uma linha diferente (ou a primeira abertura depois desta mudança) abre sessão nova. No formato de mapa, o nome do perfil entra na identidade: dois perfis com o mesmo comando `claude` continuam sendo ambientes diferentes. Na primeira
-vez que o ambiente muda, o primeiro repo aberto com transcrição anterior recebe um prompt para relê-la e não perder o
-contexto; os demais abrem a sessão nova sem repetir o aviso (vale para qualquer perfil ou config editada à mão). O
+tmux para os repos de `groups` do config.yaml. Comando: `workspace`. Na janela de um repo, o painel principal abre vazio e o `+` da tira de sessões abre o menu de perfis aprovados; o perfil padrão das novas sessões é `agent` no config.yaml (comandos em `profiles`,
+ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"). Mudar o perfil padrão pelo menu de opções (Ctrl+b o) não reinicia o
+workspace: só vale para sessões novas. `claude` e `opencode-*` podem ser abertos na mesma janela, cada um na sua aba; cada aba pertence a um perfil e a tira rotula `PERFIL` ou `PERFIL (n)`. Toda sessão (Claude ou OpenCode) abre com `<linha> --continue || <linha>`: tenta retomar a última sessão do repo e cai para sessão nova se falhar. O
 servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
-    │ REPOS       │ CLAUDE (abas)          │ ARQUIVOS DIFF GITHUB ... │
+    │ REPOS       │ SESSÕES (abas)         │ ARQUIVOS DIFF GITHUB ... │
     │ ● grupos    │                        │ GITHUB                    │
     ├─────────────┤                        │ (aba escolhida)           │
     │ TAREFAS     ├────────────────────────┤                           │
@@ -53,6 +50,8 @@ Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspac
 `harness_managed` (padrão `true`) é um interruptor separado: com `manage: false` e `harness_managed: true`, o instalador instala o `HARNESS.md` em `~/.local/share/ai-tmux-workspace/harness/` e acrescenta um bloco idempotente em `~/.claude/CLAUDE.md` mandando ler e seguir essa cópia — é o `claude` bruto com o harness apontado, sem settings nem hooks (o `remove.sh` restaura o arquivo). Com `harness_managed: false`, nada é copiado para o harness nem escrito em `~/.claude`. `manage: true` implica `harness_managed: true`, sem pergunta.
 
 O instalador pergunta, antes de configurar, se o workspace gerencia as opções e quais provedores incluir, entre exatamente `claude`, `claude-deepseek`, `opencode-deepseek` e `opencode-free`. Ele grava só os marcados em `profiles` (o `agent` é o primeiro marcado na ordem canônica, ou `claude`) e preserva o resto da config: `groups`, `main`, editores, prompts e perfis que já existiam, com os nomes antigos como estão (`deepseek` e `opencode` não são renomeados).
+
+`profiles` é a lista de perfis aprovados: são esses que aparecem no menu `+` da tira de sessões. `agent` é o perfil padrão das novas sessões (usado quando uma sessão é aberta sem escolha, como no prompt de tarefa); mudá-lo não reinicia o workspace, só vale para as sessões abertas depois. Como cada aba guarda o próprio perfil, `claude` e `opencode-*` podem ficar na mesma janela.
 
 `profiles` aceita o formato antigo (linha de comando, ex. `claude`) e o novo:
 
@@ -84,7 +83,7 @@ Perfis que não são o `claude` (DeepSeek, OpenRouter, Qwen, Strata...) sobem co
 
 Todo perfil do harness do Claude — inclusive um que aponta para um endpoint Anthropic-compatible, como `claude-deepseek` — abre em `acceptEdits`, o padrão do Claude Code, e nunca em `bypassPermissions` por padrão; sem o classifier, cada comando de Bash pede confirmação. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior. `auto` só é reaplicado em perfil do harness do Claude. Perfis com `harness: opencode` não recebem nenhuma flag de permissão do Claude.
 
-Sessões antigas abertas no perfil `claude` ainda não são retomadas no perfil novo: elas abrem uma sessão nova com o prompt de migração (uma vez só). Retomar o transcript antigo de verdade é item de backlog, não um passo escondido no launcher. A medida vale enquanto a ferramenta de harness não for trocada; quando o at-harness entrar, a decisão é revista. Ela não é uma barreira de segurança.
+Toda abertura tenta retomar a última sessão do repo com `--continue`; se o endpoint recusar o transcript, abre uma sessão nova. Isso não é uma barreira de segurança.
 
 ## OpenCode
 
@@ -104,7 +103,7 @@ profiles:
     model: opencode/deepseek-v4.1-flash-free
 ```
 
-Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH`, não gera settings e não usa `--continue`: as sessões pertencem ao OpenCode. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
+Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings; as sessões pertencem ao OpenCode. A abertura tenta `--continue` para pegar a última sessão do repo e cai para sessão nova se não houver. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
 
 A credencial do provider fica no próprio OpenCode (`opencode auth login`, gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). O perfil declara `model`: `deepseek/deepseek-flash` para a API do DeepSeek (`opencode-deepseek`) e `opencode/deepseek-v4.1-flash-free` para o modelo free do provedor `opencode` (`opencode-free`); o arquivo de config do OpenCode aponta para o mesmo modelo.
 
@@ -152,13 +151,11 @@ an expired token just fails silently. Amounts come in minor units and are divide
 ## Teclas
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe.
 - lado direito: a barra do topo troca entre ARQUIVOS (padrão) · DIFF atual (Enter abre o diff) ·
-  GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema.
-- `ctrl+b h` abre a ajuda · `ctrl+b o` abre a tela de opções (uma árvore só, já expandida: os prompts salvos em `prompts` no `config.yaml`, que são digitados no Claude ativo sem enviar, e perguntar ao Haiku via `claude -p --model haiku` no repo da janela; a conferência com os irmãos ou com repos selecionados do workspace, numa tela de conversa com o log ao vivo e caixa de mensagem no rodapé (digite e Enter envia, Ctrl+X encerra); `options` no `config.yaml` acrescenta nós `ask`, `run` e `type`) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
-- barra do painel de repos: REPOS · SESSÕES (Claudes abertos de todos os repos do workspace, agrupados por repo; subagentes em execução viram uma linha `↳` dentro da sessão pai; Enter foca o painel da sessão).
-- painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para o Claude (implementar, refinar ou "o que preciso validar?").
-- abas do Claude (tira de 1 linha no topo do painel do Claude): a primeira é o Claude principal; `+` (ou `ctrl+b t`) abre uma sessão
-  temporária no mesmo repo/worktree; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Ao sair do Claude da aba,
-  ela some e o foco volta ao principal. Abas temporárias não são restauradas no `restart`.
+  GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema, e HTML/HTM/XHTML abrem no navegador padrão.
+- `ctrl+b h` abre a ajuda · `ctrl+b o` abre a tela de opções (uma árvore só, já expandida: os prompts salvos em `prompts` no `config.yaml`, que são digitados na sessão ativa sem enviar, e perguntar ao Haiku via `claude -p --model haiku` no repo da janela; a conferência com os irmãos ou com repos selecionados do workspace, numa tela de conversa com o log ao vivo e caixa de mensagem no rodapé (digite e Enter envia, Ctrl+X encerra); `options` no `config.yaml` acrescenta nós `ask`, `run` e `type`) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
+- barra do painel de repos: REPOS · SESSÕES (sessões do Claude Code abertas em todos os repos do workspace, agrupadas por repo; subagentes em execução viram uma linha `↳` dentro da sessão pai; Enter foca o painel da sessão; sessões OpenCode não aparecem aqui).
+- painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para a sessão ativa (implementar, refinar ou "o que preciso validar?").
+- tira de sessões (1 linha no topo do painel principal): o painel abre vazio, com o aviso para abrir uma sessão pelo `+`; `+` (ou `ctrl+b t`) abre o menu de perfis aprovados. A primeira sessão ocupa o painel principal e as seguintes viram abas; cada aba guarda o perfil e a tira rotula `PERFIL` / `PERFIL (n)`; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Sair da última sessão volta ao aviso. Abas não são restauradas no `restart`.
 - `shift+setas` pulam entre painéis.
 
 ## Conferência: irmãos ou repos selecionados
@@ -203,9 +200,7 @@ por cima da cópia da fonte. O `source.json` continua registrando o sha256 da fo
 cópia instalada, e o `workspace doctor` compara os dois.
 
 ## Persistência
-Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
-agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
-migração aparece uma vez só por mudança; ver acima). O resto vem do `config.yaml` e dos arquivos do repo.
+Sem plugins de tmux. Toda sessão (Claude e OpenCode) abre com `<linha> --continue || <linha>`: tenta retomar a última sessão do repo e cai para sessão nova se não houver. O resto vem do `config.yaml` e dos arquivos do repo.
 O estado de runtime fica em `~/.cache/workspace` (`WS_STATE`). Os nomes de contrato interno agora são em inglês
 (`WS_STATE`/`WS_PROFILE`, opções `@ws_*`, `@role`, papéis e chaves de estado); o estado antigo é descartável e um
 `workspace restart` é necessário depois desta mudança. O desenho aprovado separa
@@ -235,4 +230,4 @@ A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 
 ## Textos (i18n)
-Todo texto exibido e todo prompt enviado ao Claude mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.
+Todo texto exibido e todo prompt enviado ao agente ativo mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.

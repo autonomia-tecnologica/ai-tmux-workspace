@@ -117,13 +117,37 @@ def _last_permission_mode(d):
     return ""
 
 
+def _record_tab_session(d):
+    """Writes the Claude session id to the tab that launched it, so the workspace can reopen it.
+
+    Only when the launcher exports `WS_SESSION_TAB`; without it (a session opened by hand) the
+    file is left alone. Path format is shared with `session_state.py`."""
+    tab = os.environ.get("WS_SESSION_TAB", "")
+    if not tab:
+        return
+    sid = d.get("session_id")
+    if not sid:
+        return
+    base = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "tabs"
+    path = base / f"session-{tab}"
+    text = str(sid)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text() == text:
+            return
+        path.write_text(text)
+    except OSError:
+        pass
+
+
 def _record_permission_mode(d):
     if permission_state is None:
         return
     mode = _last_permission_mode(d)
     if mode:
         try:
-            permission_state.record_mode(d.get("cwd") or "", mode)
+            permission_state.record_mode(d.get("cwd") or "", mode,
+                                         profile=os.environ.get("WS_SESSION_PROFILE", ""))
         except Exception:
             pass
 
@@ -237,7 +261,8 @@ def _has_background_work(d):
 def _apply(e, ev, d, ctx):
     """Applies one event to the session state `e`, in place. Returns False when nothing is written."""
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=ctx["now"], pane=ctx["pane"],
-             tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"])
+             tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"],
+             profile=os.environ.get("WS_SESSION_PROFILE", ""))
     if d.get("transcript_path"):
         e["transcript_path"] = str(d["transcript_path"])
     e["agents"] = list(e.get("agents") or [])
@@ -465,6 +490,7 @@ def main():
             _policy_check(d)
     if ev == "SessionEnd":
         _record_permission_mode(d)
+        _record_tab_session(d)
         _end_session(sid)
         return
     ctx = _record(d, ev, sid)
@@ -472,6 +498,7 @@ def main():
         _sweep_stale(sid, ctx)
     if ev == "Stop":
         _record_permission_mode(d)
+        _record_tab_session(d)
     if ev == "UserPromptSubmit":
         _request_context(d)
     if ev in ("SessionStart", "Stop"):

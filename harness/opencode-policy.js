@@ -12,6 +12,7 @@
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
@@ -91,7 +92,31 @@ function opencodeEvent(input, output) {
   return event;
 }
 
+function recordSession(input, env) {
+  env = env || process.env;
+  const tab = env.WS_SESSION_TAB;
+  const sid = input && input.sessionID;
+  if (!tab || !sid) return;
+  const base = env.WS_STATE || path.join(os.homedir(), ".cache", "workspace");
+  const dir = path.join(base, "tabs");
+  const file = path.join(dir, "session-" + tab);
+  const text = String(sid);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    let current = "";
+    try {
+      current = fs.readFileSync(file, "utf8");
+    } catch (_error) {
+      current = "";
+    }
+    if (current !== text) fs.writeFileSync(file, text);
+  } catch (_error) {
+    // the session id is a convenience; never fail the before hook because of it
+  }
+}
+
 function before(input, output, options) {
+  recordSession(input, (options && options.env) || process.env);
   const result = decide(opencodeEvent(input, output), options);
   if (result.decision === "deny" || result.decision === "ask") {
     const env = (options && options.env) || process.env;
@@ -112,6 +137,7 @@ module.exports = plugin;
 module.exports.decide = decide;
 module.exports.decideMany = decideMany;
 module.exports.before = before;
+module.exports.recordSession = recordSession;
 module.exports.resolveCli = resolveCli;
 module.exports.translate = translate;
 module.exports.default = plugin;

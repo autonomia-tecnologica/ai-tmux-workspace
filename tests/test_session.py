@@ -142,6 +142,19 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(shlex.split(session.prefix(str(self.repo))),
                          ["env", "WS_SESSION_ROLE=repo", f"WS_SESSION_ROOT={self.repo}"])
 
+    def test_prefix_with_profile_adds_the_profile_after_role_and_root(self):
+        self.assertEqual(
+            session.prefix(str(self.repo), profile="deepseek"),
+            f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} WS_SESSION_PROFILE=deepseek")
+        self.assertEqual(shlex.split(session.prefix(str(self.repo), profile="deepseek")),
+                         ["env", "WS_SESSION_ROLE=repo", f"WS_SESSION_ROOT={self.repo}",
+                          "WS_SESSION_PROFILE=deepseek"])
+
+    def test_prefix_with_profile_quotes_special_characters(self):
+        self.assertEqual(
+            session.prefix(str(self.repo), profile="my profile"),
+            f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} WS_SESSION_PROFILE='my profile'")
+
     def test_prefix_reads_the_main_repo_from_the_config(self):
         self.assertEqual(session.prefix(str(self.main)),
                          f"env WS_SESSION_ROLE=home WS_SESSION_ROOT={self.main}")
@@ -188,10 +201,11 @@ class SessionTest(unittest.TestCase):
     def test_identity_is_recorded_without_the_session_prefix(self):
         self.assertEqual(self.lib("opening-command", str(self.main)).returncode, 0)
         self.assertEqual(self.lib("opening-command", str(self.repo)).returncode, 0)
-        saved = json.loads((self.state / "agent.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved[str(self.main)]["command"], "claude")
-        self.assertEqual(saved[str(self.repo)]["command"], "claude")
+        saved = json.loads((self.state / "permission.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved[str(self.main)]["claude"]["command"], "claude")
+        self.assertEqual(saved[str(self.repo)]["claude"]["command"], "claude")
         self.assertNotIn("WS_SESSION_ROLE", json.dumps(saved))
+        self.assertNotIn("WS_SESSION_PROFILE", json.dumps(saved))
 
     def test_options_repo_and_command_passes_the_window_repo(self):
         import options
@@ -200,7 +214,7 @@ class SessionTest(unittest.TestCase):
                                   return_value="claude") as launch:
             repo, argv = options.repo_and_command("@1")
         self.assertEqual(repo, str(self.repo))
-        launch.assert_called_once_with(repo=str(self.repo))
+        launch.assert_called_once_with(repo=str(self.repo), profile="claude")
         self.assertEqual(argv, ["claude"])
 
     def test_the_conference_does_not_receive_a_role(self):

@@ -17,10 +17,14 @@ manage: true
 # ~/.claude/CLAUDE.md: é o `claude` bruto com o HARNESS.md apontado, sem settings nem hooks.
 # `harness_managed: false`: nada é instalado em nenhum dos dois lugares. Sem a chave, o padrão é true.
 harness_managed: true
+
+# Perfil padrão das novas sessões (usado quando uma sessão é aberta sem escolha, ex.: prompt de
+# tarefa). Mudar este valor não reinicia o workspace; só vale para as sessões abertas depois.
 agent: claude
 
 # Editores do menu ao abrir um arquivo pelo painel. O tipo vem da extensão: prosa (md, markdown,
 # mdx, rst, txt) e código (todo o resto). Só entram os comandos que existem no PATH.
+# HTML/HTM/XHTML não usam esta lista: abrem no navegador padrão do sistema.
 # `fullscreen: true` abre o popup em 100%x100%; sem a chave, 92%x92%.
 # Sem esta chave: prosa usa micro e nvim; código usa nvim e micro.
 editor:
@@ -39,7 +43,8 @@ editor:
       command: micro
       fullscreen: false
 
-# Perfis. O valor pode ser a linha de comando (formato antigo, ex. `claude`) ou um mapa com
+# Perfis. Esta lista é a lista de perfis aprovados mostrada no menu `+` da tira de sessões. O valor
+# pode ser a linha de comando (formato antigo, ex. `claude`) ou um mapa com
 # `command` e `settings`. Com `manage: true`, o workspace gera a settings de cada perfil do harness
 # do Claude e sobe o comando com `--settings`: a base traz os hooks e o `deny` do harness; `settings`
 # traz só a parte do perfil (URL, modelos, flags, apiKeyHelper). Com `manage: false`, nada disso é
@@ -48,9 +53,10 @@ editor:
 #
 # `harness: opencode` sobe o `opencode` em vez do Claude Code, sem nenhuma flag/settings/hook do
 # Claude. `command` é opcional (padrão `opencode`). `config` é o arquivo do OpenCode daquele perfil,
-# exportado como `OPENCODE_CONFIG` (o OpenCode mescla com a config global). Sem `--continue`: as
-# sessões são do OpenCode. Conferência, «Perguntar ao Claude», painel SESSÕES e métricas do status
-# bar degradam com aviso nesse harness.
+# exportado como `OPENCODE_CONFIG` (o OpenCode mescla com a config global). A abertura tenta
+# `--continue` para pegar a última sessão do repo e cai para sessão nova se não houver.
+# Conferência, «Perguntar ao Claude», painel SESSÕES e métricas do status bar degradam com aviso
+# nesse harness.
 profiles:
   claude: claude
   claude-deepseek:

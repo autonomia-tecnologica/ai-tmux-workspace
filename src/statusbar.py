@@ -269,7 +269,7 @@ def main():
         update_usage()
         return
     repo = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
-    profile = lib.agent_name()
+    profile = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else lib.agent_name()
     width = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 999
     if width < 100:       # phone: repo name + every Claude tab (active one highlighted)
         tabs = sys.argv[4].split() if len(sys.argv) > 4 else []
@@ -279,7 +279,7 @@ def main():
             for i, p in enumerate(tabs, 1)) if len(tabs) > 1 else ""
         print(f"#[fg=colour75,bold] {(os.path.basename(repo) or repo).replace('#', '##')}#[default]{marks}")
         return
-    if not lib.is_claude_harness():
+    if not lib.is_claude_harness(profile):
         # OpenCode keeps no Claude transcript: show the repo and the profile, not Claude model/usage.
         name = (os.path.basename(repo) or repo).replace("#", "##")
         print(f"#[fg=colour75,bold] {name}#[nobold]#[fg=colour240] • "

@@ -68,7 +68,7 @@ class PermissionModeTest(unittest.TestCase):
     def test_first_opening_uses_accept_edits(self):
         out = self.opening()
         self.assertIn("--permission-mode acceptEdits", out)
-        entry = self.saved()[str(self.repo)]
+        entry = self.saved()[str(self.repo)]["claude"]
         self.assertEqual(entry["command"], self.command)
         self.assertEqual(entry["mode"], "acceptEdits")
 
@@ -96,13 +96,13 @@ class PermissionModeTest(unittest.TestCase):
         out = self.opening()
         self.assertIn("--permission-mode acceptEdits", out)
         self.assertNotIn("bypassPermissions", out)
-        entry = self.saved()[str(self.repo)]
+        entry = self.saved()[str(self.repo)]["claude-deepseek"]
         self.assertEqual(entry["mode"], "acceptEdits")
 
     def test_custom_claude_profile_reapplies_auto(self):
         self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="claude-deepseek")
         self.opening()
-        permission_state.record_mode(str(self.repo), "auto")
+        permission_state.record_mode(str(self.repo), "auto", profile="claude-deepseek")
         out = self.opening()
         self.assertIn("--permission-mode auto", out)
 
@@ -117,7 +117,7 @@ class PermissionModeTest(unittest.TestCase):
     def test_custom_claude_profile_keeps_a_mode_chosen_in_the_session(self):
         self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="claude-deepseek")
         self.opening()
-        permission_state.record_mode(str(self.repo), "plan")
+        permission_state.record_mode(str(self.repo), "plan", profile="claude-deepseek")
         out = self.opening()
         self.assertIn("--permission-mode plan", out)
 
@@ -129,6 +129,29 @@ class PermissionModeTest(unittest.TestCase):
         permission_state.record_mode(str(self.repo), "bypassPermissions")
         out = self.profile_cmd(self.repo)
         self.assertIn("--permission-mode bypassPermissions", out)
+
+    def test_modes_are_independent_per_profile_in_the_same_repo(self):
+        permission_state.record_launch(str(self.repo), "cmd-a", "auto", profile="alpha")
+        permission_state.record_launch(str(self.repo), "cmd-b", "plan", profile="beta")
+        data = permission_state.read()
+        self.assertEqual(data[str(self.repo)]["alpha"]["mode"], "auto")
+        self.assertEqual(data[str(self.repo)]["beta"]["mode"], "plan")
+        self.assertEqual(permission_state.mode_for(str(self.repo), "cmd-a", True, "alpha"), "auto")
+        self.assertEqual(permission_state.mode_for(str(self.repo), "cmd-b", True, "beta"), "plan")
+
+    def test_old_format_is_read_as_the_claude_profile(self):
+        (self.state / "permission.json").write_text(json.dumps({
+            str(self.repo): {"command": self.command, "mode": "plan"}}), encoding="utf-8")
+        self.assertEqual(permission_state.mode_for(str(self.repo), self.command, True), "plan")
+        self.assertEqual(permission_state.mode_for(str(self.repo), self.command, True, "claude"),
+                         "plan")
+
+    def test_record_mode_preserves_the_command_and_updates_only_the_mode(self):
+        permission_state.record_launch(str(self.repo), self.command, "acceptEdits", profile="claude")
+        permission_state.record_mode(str(self.repo), "plan", profile="claude")
+        entry = permission_state.read()[str(self.repo)]["claude"]
+        self.assertEqual(entry["command"], self.command)
+        self.assertEqual(entry["mode"], "plan")
 
 
 class HookPermissionModeTest(unittest.TestCase):
@@ -146,8 +169,8 @@ class HookPermissionModeTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def run_hook(self, payload):
-        env = dict(os.environ, WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config))
+    def run_hook(self, payload, **extra):
+        env = dict(os.environ, WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config), **extra)
         return subprocess.run([sys.executable, str(SRC / "hook.py")], input=json.dumps(payload),
                               text=True, capture_output=True, env=env, timeout=60)
 
@@ -160,7 +183,25 @@ class HookPermissionModeTest(unittest.TestCase):
         proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-1",
                               "cwd": str(self.repo), "transcript_path": str(transcript)})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(permission_state.read()[str(self.repo)]["mode"], "bypassPermissions")
+        self.assertEqual(permission_state.read()[str(self.repo)]["claude"]["mode"], "bypassPermissions")
+
+    def test_stop_records_the_session_id_for_the_tab(self):
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-1",
+                              "cwd": str(self.repo), "transcript_path": str(transcript)},
+                             WS_SESSION_TAB="tab-1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.state / "tabs" / "session-tab-1").read_text(), "sess-1")
+
+    def test_tab_session_is_not_written_without_the_variable(self):
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-1",
+                              "cwd": str(self.repo), "transcript_path": str(transcript)},
+                             WS_SESSION_TAB="")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((self.state / "tabs").exists())
 
     def test_session_end_records_the_last_permission_mode(self):
         transcript = self.root / "transcript.jsonl"
@@ -169,7 +210,17 @@ class HookPermissionModeTest(unittest.TestCase):
         proc = self.run_hook({"hook_event_name": "SessionEnd", "session_id": "sess-2",
                               "cwd": str(self.repo), "transcript_path": str(transcript)})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(permission_state.read()[str(self.repo)]["mode"], "plan")
+        self.assertEqual(permission_state.read()[str(self.repo)]["claude"]["mode"], "plan")
+
+    def test_hook_records_the_mode_under_ws_session_profile(self):
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text(json.dumps(
+            {"type": "permission-mode", "permissionMode": "plan"}) + "\n", encoding="utf-8")
+        proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-3",
+                              "cwd": str(self.repo), "transcript_path": str(transcript)},
+                             WS_SESSION_PROFILE="deepseek")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(permission_state.read()[str(self.repo)]["deepseek"]["mode"], "plan")
 
 
 if __name__ == "__main__":

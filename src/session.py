@@ -23,6 +23,7 @@ except Exception:       # installed without the reader: the main repo stays unkn
 
 ROLE = "WS_SESSION_ROLE"
 ROOT = "WS_SESSION_ROOT"
+PROFILE = "WS_SESSION_PROFILE"
 HOME_ROLE = "home"
 REPO_ROLE = "repo"
 
@@ -99,15 +100,20 @@ def environment(repo, main=None):
     return {ROLE: HOME_ROLE if main and root == main else REPO_ROLE, ROOT: root}
 
 
-def prefix(repo, main=None):
+def prefix(repo, main=None, profile=None):
     """`env WS_SESSION_ROLE=... WS_SESSION_ROOT=...` for a repo, or "" without one.
 
     The `env` form survives both `tmux send-keys` (a shell line) and `shlex.split` + `subprocess`
-    (the options popup), so the same launch line works in the two callers.
+    (the options popup), so the same launch line works in the two callers. A non-empty `profile` adds
+    `WS_SESSION_PROFILE=<profile>` after the role/root pair, so the hook and the permission state can
+    tell which profile a session belongs to.
     """
     values = environment(repo, main)
     if not values:
         return ""
+    if profile:
+        values = dict(values)
+        values[PROFILE] = str(profile)
     return "env " + " ".join(f"{name}={shlex.quote(value)}" for name, value in values.items())
 
 

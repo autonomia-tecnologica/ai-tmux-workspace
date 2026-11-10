@@ -55,8 +55,10 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 ## Agentes
 
 - Refinar: modelo forte, em conversa com a pessoa.
-- Todo pedido de implementação vira tarefa de subagente, uma tarefa por subagente; a sessão
-  principal não implementa direto, só refina, despacha, confere e fecha.
+- Todo pedido que altera código ou config (`src/`, `harness/`, `bin/`, `tests/`, `config/`) vira
+  tarefa de subagente, uma tarefa por subagente; a sessão principal não implementa, só refina,
+  despacha, confere e fecha. Backlog, handoff, commit e a conferência entre repos ficam na sessão
+  principal.
 - Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita.
 - Fechar e commitar: sessão que despachou.
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
@@ -91,3 +93,13 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Conferir espaço antes de download; dado pesado no disco de dados.
 - Serviço de usuário; job longo com `systemd-run --user -p MemoryMax=...`.
 - Infra versionada por stack; `.env` em `~/.config`; imagem com tag exata de versão.
+
+## Harness adicional
+
+- O projeto pode trazer um harness próprio, numa pasta separada da Pasta de Trabalho — a Pasta de
+  Trabalho é da pessoa, e o projeto não a edita. O índice é o `README.md` dessa pasta (por convenção,
+  `harness/` na raiz do projeto).
+- Leia só o arquivo que a tarefa pede, e só quando ela pedir. O que estiver no harness do projeto vale
+  como regra daquele projeto.
+- Este `HARNESS.md` vence em segurança, isolamento e no que ele já declara. Harness é texto; freio é
+  código, e mecanismo não mora no harness.

@@ -215,6 +215,24 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.split(), ["claude", "deepseek"])
 
+    def test_profile_names_keeps_the_config_order(self):
+        self.configure({"agent": "claude", "profiles": {"beta": {"command": "claude"},
+                                                        "alpha": {"command": "claude"}}})
+        self.assertEqual(self.run_lib("profile-names").stdout.split(), ["beta", "alpha", "claude"])
+
+    def test_profile_list_and_default_profile(self):
+        self.configure({"agent": "deepseek", "profiles": {
+            "claude": "claude", "deepseek": {"command": "claude"}, "beta": {"command": "claude"}}})
+        self.assertEqual(self.run_lib("profile-list").stdout.split(),
+                         ["claude", "deepseek", "beta"])
+        self.assertEqual(self.run_lib("default-profile").stdout.strip(), "deepseek")
+
+    def test_agent_harness_reports_a_named_profile_harness(self):
+        self.configure({"agent": "claude", "profiles": {
+            "claude": "claude", "oc": {"harness": "opencode", "command": "opencode"}}})
+        self.assertEqual(self.run_lib("agent-harness", "oc").stdout.strip(), "opencode")
+        self.assertEqual(self.run_lib("agent-harness", "claude").stdout.strip(), "claude")
+
     def test_mapping_profile_switch_is_a_different_identity_and_mode(self):
         repo = self.root / "repo"
         repo.mkdir()
@@ -225,7 +243,7 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("--permission-mode acceptEdits", first.stdout)     # Claude harness, never bypass
         self.assertNotIn("bypassPermissions", first.stdout)
         saved = json.loads((self.state / "permission.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved[str(repo.resolve())]["command"], "claude [deepseek]")
+        self.assertEqual(saved[str(repo.resolve())]["deepseek"]["command"], "claude [deepseek]")
 
         self.configure({"agent": "claude", "profiles": {
             "claude": "claude", "deepseek": {"command": "claude"}}})
