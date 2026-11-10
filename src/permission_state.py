@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Last permission mode per repo: recorded by the hook, applied when the repo's agent opens.
+"""Last permission mode per repo and profile: recorded by the hook, applied when the repo's agent opens.
 
 Claude Code records every mode change in the transcript as
 `{"type": "permission-mode", "permissionMode": "<mode>"}`. The Stop/SessionEnd hook stores the last
-one per repo; `opening_command` reads it and passes `--permission-mode` on the next launch. The mode is
-only applied while the agent command is the same: a profile switch opens in the profile default
-(decision D10). Every profile of the Claude harness opens in acceptEdits, the Claude default: a
-custom Anthropic-compatible endpoint (such as `claude-deepseek`) is still the Claude harness and
-never starts in bypass. OpenCode profiles do not call this module (they carry no Claude flags).
-`auto` is only reapplied on the Claude harness.
+one per repo and profile (`WS_SESSION_PROFILE`); `session_command` reads it and passes
+`--permission-mode` on the next launch. The mode is only applied while the agent command is the same:
+a profile switch opens in the profile default (decision D10). Every profile of the Claude harness
+opens in acceptEdits, the Claude default: a custom Anthropic-compatible endpoint (such as
+`claude-deepseek`) is still the Claude harness and never starts in bypass. OpenCode profiles do not
+call this module (they carry no Claude flags). `auto` is only reapplied on the Claude harness.
+
+The file format is `{repo: {profile: {"command": ..., "mode": ...}}}`, with the `claude` profile as
+the default. The old format `{repo: {"command": ..., "mode": ...}}` is read as the `claude` profile.
 
 This module is stdlib-only at import time: hook.py imports it on every Stop.
 """
@@ -49,12 +52,25 @@ def _lock():
 
 
 def read():
-    """{repo: {"command": ..., "mode": ...}}; an unreadable file reads as empty."""
+    """{repo: {profile: {"command": ..., "mode": ...}}}; an unreadable file reads as empty."""
     try:
         data = json.loads(path().read_text(encoding="utf-8"))
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _profiles_of(entry):
+    """Profile map of one repo entry in the new `{profile: {command, mode}}` shape.
+
+    The old per-repo shape `{command, mode}` is read as the `claude` profile, so files written before
+    item 97 keep working. A non-mapping entry (or a new-format entry whose values are not maps) reads
+    as empty; each repo entry is judged on its own."""
+    if not isinstance(entry, dict):
+        return {}
+    if "command" in entry or "mode" in entry:
+        return {"claude": entry}
+    return {str(profile): dict(value) for profile, value in entry.items() if isinstance(value, dict)}
 
 
 def _write(data):
@@ -92,41 +108,47 @@ def _launch_command(key):
         return ""
 
 
-def record_mode(repo, mode):
-    """Stores the last mode of a running session, keeping the command recorded at launch."""
+def record_mode(repo, mode, profile=""):
+    """Stores the last mode of a running session for a profile, keeping the command recorded at launch."""
     key = _repo(repo)
     if not key or not mode:
         return
+    profile = str(profile or "claude")
     try:
         with _lock():
             data = read()
-            entry = data.get(key)
+            profiles = _profiles_of(data.get(key))
+            entry = profiles.get(profile)
             entry = dict(entry) if isinstance(entry, dict) else {}
             entry["mode"] = _valid(mode)
             if not entry.get("command"):
                 entry["command"] = _launch_command(key)
-            data[key] = entry
+            profiles[profile] = entry
+            data[key] = profiles
             _write(data)
     except Exception:
         pass
 
 
-def record_launch(repo, command, mode):
-    """Records the command that opened the repo and the mode it was opened with."""
+def record_launch(repo, command, mode, profile=""):
+    """Records the command that opened the repo and the mode it was opened with, for a profile."""
     key = _repo(repo)
     if not key:
         return
+    profile = str(profile or "claude")
     try:
         with _lock():
             data = read()
-            data[key] = {"command": str(command), "mode": _valid(mode)}
+            profiles = _profiles_of(data.get(key))
+            profiles[profile] = {"command": str(command), "mode": _valid(mode)}
+            data[key] = profiles
             _write(data)
     except Exception:
         pass
 
 
-def mode_for(repo, command, claude_harness=True):
-    """Mode to launch: the last one for the same command, else acceptEdits.
+def mode_for(repo, command, claude_harness=True, profile=""):
+    """Mode to launch: the last one for the same command and profile, else acceptEdits.
 
     A different command means a profile switch, so the saved mode is not applied on that first
     opening. Every Claude harness profile (including `claude-deepseek`) defaults to acceptEdits and
@@ -134,7 +156,7 @@ def mode_for(repo, command, claude_harness=True):
     reach this function."""
     default = DEFAULT_MODE
     try:
-        entry = read().get(_repo(repo))
+        entry = _profiles_of(read().get(_repo(repo))).get(str(profile or "claude"))
         if not isinstance(entry, dict) or entry.get("command") != command:
             return default
         mode = _valid(entry.get("mode"))
