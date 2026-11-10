@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+import i18n  # noqa: E402  (path set above)
 DRIFT = ROOT / "src" / "drift.py"
 WORKSPACE = ROOT / "bin" / "workspace"
 BASH = shutil.which("bash") or "/bin/bash"
@@ -151,6 +153,15 @@ class DriftTest(unittest.TestCase):
         keys = set(re.findall(r't\(\s*"(doctor[^"]*)"\s*[,)]', source))
         self.assertTrue(keys)
         self.assertEqual(sorted(key for key in keys if key not in strings), [])
+
+    # 12 (item 95) ---------------------------------------------------------------------------
+    def test_harness_managed_false_reports_a_note_and_exits_zero(self):
+        config = self.root / "config.yaml"
+        config.write_text("harness_managed: false\n", encoding="utf-8")
+        result = self.run_doctor(AT_WS_CONFIG=str(config))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(i18n.t("doctor.not_managed"), result.stdout)
+        self.assertNotIn("doctor: falha", result.stdout)
 
 
 if __name__ == "__main__":
