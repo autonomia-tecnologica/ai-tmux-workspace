@@ -2,7 +2,9 @@
 #
 # `default: deny` is the fail-closed rule for anything the classifier cannot place. Roles are
 # relative to a session box: `WS_SESSION_ROLE` says which one applies and `WS_SESSION_ROOT` is the
-# box root. `/tmp` is the only global area inside every box.
+# box root. `/tmp` is the only global area inside every box. The declared root wins over the
+# configuration roots (`~/.config`, `~/.claude`, the installed workspace), so a worktree under one
+# of them is still its own writable repo; secrets win over the root.
 #
 # `subagent` does not own capabilities: it inherits the parent role and may only tighten an entry.
 # An inherited value more permissive than the parent's is ignored by the engine.
