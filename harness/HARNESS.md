@@ -55,8 +55,10 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 ## Agentes
 
 - Refinar: modelo forte, em conversa com a pessoa.
-- Todo pedido de implementação vira tarefa de subagente, uma tarefa por subagente; a sessão
-  principal não implementa direto, só refina, despacha, confere e fecha.
+- Todo pedido que altera código ou config (`src/`, `harness/`, `bin/`, `tests/`, `config/`) vira
+  tarefa de subagente, uma tarefa por subagente; a sessão principal não implementa, só refina,
+  despacha, confere e fecha. Backlog, handoff, commit e a conferência entre repos ficam na sessão
+  principal.
 - Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita.
 - Fechar e commitar: sessão que despachou.
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
