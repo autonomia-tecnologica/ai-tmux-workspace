@@ -84,6 +84,10 @@ function opencodeEvent(input, output) {
   };
   const agent = input && (input.agentID || input.agentId || input.agent_id);
   if (agent) event.agent_id = agent;
+  // `auto` is not fixed at launch: the engine reads the event's permission mode, like the Claude
+  // hook does, so both adapters upgrade `ask` only inside the declared box.
+  const mode = input && (input.permissionMode || input.permission_mode || input.mode);
+  if (typeof mode === "string" && mode) event.permission_mode = mode;
   return event;
 }
 

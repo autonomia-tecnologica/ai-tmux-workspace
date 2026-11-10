@@ -4,7 +4,7 @@
 Reads the hook JSON from stdin and writes ~/.cache/workspace/sessions/<session>.json. On PreToolUse
 it also asks the central capability policy (`src/policy.py`) for a decision when the session has a
 declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so sessions opened before
-the launcher sets it keep working. Never fails."""
+the launcher sets it keep working. With a role, an engine failure is a denial (fail closed)."""
 import contextlib
 import json
 import os
@@ -426,9 +426,10 @@ def _policy_check(d):
     """PreToolUse decision from the central policy, the same engine the OpenCode adapter calls.
 
     No `WS_SESSION_ROLE`: the policy is inactive on purpose, so sessions from before the launcher
-    declares a box are untouched. Any failure in the engine also emits nothing: this hook must never
-    break a session. `allow` is emitted only for an `auto` upgrade, which is the one case the policy
-    has to make effective; a plain allow lets the harness's own permission flow continue.
+    declares a box are untouched. With a declared role, an engine failure becomes `deny`: the
+    OpenCode adapter already fails closed, and the two harnesses must answer the same way. `allow`
+    is emitted only for an `auto` upgrade, which is the one case the policy has to make effective; a
+    plain allow lets the harness's own permission flow continue.
     """
     if not os.environ.get("WS_SESSION_ROLE"):
         return
@@ -436,12 +437,13 @@ def _policy_check(d):
         import policy
         result = policy.check_event(d)
     except Exception:
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
     if not isinstance(result, dict):
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
     decision = result.get("decision")
     if decision not in ("allow", "ask", "deny"):
-        return
+        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
+        decision = "deny"
     if decision == "allow" and result.get("reason") != "policy.reason.auto":
         return
     print(json.dumps({"hookSpecificOutput": {

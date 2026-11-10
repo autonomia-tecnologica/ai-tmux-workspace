@@ -21,6 +21,10 @@ launcher exported it, else this file's code root. Every role may read it; only a
 `WS_SESSION_ROOT` is inside that root may write it (the dev session that edits the workspace). The
 `home` role is denied too, with no exception.
 
+The declared session root wins over the configuration roots (`~/.config`, `~/.claude`, the installed
+workspace): a worktree may live under one of them and still be writable as its own repo. Secrets win
+over everything, including the session root.
+
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
@@ -400,13 +404,14 @@ def _path_capability(path, root, write):
     workspace = _workspace_root()
     if workspace and _inside(path, workspace):
         return "workspace.write" if write else "workspace.read"
+    # The declared session root wins over the configuration roots: a worktree may live under
+    # ~/.local/share/ai-tmux-workspace (a config root) and still be its own writable repo. Secrets
+    # were checked first, so they stay denied inside the box.
+    if root and _inside(path, root):
+        return "repo.write" if write else "repo.read"
     for config_root in _config_roots():
         if _inside(path, config_root):
             return "config.write" if write else "config.read"
-    # The session root wins over /tmp: tests and worktrees may live under /tmp, and the repo box
-    # is the more specific declaration.
-    if root and _inside(path, root):
-        return "repo.write" if write else "repo.read"
     if any(_inside(path, temporary) for temporary in _tmp_roots()):
         return "tmp"
     return "repo.outside"

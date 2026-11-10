@@ -13,6 +13,7 @@ from pathlib import Path
 
 from i18n import t
 import permission_state
+import session
 import tmux
 import yaml_min
 
@@ -364,7 +365,7 @@ def ensure_profile_settings(name=None):
     return path
 
 
-def agent_launch_command(mode=""):
+def agent_launch_command(mode="", repo=None):
     """Command line that actually launches the agent.
 
     Claude harness: every profile runs with the workspace-generated settings (`--settings`); a legacy
@@ -376,7 +377,12 @@ def agent_launch_command(mode=""):
     OpenCode harness: none of the Claude flags apply. The profile may declare a `config` file, which
     is exported as `OPENCODE_CONFIG`; the command runs exactly as written (a profile switch never
     carries settings, permission mode or tool search from Claude). The recorded identity is
-    `agent_identity()` in both harnesses."""
+    `agent_identity()` in both harnesses.
+
+    With `repo`, the line is prefixed with the session box (`WS_SESSION_ROLE`/`WS_SESSION_ROOT` from
+    `src/session.py`), so the hook and the OpenCode plugin enforce the same role table. Without a
+    repo (the conference worker) no role is declared on purpose. `auto` is never fixed here: the
+    policy reads it from the event's `permission_mode`."""
     name = agent_name()
     cmd = agent_command()
     if _KEY_LITERAL.search(cmd):
@@ -384,13 +390,23 @@ def agent_launch_command(mode=""):
         raise SettingsError(t("settings.err.secret_value", path=f"profiles[{name}].command"))
     if not is_claude_harness(name):
         config = profile_config(name)
-        return f"env OPENCODE_CONFIG={shlex.quote(config)} {cmd}" if config else cmd
-    if not _has_settings_flag(cmd):
-        settings_path = ensure_profile_settings(name)
-        if settings_path is not None:
-            cmd = f"{cmd} --settings {shlex.quote(str(settings_path))}"
-    launch = cmd if name == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
-    return f"{launch} --permission-mode {shlex.quote(mode)}" if mode else launch
+        launch = f"env OPENCODE_CONFIG={shlex.quote(config)} {cmd}" if config else cmd
+    else:
+        if not _has_settings_flag(cmd):
+            settings_path = ensure_profile_settings(name)
+            if settings_path is not None:
+                cmd = f"{cmd} --settings {shlex.quote(str(settings_path))}"
+        launch = cmd if name == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
+        if mode:
+            launch = f"{launch} --permission-mode {shlex.quote(mode)}"
+    box = session.prefix(repo, _main_path()) if repo else ""
+    return f"{box} {launch}" if box else launch
+
+
+def _main_path():
+    """Path of the config's main repo, or None (the main repo is the `home` session)."""
+    main = read_main()
+    return main[1] if main else None
 
 
 # Per-repo agent command of the last opening: {repo path: {"command": ...}}, plus a reserved "__notice__"
@@ -479,13 +495,13 @@ def opening_command(repo):
     repo = expand_path(repo)
     cmd = agent_identity()
     if not is_claude_harness():
-        launch = agent_launch_command()     # may raise SettingsError: do not record a launch that did not happen
+        launch = agent_launch_command(repo=repo)     # may raise SettingsError: do not record a launch that did not happen
         state = _read_agent_state()
         state[repo] = {"command": cmd}
         _write_agent_state(state)
         return launch
     mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
-    launch = agent_launch_command(mode)     # may raise SettingsError: do not record a launch that did not happen
+    launch = agent_launch_command(mode, repo)     # may raise SettingsError: do not record a launch that did not happen
     permission_state.record_launch(repo, cmd, mode)
     state = _read_agent_state()
     previous = state.get(repo)
@@ -1026,11 +1042,11 @@ if __name__ == "__main__":
             if repo and is_claude_harness():
                 cmd = agent_identity()
                 mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
-                launch = agent_launch_command(mode)
+                launch = agent_launch_command(mode, repo)
                 permission_state.record_launch(repo, cmd, mode)
                 print(launch)
             else:
-                print(agent_launch_command())
+                print(agent_launch_command(repo=repo))
         except SettingsError as error:
             print(error, file=sys.stderr)
             sys.exit(2)
