@@ -13,7 +13,7 @@
 #   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
 #                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
-#   tab-new|tab-show|tab-step|tab-exit  (temporary Claude tabs next to the main one) · plugins-sync <profile>
+#   session-menu|session-new|session-run|session-exit  (profile sessions) · tab-new|tab-show|tab-step|tab-exit  (temporary terminal tabs) · plugins-sync <profile>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ROOT="$(dirname "$BIN")"        # repo root
@@ -52,7 +52,7 @@ term_h() { echo $(( ($(tmux display -p -t "$1" '#{window_height}') - 2) * 17 / 1
 #   split: v (stacked) | h (side by side); b = before the parent; f = full (window height/width)
 #   size: lines, N%, or TERM / LEFT / RIGHT (computed at build time); empty = half of the parent
 #   command: shell (plain shell, restarted at its final size), loop_cmd:<panel>, tabs:<strip>
-REPO_TREE='tabs|claude|vb|2|tabs:claude
+REPO_TREE='tabs|claude|vb|2|tabs:session
 terminal|claude|v|TERM|shell
 ttabs|terminal|vb|1|tabs:terminal
 repos|claude|hbf|LEFT|loop_cmd:repos
@@ -108,26 +108,23 @@ build_tree() { # $1=window $2=repo path $3=tree (see REPO_TREE)
 
 # Builds a repo window:  [repos | claude (5) / terminal (1) | side]   ~22% : rest : ~19% (clamped)
 build_window() { # $1=path  $2=-d (do not select)
-  local path="$1" d="${2:-}" S name W P cmd line T
-  S="$(env_global WS_PROFILE)"; cmd="$(profile_cmd "$S" "$path")" || return 1
+  local path="$1" d="${2:-}" S name W P T
+  S="$(env_global WS_PROFILE)"
   name="$(basename "$path")"
   W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$name" -c "$path")"
   P="$(tmux display -p -t "$W" '#{pane_id}')"
-  tmux set -w -t "$W" @ws_repo "$path"; tmux set -w -t "$W" @ws_profile "$S"
+  tmux set -w -t "$W" @ws_repo "$path"
+  tmux set -w -t "$W" @ws_profile "$S"
+  tmux set -w -t "$W" @ws_session_profile ""
+  tmux set -w -t "$W" @ws_mview session
   tmux set -p -t "$P" @role claude
-  init_tabs "$W" "$P" c
+  tmux set -p -t "$P" @ws_placeholder 1
+  init_tabs "$W" "$P" s
   build_tree "$W" "$path" "$REPO_TREE"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
-  # same agent that opened the repo last: resumes the newest session (`--continue`, else a new one).
-  # a different agent: a new session, already with the migration prompt when there is a previous transcript (lib.py).
-  # an OpenCode profile: the plain launch line, since OpenCode owns its own sessions (no `--continue`).
-  # explicit cd: ~/.zshrc jumps to $HOME on SSH logins, which would override the pane's start directory
-  line="$(python3 "$SRC/lib.py" opening-command "$path")"
-  if [ -z "$line" ]; then
-    if [ "$(python3 "$SRC/lib.py" agent-harness)" = claude ]; then line="$cmd --continue || $cmd"; else line="$cmd"; fi
-  fi
-  tmux send-keys -t "$P" "cd ${path@Q}; $line" Enter
+  # No agent starts on its own: the main pane shows the SESSÕES placeholder until a session is opened.
+  tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
   tmux select-pane -t "$P"
   mobile_apply "$W"
 }
@@ -140,10 +137,10 @@ build_window() { # $1=path  $2=-d (do not select)
 # (panel_tabs.py <claude|terminal>).
 tab_alive() { tmux list-panes -a -F '#{pane_id}' | grep -qxF "$1"; }
 
-# $1=any role (main, temporary or strip) -> sets the kind: c (Claude) or t (terminal)
-tab_kind() { case "$1" in terminal|ttmp*|ttabs) echo t ;; *) echo c ;; esac; }
+# $1=any role (main, temporary or strip) -> sets the kind: s (session) or t (terminal)
+tab_kind() { case "$1" in terminal|ttmp*|ttabs) echo t ;; *) echo s ;; esac; }
 
-# $1=c|t -> define K_TABS K_ACT K_NEXT K_MAIN K_TMP K_HID K_STRIP
+# $1=s|t -> define K_TABS K_ACT K_NEXT K_MAIN K_TMP K_HID K_STRIP
 tab_vars() {
   if [ "$1" = t ]; then
     K_TABS=@ws_ttabs K_ACT=@ws_term_active K_NEXT=@ws_tnext K_MAIN=terminal K_TMP=ttmp K_HID=ttab K_STRIP=ttabs
@@ -152,74 +149,101 @@ tab_vars() {
   fi
 }
 
-# $1=window $2=main pane of the strip $3=c|t: registers the main tab (list, active, next number).
-# Only fills what is missing, so it serves both a new window (build_window) and an existing one (ensure_window) without changing anything.
+# $1=window $2=main pane of the strip $3=s|t: registers the main tab (list, active, next number).
+# For sessions, the main pane is the empty placeholder, not a session, so nothing is registered.
 init_tabs() {
   local W="$1" P="$2"
   tab_vars "$3"
+  [ "$3" = s ] && return 0
   [ -n "$(tmux show -wqv -t "$W" $K_TABS)" ] || {
     tmux set -w -t "$W" $K_TABS "$P"; tmux set -w -t "$W" $K_ACT "$P"; tmux set -w -t "$W" $K_NEXT 2; }
 }
 
-tab_list() { # $1=window $2=c|t: live ids, in order
-  local p
-  tab_vars "${2:-c}"
-  # Window created before tabs existed (old/restored session): adopt the main pane.
-  if [ -z "$(tmux show -wqv -t "$1" $K_TABS)" ]; then
-    p="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_MAIN" '$2==r{print $1; exit}')"
-    if [ -n "$p" ]; then
-      tmux set -w -t "$1" $K_TABS "$p"
-      [ -n "$(tmux show -wqv -t "$1" $K_ACT)" ] || tmux set -w -t "$1" $K_ACT "$p"
-      tmux set -w -t "$1" $K_NEXT 2
+tab_list() { # $1=window $2=s|t: live ids, in order
+  local p prof kind="${2:-s}"
+  tab_vars "$kind"
+  if [ "$kind" = s ]; then
+    # A window opened before sessions existed: adopt the main pane as a legacy session. The empty
+    # placeholder is not a session, so a fresh window with no sessions stays empty.
+    if [ -z "$(tmux show -wqv -t "$1" $K_TABS)" ]; then
+      p="$(pane_with_role "$1" claude)"
+      if [ -n "$p" ] && [ -z "$(tmux show -pqv -t "$p" @ws_placeholder)" ]; then
+        prof="$(tmux show -wqv -t "$1" @ws_profile)"
+        tmux set -w -t "$1" $K_TABS "$p"
+        tmux set -w -t "$1" $K_ACT "$p"
+        tmux set -w -t "$1" @ws_next 2
+        tmux set -p -t "$p" @ws_tab_profile "$prof"
+        tmux set -w -t "$1" @ws_session_profile "$prof"
+      fi
+    fi
+  else
+    # Terminal tab opened before tabs existed: adopt the main pane.
+    if [ -z "$(tmux show -wqv -t "$1" $K_TABS)" ]; then
+      p="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_MAIN" '$2==r{print $1; exit}')"
+      if [ -n "$p" ]; then
+        tmux set -w -t "$1" $K_TABS "$p"
+        [ -n "$(tmux show -wqv -t "$1" $K_ACT)" ] || tmux set -w -t "$1" $K_ACT "$p"
+        tmux set -w -t "$1" $K_NEXT 2
+      fi
     fi
   fi
   for p in $(tmux show -wqv -t "$1" $K_TABS); do tab_alive "$p" && echo "$p"; done
 }
 
-tab_render() { # $1=window $2=c|t: restarts the tab strip (panel_tabs.py) to reflect the current state
-  local pane kind="${2:-c}" name
-  tab_vars "$kind"; name=claude; [ "$kind" = t ] && name=terminal
+tab_render() { # $1=window $2=s|t: restarts the tab strip (panel_tabs.py) to reflect the current state
+  local pane kind="${2:-s}" name
+  tab_vars "$kind"; name=session; [ "$kind" = t ] && name=terminal
   pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_STRIP" '$2==r{print $1}')"
   [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(loop_cmd tabs "$name")"
   return 0
 }
 
 tab_show() { # $1=window $2=tab pane
-  local W="$1" T="$2" current kind
+  local W="$1" T="$2" current kind prof
   tab_alive "$T" || return 1
   kind="$(tab_kind "$(tmux show -pqv -t "$T" @role)")"; tab_vars "$kind"
   current="$(tmux show -wqv -t "$W" $K_ACT)"
   if [ "$current" != "$T" ]; then
     tmux swap-pane -d -s "$T" -t "$current" || return 1
     tmux set -w -t "$W" $K_ACT "$T"
+    if [ "$kind" = s ]; then
+      # keep the slot anchored to role `claude`: the pane now in the slot becomes the main one and the
+      # one that left becomes a hidden session tab (its profile tag travels with the pane).
+      tmux set -p -t "$T" @role claude
+      tmux set -p -t "$T" @ws_owner "$W"
+      tmux set -p -t "$current" @role tab
+      tmux set -p -t "$current" @ws_owner "$W"
+    fi
   fi
   tmux select-pane -t "$T"
   tab_render "$W" "$kind"
-  tmux set -w -t "$W" @ws_mview "$([ "$kind" = t ] && echo terminal || echo claude)"
+  if [ "$kind" = s ]; then
+    prof="$(tmux show -pqv -t "$T" @ws_tab_profile)"
+    tmux set -w -t "$W" @ws_session_profile "$prof"
+    tmux set -w -t "$W" @ws_mview session
+  else
+    tmux set -w -t "$W" @ws_mview terminal
+  fi
   mobile_apply "$W"
 }
 
-tab_new() { # $1=window $2=role of the focused pane (sets the kind; default Claude)
+tab_new() { # $1=window $2=role of the focused pane (sets the kind; default session)
   local W="$1" S cmd path n P kind
   kind="$(tab_kind "${2:-}")"; tab_vars "$kind"
+  if [ "$kind" = s ]; then session_menu "$W"; return 0; fi
   S="$(env_global WS_PROFILE)"
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   [ -n "$path" ] || return 1
-  if [ "$kind" = t ]; then cmd="${SHELL:-bash}"; else cmd="$(profile_cmd "$S" "$path")"; fi
+  cmd="${SHELL:-bash}"
   n="$(tmux show -wqv -t "$W" $K_NEXT)"; n="${n:-2}"
   P="$(tmux new-window -d -P -F '#{pane_id}' -t "$S:" -n "$K_HID:$(basename "$path")" -c "$path")"
   tmux set -p -t "$P" @role "$K_TMP $n"; tmux set -p -t "$P" @ws_owner "$W"
   tmux set -w -t "$W" $K_TABS "$(tab_list "$W" "$kind" | tr '\n' ' ')$P"
   tmux set -w -t "$W" $K_NEXT $((n + 1))
-  if [ "$kind" = t ]; then
-    # Terminal: swap first, then start the shell at its final size (a resize while zsh starts
-    # prints a stray "%"), with no typed command line either.
-    tab_show "$W" "$P"
-    tmux respawn-pane -k -t "$P" -c "$path" "cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\""
-    return
-  fi
-  tmux send-keys -t "$P" "clear; cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\"; exit" Enter
+  # Terminal: swap first, then start the shell at its final size (a resize while zsh starts
+  # prints a stray "%"), with no typed command line either.
   tab_show "$W" "$P"
+  tmux respawn-pane -k -t "$P" -c "$path" "cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\""
 }
 
 tab_step() { # $1=window $2=+1|-1 $3=role of the focused pane (sets the kind)
@@ -254,7 +278,7 @@ open_repo() {
     local focus; focus="$(tmux show -wqv -t "$existing" @ws_active)"
     tab_alive "$focus" 2>/dev/null || focus="$(tmux list-panes -t "$existing" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
     [ -n "$focus" ] && tmux select-pane -t "$focus"
-    tmux set -w -t "$existing" @ws_mview claude   # phone: picking a repo lands on its Claude
+    tmux set -w -t "$existing" @ws_mview session   # phone: picking a repo lands on its session
     mobile_apply "$existing"
     return
   fi
@@ -303,14 +327,22 @@ left() { # $1=repos|sessions $2=window
 # Opens the repo window and submits a message in its active Claude tab.
 # $3=0 sends without leaving the current window (used by the tasks panel).
 send_prompt() { # $1=repo path $2=message $3=focus (default 1)
-  local path W pane S prev=""
+  local path W pane S prev="" P i
   [ "${3:-1}" = 0 ] && prev="$(tmux display -p '#{window_id}' 2>/dev/null)"
   open_repo "$1"
   path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   [ -n "$W" ] || return 1
+  if [ -z "$(tab_list "$W" s)" ]; then
+    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"
+    P="$(pane_with_role "$W" claude)"; i=0
+    while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
+      sleep 0.1; i=$((i + 1))
+    done
+    sleep 0.5
+  fi
   pane="$(tmux show -wqv -t "$W" @ws_active)"
-  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
+  tab_alive "$pane" 2>/dev/null || pane="$(pane_with_role "$W" claude)"
   # Bracketed paste, not send-keys -l: a multi-line message (the conference prompt carries the log)
   # would otherwise press Enter on its first line break and submit before the end.
   tmux set-buffer -b ws_send -- "$2" && tmux paste-buffer -p -d -b ws_send -t "$pane" \
@@ -318,26 +350,168 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
   [ -n "$prev" ] && tmux select-window -t "$prev"
 }
 
-# Types text into the active Claude tab of a window, without Enter (bracketed paste: newlines stay text), and focuses it.
+# Types text into the active session tab of a window, without Enter (bracketed paste: newlines stay text), and focuses it.
 type_prompt() { # $1=window id $2=text
-  local pane
-  pane="$(tmux show -wqv -t "$1" @ws_active)"
-  tab_alive "$pane" 2>/dev/null || pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
+  local W="$1" pane P i
+  if [ -z "$(tab_list "$W" s)" ]; then
+    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"
+    P="$(pane_with_role "$W" claude)"; i=0
+    while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
+      sleep 0.1; i=$((i + 1))
+    done
+    sleep 0.5
+  fi
+  pane="$(tmux show -wqv -t "$W" @ws_active)"
+  tab_alive "$pane" 2>/dev/null || pane="$(pane_with_role "$W" claude)"
   [ -n "$pane" ] || return 1
   tmux set-buffer -b ws_prompt -- "$2" && tmux paste-buffer -p -d -b ws_prompt -t "$pane"
   tmux select-pane -t "$pane"
 }
 
-resume() { # $1=session id $2=window: reopens the Claude pane resuming that session
-  local pane cmd path
-  path="$(tmux display -p -t "$2" '#{@ws_repo}')"
-  cmd="$(profile_cmd "$(env_global WS_PROFILE)" "$path")" || return 1
-  tab_show "$2" "$(tab_list "$2" | head -1)"      # always resumes in the main Claude
-  pane="$(tmux list-panes -t "$2" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
+resume() { # $1=session id $2=window: reopens the window's main pane resuming that session
+  local W="$2" pane cmd path prof
+  path="$(tmux display -p -t "$W" '#{@ws_repo}')"
+  prof="$(profile_for_window "$W")"
+  cmd="$(profile_cmd "$prof" "$path")" || return 1
+  pane="$(pane_with_role "$W" claude)"
   [ -n "$pane" ] || return 1
-  tmux respawn-pane -k -t "$pane" -c "$path"
+  if [ -n "$(tmux show -pqv -t "$pane" @ws_placeholder)" ]; then
+    # the slot shows the placeholder: turn it into a session pane (like session_new), with a plain
+    # shell that receives the --resume line.
+    tmux set -pu -t "$pane" @ws_placeholder
+    tmux set -p -t "$pane" @role claude
+    tmux set -p -t "$pane" @ws_tab_profile "$prof"
+    tmux set -w -t "$W" @ws_tabs "$pane"
+    tmux set -w -t "$W" @ws_active "$pane"
+    tmux set -w -t "$W" @ws_session_profile "$prof"
+    tmux respawn-pane -k -t "$pane" -c "$path"
+  fi
+  tab_show "$W" "$pane"
   tmux send-keys -t "$pane" "$cmd --resume $1" Enter
   tmux select-pane -t "$pane"
+}
+
+# --- Sessions (one per profile, tabs above the main pane) ----------------------------------------
+# The main pane (role claude) is the slot; the first session runs there, the others live in hidden
+# windows "tab:<repo>" and swap into the slot. @ws_tabs lists the live session panes, @ws_active the
+# active one, @ws_next the next tab number, each pane carries its profile in @ws_tab_profile and the
+# window keeps the active profile in @ws_session_profile.
+
+profile_for_window() { # $1=window: the active session's profile, falling back to the window/server profile
+  local p
+  p="$(tmux show -wqv -t "$1" @ws_session_profile)"
+  [ -n "$p" ] || p="$(tmux show -wqv -t "$1" @ws_profile)"
+  [ -n "$p" ] || p="$(env_global WS_PROFILE)"
+  [ -n "$p" ] || p="$(python3 "$SRC/lib.py" default-profile)"
+  echo "$p"
+}
+
+session_menu() { # $1=window: blocking profile menu for a new session
+  python3 "$SRC/session_menu.py" "$1"
+}
+
+session_new() { # $1=window $2=profile (default: the configured agent)
+  local W="$1" profile="${2:-}" path S n P
+  path="$(tmux show -wqv -t "$W" @ws_repo)"
+  [ -n "$path" ] || return 1
+  S="$(env_global WS_PROFILE)"
+  if [ -z "$profile" ]; then profile="$(python3 "$SRC/lib.py" default-profile)"; fi
+  if ! python3 "$SRC/lib.py" profile-list | grep -qxF "$profile"; then
+    msg session.unknown profile="$profile" >&2
+    return 1
+  fi
+  if [ -z "$(tab_list "$W" s)" ]; then
+    # first session: it takes the main slot (the pane that showed the placeholder)
+    P="$(pane_with_role "$W" claude)"
+    [ -n "$P" ] || return 1
+    tmux set -p -t "$P" @ws_tab_profile "$profile"
+    tmux set -pu -t "$P" @ws_placeholder
+    tmux set -w -t "$W" @ws_tabs "$P"
+    tmux set -w -t "$W" @ws_active "$P"
+    tmux set -w -t "$W" @ws_session_profile "$profile"
+    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q}"
+    tmux select-pane -t "$P"
+  else
+    # another session: a hidden window, swapped into the slot
+    n="$(tmux show -wqv -t "$W" @ws_next)"; n="${n:-2}"
+    P="$(tmux new-window -d -P -F '#{pane_id}' -t "$S:" -n "tab:$(basename "$path")" -c "$path")"
+    tmux set -p -t "$P" @role "tmp $n"
+    tmux set -p -t "$P" @ws_owner "$W"
+    tmux set -p -t "$P" @ws_tab_profile "$profile"
+    tmux set -w -t "$W" @ws_tabs "$(tab_list "$W" s | tr '\n' ' ')$P"
+    tmux set -w -t "$W" @ws_next $((n + 1))
+    tab_show "$W" "$P"
+    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q}"
+  fi
+  tab_render "$W" s
+  mobile_apply "$W"
+  msg session.opened profile="$profile"
+  return 0
+}
+
+session_run() { # $1=window $2=profile $3=path: the agent process of one session pane
+  local profile="$2" path="$3" line
+  line="$(python3 "$SRC/lib.py" session-command "$profile" "$path")"
+  if [ -z "$line" ]; then
+    msg session.unknown profile="$profile" >&2
+    sleep 10
+    "$BIN/workspace" session-exit "$TMUX_PANE"
+    return 0
+  fi
+  cd "$path"
+  sh -c "$line"
+  "$BIN/workspace" session-exit "$TMUX_PANE"
+}
+
+session_exit() { # $1=pane of a session that ended
+  local P="$1" W role first active prof path
+  W="$(tmux show -pqv -t "$P" @ws_owner 2>/dev/null)"
+  [ -n "$W" ] || W="$(tmux display -p -t "$P" '#{window_id}')"
+  [ -n "$W" ] || return 0
+  role="$(tmux show -pqv -t "$P" @role)"
+  tmux set -w -t "$W" @ws_tabs "$(tab_list "$W" s | grep -vxF "$P" | tr '\n' ' ')"
+  if [ "$role" = claude ]; then
+    # the session in the main slot ended
+    tmux set -p -t "$P" @ws_placeholder 1   # mark first: tab_list must not re-adopt this pane
+    first="$(tab_list "$W" s | head -1)"
+    if [ -n "$first" ]; then
+      tab_show "$W" "$first"   # promote the next session; P stays hidden, its process is done
+    else
+      path="$(tmux show -wqv -t "$W" @ws_repo)"
+      tmux set -w -t "$W" @ws_active ""
+      tmux set -w -t "$W" @ws_session_profile ""
+      tmux set -w -t "$W" @ws_mview session
+      tmux set -p -t "$P" @role claude
+      tmux set -p -t "$P" @ws_placeholder 1
+      tmux select-pane -t "$P"
+      tab_render "$W" s
+      mobile_apply "$W"
+      # last: replace this pane with the placeholder (kills this shell, so nothing may run after)
+      tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
+      return 0
+    fi
+  else
+    # a hidden session ended: normally just remove it (the active one is always in the slot)
+    active="$(tmux show -wqv -t "$W" @ws_active)"
+    if [ "$active" = "$P" ]; then
+      first="$(tab_list "$W" s | head -1)"
+      if [ -n "$first" ]; then
+        tab_show "$W" "$first"
+      else
+        tmux set -w -t "$W" @ws_active ""
+        tmux set -w -t "$W" @ws_session_profile ""
+        tmux set -w -t "$W" @ws_mview session
+      fi
+    fi
+  fi
+  active="$(tmux show -wqv -t "$W" @ws_active)"
+  prof=""
+  if [ -n "$active" ] && tab_alive "$active"; then
+    prof="$(tmux show -pqv -t "$active" @ws_tab_profile)"
+  fi
+  tmux set -w -t "$W" @ws_session_profile "$prof"
+  tab_render "$W" s
+  mobile_apply "$W"
 }
 
 # Closes windows (and their hidden tab windows) whose repo is no longer in config.yaml.
@@ -381,10 +555,10 @@ panels() { # $1=profile (default: claude)
 # and the hamburger menu (status bar, or ctrl+b m) picks the view. State: window option @ws_mview.
 is_mobile() { [ "$(tmux display -p -t "$1" '#{window_width}')" -lt "$MOBILE_W" ]; }
 
-mview_target() { # $1=window $2=claude|terminal|repos|tasks|side -> pane id
+mview_target() { # $1=window $2=session|claude|terminal|repos|tasks|side -> pane id
   local W="$1" p=""
   case "$2" in
-    claude) p="$(tmux show -wqv -t "$W" @ws_active)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" claude)" ;;
+    session|claude) p="$(tmux show -wqv -t "$W" @ws_active)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" claude)" ;;
     terminal) p="$(tmux show -wqv -t "$W" @ws_term_active)"; tab_alive "$p" 2>/dev/null || p="$(pane_with_role "$W" terminal)" ;;
     repos) p="$(pane_with_role "$W" repos)" ;;
     tasks) p="$(pane_with_role "$W" tasks)" ;;
@@ -404,7 +578,7 @@ mobile_apply() { # $1=window
     fi
     return 0
   fi
-  view="$(tmux show -wqv -t "$W" @ws_mview)"; view="${view:-claude}"
+  view="$(tmux show -wqv -t "$W" @ws_mview)"; view="${view:-session}"
   target="$(mview_target "$W" "$view")"; [ -n "$target" ] || return 0
   tmux set -w -t "$W" @ws_mzoom 1
   if [ "$(tmux display -p -t "$W" '#{window_zoomed_flag}')" = 1 ]; then
@@ -415,12 +589,13 @@ mobile_apply() { # $1=window
 }
 
 mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tree|diff|github)
-  local W="$1"
-  case "$2" in
+  local W="$1" view="$2"
+  [ "$view" = claude ] && view=session
+  case "$view" in
     repos) [ -n "${3:-}" ] && left "$3" "$W" ;;
     side) [ -n "${3:-}" ] && side "$3" "$W" ;;
   esac
-  tmux set -w -t "$W" @ws_mview "$2"
+  tmux set -w -t "$W" @ws_mview "$view"
   mobile_apply "$W"
   return 0
 }
@@ -429,7 +604,7 @@ mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tre
 menu() { # $1=client $2=window
   local C="$1" W="$2" w="$BIN/workspace"
   tmux display-menu -c "$C" -T '#{@t_menu_title}' -x C -y C \
-    '#{@t_menu_claude}' c "run-shell -b \"$w mview $W claude\"" \
+    '#{@t_menu_claude}' c "run-shell -b \"$w mview $W session\"" \
     '#{@t_menu_terminal}' t "run-shell -b \"$w mview $W terminal\"" \
     '' \
     '#{@t_menu_repos}' r "run-shell -b \"$w mview $W repos repos\"" \
@@ -439,8 +614,8 @@ menu() { # $1=client $2=window
     '#{@t_menu_diff}' d "run-shell -b \"$w mview $W side diff\"" \
     '#{@t_menu_github}' g "run-shell -b \"$w mview $W side github\"" \
     '' \
-    '#{@t_menu_tab_new}' n "run-shell -b \"$w tab-new $W claude\"" \
-    '#{@t_menu_tab_next}' p "run-shell -b \"$w tab-step $W 1 claude\"" \
+    '#{@t_menu_tab_new}' n "run-shell -b \"$w session-menu $W\"" \
+    '#{@t_menu_tab_next}' p "run-shell -b \"$w tab-step $W 1 session\"" \
     '#{@t_menu_tterm_new}' N "run-shell -b \"$w tab-new $W terminal\"" \
     '#{@t_menu_tterm_next}' P "run-shell -b \"$w tab-step $W 1 terminal\""
 }
@@ -504,10 +679,15 @@ plugin_sync() { # $1=profile: opens or completes the window of each listed plugi
 # what exists. New structural changes go in REPO_TREE, and `reload` applies them without a restart.
 # $3 = pane tree (default REPO_TREE; plugins pass their own). Plugin windows have no @ws_repo.
 ensure_window() { # $1=window $2=repo path $3=tree
-  local W="$1" path="$2" P T
+  local W="$1" path="$2" P T active prof
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
-  init_tabs "$W" "$P" c
+  init_tabs "$W" "$P" s
   build_tree "$W" "$path" "${3-$REPO_TREE}"
+  tab_list "$W" s >/dev/null        # adopt a legacy window's main pane as a session
+  active="$(tmux show -wqv -t "$W" @ws_active)"
+  prof=""
+  if [ -n "$active" ]; then prof="$(tmux show -pqv -t "$active" @ws_tab_profile)"; fi
+  tmux set -w -t "$W" @ws_session_profile "$prof"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
   fit_window "$W"
@@ -657,6 +837,10 @@ case "${1:-}" in
   type) type_prompt "$2" "$3" ;;
   options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "python3 $SRC/options.py $3" ;;
   resume) shift; resume "$@" ;;
+  session-menu) session_menu "$2" ;;
+  session-new) session_new "$2" "${3:-}" ;;
+  session-run) session_run "$2" "$3" "$4" ;;
+  session-exit) session_exit "$2" ;;
   tab-new) tab_new "$2" "${3:-}" ;;
   tab-show) tab_show "$2" "$3" ;;
   tab-step) tab_step "$2" "$3" "${4:-}" ;;

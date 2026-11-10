@@ -63,5 +63,17 @@ class FitHooksTest(unittest.TestCase):
         self.assertEqual(len(commands), 1, commands)
 
 
+class StatusBarProfileTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.conf = CONF.read_text(encoding="utf-8")
+
+    def test_statusbar_receives_session_profile_with_fallback_to_window_profile(self):
+        self.assertIn(
+            "statusbar.py '#{@ws_repo}' '#{?#{@ws_session_profile},#{@ws_session_profile},#{@ws_profile}}'",
+            self.conf,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
