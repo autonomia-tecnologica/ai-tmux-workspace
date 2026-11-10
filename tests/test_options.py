@@ -145,8 +145,10 @@ class OptionsConferenceTest(unittest.TestCase):
             f"    - {self.sibling}\n",
             encoding="utf-8")
 
-    def display(self, profile):
+    def display(self, profile, session=""):
         def display(option, **_kwargs):
+            if option == "#{@ws_session_profile}":
+                return session
             if option == "#{@ws_profile}":
                 return profile
             return str(self.repo)
@@ -190,12 +192,66 @@ class OptionsConferenceTest(unittest.TestCase):
 
     def test_ask_degrades_on_an_opencode_profile(self):
         self.opencode_workspace()
-        with mock.patch.object(options, "show") as show, \
+        with mock.patch.object(options.tmux, "display", side_effect=self.display("", session="")), \
+                mock.patch.object(options, "show") as show, \
                 mock.patch.object(options, "repo_and_command") as repo_and_command:
             options.run_leaf({"label": "Haiku", "ask": "haiku"}, "%1")
         show.assert_called_once()
         self.assertIn(i18n.t("agent.surface.ask"), show.call_args[0][1])
         repo_and_command.assert_not_called()
+
+    def test_the_ask_leaf_refuses_an_opencode_session_profile(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display",
+                               side_effect=self.display("claude", session="opencode")), \
+                mock.patch.object(options, "show") as show, \
+                mock.patch.object(options, "repo_and_command") as repo_and_command:
+            options.run_leaf({"label": "Haiku", "ask": "haiku"}, "%1")
+        show.assert_called_once()
+        self.assertIn(i18n.t("agent.surface.ask"), show.call_args[0][1])
+        repo_and_command.assert_not_called()
+
+    # --- window profile: the active session wins over the window ------------------------------
+    def test_window_profile_reads_the_session_profile_first(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display",
+                               side_effect=self.display("claude", session="opencode")):
+            self.assertEqual(options.window_profile("%1"), "opencode")
+
+    def test_window_profile_falls_back_when_the_session_profile_is_empty(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display",
+                               side_effect=self.display("opencode", session="")):
+            self.assertEqual(options.window_profile("%1"), "opencode")
+
+    def test_window_profile_falls_back_when_the_session_profile_is_invalid(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display",
+                               side_effect=self.display("opencode", session="nope")):
+            self.assertEqual(options.window_profile("%1"), "opencode")
+
+    def test_repo_and_command_passes_the_window_profile(self):
+        self.opencode_workspace()
+        with mock.patch.object(options.tmux, "display",
+                               side_effect=self.display("opencode", session="")), \
+                mock.patch.object(options.lib, "agent_launch_command",
+                                  return_value="opencode") as launch:
+            repo, argv = options.repo_and_command("%1")
+        self.assertEqual(repo, str(self.repo))
+        launch.assert_called_once_with(repo=str(self.repo), profile="opencode")
+        self.assertEqual(argv, ["opencode"])
+
+    def test_switch_agent_saves_without_restarting_the_workspace(self):
+        self.opencode_workspace()
+        with mock.patch.object(options, "confirm_security", return_value=True), \
+                mock.patch.object(options.lib, "set_agent") as set_agent, \
+                mock.patch.object(options, "show") as show, \
+                mock.patch.object(options.subprocess, "Popen") as popen:
+            options.switch_agent("claude", "%1")
+        set_agent.assert_called_once_with("claude")
+        popen.assert_not_called()
+        show.assert_called_once_with(i18n.t("options.agent"),
+                                     i18n.t("options.agent.saved", profile="claude"))
 
 
 if __name__ == "__main__":

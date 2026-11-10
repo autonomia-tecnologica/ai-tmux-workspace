@@ -109,10 +109,6 @@ def transcript_of(entry, sid):
 
 
 def collect(v):
-    if not lib.is_claude_harness():
-        # The session list reads Claude Code transcripts; an OpenCode profile has none to show.
-        return ([Row(f" {GRAY}{i18n.t('sessions.title')}{R}"), Row("")],
-                [Row(), Row(f" {DIM}{i18n.t('sessions.opencode', profile=lib.agent_name())}{R}")])
     now = time.time()
     main = lib.read_main()
     repos = ([main] if main else []) + [r for _, rs in lib.read_repos() for r in rs]
@@ -139,6 +135,9 @@ def collect(v):
             body.append(Row(f" {glyphs.dot(color)} {B}{d['title']}{R}", k))
             body.append(Row(f"   {GRAY}{i18n.t('sessions.agent')}{R} {DIM}{last}{R}", cont=True))
             parts = [i18n.t("sessions.msgs", n=d["n"])] + ([model] if model else [])
+            profile = e.get("profile")
+            if isinstance(profile, str) and profile.strip() and profile.strip() != "claude":
+                parts.append(profile.strip())
             pct = statusbar.as_number(st.get("context_pct"))
             if pct is not None:
                 parts.append(i18n.t("status.context", pct=f"{pct:.0f}"))
@@ -152,6 +151,12 @@ def collect(v):
             body.append(Row(""))
     for key in [c for c in CACHE if c not in used]:      # session left the list: release the read state
         del CACHE[key]
+    if total == 0:
+        body.append(Row(f" {GRAY}{i18n.t('sessions.empty')}{R}"))
+        pane = os.environ.get("TMUX_PANE", "")
+        profile = tmux.run("show", "-wqv", "-t", pane, "@ws_session_profile") if pane else ""
+        if profile and profile != "claude" and not lib.is_claude_harness(profile):
+            body.append(Row(f" {DIM}{i18n.t('sessions.opencode_note')}{R}"))
     return header, body
 
 
