@@ -214,7 +214,7 @@ class SessionTest(unittest.TestCase):
                                   return_value="claude") as launch:
             repo, argv = options.repo_and_command("@1")
         self.assertEqual(repo, str(self.repo))
-        launch.assert_called_once_with(repo=str(self.repo))
+        launch.assert_called_once_with(repo=str(self.repo), profile="claude")
         self.assertEqual(argv, ["claude"])
 
     def test_the_conference_does_not_receive_a_role(self):

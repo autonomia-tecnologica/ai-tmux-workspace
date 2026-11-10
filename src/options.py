@@ -68,7 +68,7 @@ def tree():
             {"label": i18n.t("options.conference.selected"), "conference": "selected"},
         ]},
     ]
-    agents = sorted(set(lib.read_config().get("profiles", {})) | {"claude"})
+    agents = lib.profile_names()
     current = lib.agent_name()
     nodes.append({"label": i18n.t("options.agent"), "children": [
         {"label": ("● " if a == current else "○ ") + a, "agent": a} for a in agents]})
@@ -167,7 +167,8 @@ def on_key(v, k):
 
 def repo_and_command(window):
     repo = tmux.display("#{@ws_repo}", target=window) or os.getcwd()
-    return repo, shlex.split(lib.agent_launch_command(repo=repo))
+    profile = window_profile(window) or lib.agent_name()
+    return repo, shlex.split(lib.agent_launch_command(repo=repo, profile=profile))
 
 
 def confirm_security(name):
@@ -194,7 +195,7 @@ def confirm_security(name):
 
 
 def switch_agent(name, window):
-    """Saves the agent and restarts the whole workspace (Claude resumes with --continue)."""
+    """Saves the default profile for new sessions; sessions already open keep their own profile."""
     if name == lib.agent_name():
         return
     if not confirm_security(name):
@@ -204,9 +205,7 @@ def switch_agent(name, window):
     except (OSError, ValueError):
         show(i18n.t("options.agent"), i18n.t("config.err.write"))
         return
-    env = dict(os.environ, WS_NO_ATTACH="1")
-    subprocess.Popen([lib.WS, "restart"], env=env, start_new_session=True,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    show(i18n.t("options.agent"), i18n.t("options.agent.saved", profile=name))
 
 
 def conference_output(fn, *args, **kwargs):
@@ -306,18 +305,28 @@ def choose_repos(window_repo):
     return [path for path in paths if path in state["selected"]]
 
 
+def _valid_profile(name):
+    """True when `name` is `claude` or a profile declared in config.yaml."""
+    if not isinstance(name, str) or not name.strip():
+        return False
+    name = name.strip()
+    if name == "claude":
+        return True
+    profiles = lib.read_config().get("profiles", {})
+    return isinstance(profiles, dict) and name in profiles
+
+
 def window_profile(window):
-    """Profile of the tmux window (`@ws_profile`), or "" when the window has none.
+    """Profile of the tmux window's active session (`@ws_session_profile`), falling back to the
+    window profile (`@ws_profile`), or "" when neither names a known profile.
 
     The conference participants use the window profile, not the global `agent` from config.yaml:
     a Claude window runs Claude and an OpenCode window runs OpenCode. Without a window profile the
     caller falls back to the configured agent (and refuses an OpenCode guess, fail closed)."""
-    name = tmux.display("#{@ws_profile}", target=window)
-    if not isinstance(name, str) or not name.strip():
-        return ""
-    name = name.strip()
-    profiles = lib.read_config().get("profiles", {})
-    return name if name == "claude" or (isinstance(profiles, dict) and name in profiles) else ""
+    name = tmux.display("#{@ws_session_profile}", target=window)
+    if not _valid_profile(name):
+        name = tmux.display("#{@ws_profile}", target=window)
+    return name.strip() if _valid_profile(name) else ""
 
 
 def run_conference(node, window):
@@ -376,10 +385,12 @@ def run_leaf(node, window):
         subprocess.run([lib.WS, "type", window, node["type"]], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
-    if "ask" in node and not lib.is_claude_harness():
-        show(node["label"], i18n.t("agent.opencode_only", profile=lib.agent_name(),
-                                   surface=i18n.t("agent.surface.ask")))
-        return
+    if "ask" in node:
+        profile = window_profile(window) or lib.agent_name()
+        if not lib.is_claude_harness(profile):
+            show(node["label"], i18n.t("agent.opencode_only", profile=profile,
+                                       surface=i18n.t("agent.surface.ask")))
+            return
     repo, base = repo_and_command(window)
     label = node["label"]
     try:
