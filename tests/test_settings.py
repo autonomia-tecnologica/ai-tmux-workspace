@@ -222,7 +222,8 @@ class SettingsTest(unittest.TestCase):
             "claude": "claude", "deepseek": {"command": "claude"}}})
         first = self.run_lib("profile-cmd", "deepseek", str(repo))
         self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertIn("--permission-mode bypassPermissions", first.stdout)
+        self.assertIn("--permission-mode acceptEdits", first.stdout)     # Claude harness, never bypass
+        self.assertNotIn("bypassPermissions", first.stdout)
         saved = json.loads((self.state / "permission.json").read_text(encoding="utf-8"))
         self.assertEqual(saved[str(repo.resolve())]["command"], "claude [deepseek]")
 
@@ -231,6 +232,83 @@ class SettingsTest(unittest.TestCase):
         second = self.run_lib("profile-cmd", "claude", str(repo))
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("--permission-mode acceptEdits", second.stdout)     # the old profile's mode is not reapplied
+
+    # --- manage (item 93) -------------------------------------------------------------------
+    def test_manage_false_launches_pure_claude_and_generates_no_settings(self):
+        self.configure({"manage": False, "agent": "claude", "profiles": {"claude": "claude"}})
+        proc = self.run_lib("profile-cmd", "claude")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "claude")
+        ensured = self.run_lib("ensure-settings", "claude")
+        self.assertEqual(ensured.returncode, 0, ensured.stderr)
+        self.assertEqual(ensured.stdout.strip(), "")
+        self.assertFalse((self.state / "settings" / "claude.json").exists())
+
+    def test_manage_false_keeps_continue_without_claude_flags(self):
+        self.configure({"manage": False, "agent": "claude", "profiles": {"claude": "claude"}})
+        repo = self.root / "repo"
+        repo.mkdir()
+        first = self.run_lib("opening-command", str(repo))
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.run_lib("opening-command", str(repo))
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("--continue", second.stdout)
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, second.stdout)
+
+    def test_manage_missing_keeps_the_historical_managed_behavior(self):
+        self.configure({"agent": "claude", "profiles": {"claude": "claude"}})
+        proc = self.run_lib("profile-cmd", "claude")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--settings", proc.stdout)
+        self.assertTrue((self.state / "settings" / "claude.json").is_file())
+
+    def test_claude_deepseek_settings_uses_the_endpoint_and_the_vault_without_bypass(self):
+        self.configure({"manage": True, "agent": "claude-deepseek", "profiles": {
+            "claude-deepseek": {"command": "claude", "settings": {
+                "env": {"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"},
+                "apiKeyHelper": "pass show deepseek/api-key"}}}})
+        proc = self.ensure("claude-deepseek")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        settings = self.generated("claude-deepseek")
+        self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"],
+                         "https://api.deepseek.com/anthropic")
+        self.assertEqual(settings["apiKeyHelper"], "pass show deepseek/api-key")
+        text = json.dumps(settings)
+        self.assertNotIn("bypassPermissions", text)
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", text)
+
+    def test_claude_deepseek_opens_in_accept_edits_and_never_bypasses(self):
+        repo = self.root / "repo"
+        repo.mkdir()
+        self.configure({"manage": True, "agent": "claude-deepseek", "profiles": {
+            "claude-deepseek": {"command": "claude", "settings": {
+                "env": {"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"},
+                "apiKeyHelper": "pass show deepseek/api-key"}}}})
+        proc = self.run_lib("opening-command", str(repo))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--permission-mode acceptEdits", proc.stdout)
+        self.assertNotIn("bypassPermissions", proc.stdout)
+        settings = (self.state / "settings" / "claude-deepseek.json").read_text(encoding="utf-8")
+        self.assertNotIn("bypassPermissions", settings)
+
+    def test_opencode_deepseek_profile_keeps_no_claude_flag(self):
+        self.configure({"manage": True, "agent": "opencode-deepseek", "profiles": {
+            "opencode-deepseek": {"harness": "opencode", "command": "opencode",
+                                  "config": "~/.config/ai-tmux-workspace/opencode-deepseek.json",
+                                  "model": "deepseek/deepseek-flash"}}})
+        proc = self.run_lib("profile-cmd")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout.strip()
+        self.assertEqual(out, "env OPENCODE_CONFIG=" +
+                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode-deepseek.json") +
+                         " opencode")
+        for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, out)
+        ensured = self.run_lib("ensure-settings", "opencode-deepseek")
+        self.assertEqual(ensured.returncode, 0, ensured.stderr)
+        self.assertEqual(ensured.stdout.strip(), "")
+        self.assertFalse((self.state / "settings" / "opencode-deepseek.json").exists())
 
     # --- OpenCode harness ------------------------------------------------------------------
     def opencode_profile(self, **extra):

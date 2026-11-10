@@ -14,9 +14,11 @@ Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` and `pr
 Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_STATE,
 AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE and SHELL.
 """
+import copy
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -25,6 +27,7 @@ from pathlib import Path
 
 import colors
 import tmux
+import yaml_min
 from i18n import t
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +50,49 @@ CLI_DIR = Path(".local", "bin")
 REQUIRED = ("tmux", "python3", "git", "claude")
 OPTIONAL = ("gh", "nvim", "micro")
 MANIFEST_VERSION = 1
+
+# Item 93: the provider list is exactly these four, in this canonical order (the first one marked
+# becomes `agent`). The installer only adds/updates the marked profiles: older names in an existing
+# config are never renamed or removed.
+PROVIDERS = ("claude", "claude-deepseek", "opencode-deepseek", "opencode-free")
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/anthropic"
+DEEPSEEK_VAULT = "pass show deepseek/api-key"   # the credential stays in the vault (F08)
+PROVIDER_PROFILES = {
+    "claude": "claude",
+    "claude-deepseek": {
+        "command": "claude",
+        "settings": {
+            "env": {
+                "ANTHROPIC_BASE_URL": DEEPSEEK_BASE_URL,
+                "ANTHROPIC_MODEL": "deepseek-flash",
+                # Opus slot: the strongest model, chosen with /model opus
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-flash",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+                "DISABLE_TELEMETRY": "1",
+                "DISABLE_ERROR_REPORTING": "1",
+            },
+            "model": "deepseek-flash",
+            # No `permissions.defaultMode` and no bypass: the vault command is the only credential
+            # the generated settings carry.
+            "apiKeyHelper": DEEPSEEK_VAULT,
+        },
+    },
+    "opencode-deepseek": {
+        "harness": "opencode",
+        "command": "opencode",
+        "config": "~/.config/ai-tmux-workspace/opencode-deepseek.json",
+        "model": "deepseek/deepseek-flash",
+    },
+    "opencode-free": {
+        "harness": "opencode",
+        "command": "opencode",
+        "config": "~/.config/ai-tmux-workspace/opencode-free.json",
+        "model": "opencode/deepseek-v4.1-flash-free",
+    },
+}
 
 # Package names per manager; only shown to the person, never executed by the assistant.
 PACKAGE_NAMES = {
@@ -134,6 +180,23 @@ def legacy_config_path():
     if "AT_WS_CONFIG" in os.environ:
         return config_path().with_suffix(".json")
     return HOME / ".config" / "ai-tmux-workspace" / "settings.json"
+
+
+def read_config_file(path):
+    """Mapping of an existing config.yaml; raises on unreadable/invalid text so nothing is overwritten."""
+    data = yaml_min.loads(Path(path).read_text(encoding="utf-8"))
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("config root is not a mapping")
+    return data
+
+
+def example_config():
+    """The example config without `profiles`: the installer seeds only the marked providers."""
+    data = read_config_file(ROOT / "config" / "config.example.yaml")
+    data.pop("profiles", None)
+    return data
 
 
 def state_dir():
@@ -287,17 +350,45 @@ class UI:
         self.err.write(self._style(t("installer.status.error"), colors.RED) + text + "\n")
         self.err.flush()
 
-    def confirm(self, key, **kw):
-        """Explicit confirmation; EOF and any answer not listed as yes abort the step."""
-        self.out.write(t(key, **kw) + t("installer.answer.hint"))
+    def _answer(self):
+        """One line from stdin; EOF aborts the step (nothing is done without an answer)."""
         self.out.flush()
         answer = self.inp.readline()
         if answer == "":
             self.line(t("installer.abort.no_answer"))
             raise Aborted()
-        if answer.strip().lower() not in t("installer.answer.yes").split():
+        return answer.strip()
+
+    def confirm(self, key, **kw):
+        """Explicit confirmation; EOF and any answer not listed as yes abort the step."""
+        self.out.write(t(key, **kw) + t("installer.answer.hint"))
+        if self._answer().lower() not in t("installer.answer.yes").split():
             self.line(t("installer.abort.declined"))
             raise Aborted()
+
+    def yes_no(self, key, **kw):
+        """A yes/no choice where "no" is a valid answer, not an abort (item 93 management)."""
+        self.out.write(t(key, **kw) + t("installer.answer.hint"))
+        return self._answer().lower() in t("installer.answer.yes").split()
+
+    def providers(self, key):
+        """Mark provider names from PROVIDERS, by number or exact name; empty means none.
+
+        The answer is returned in canonical order, so the first marked profile is stable."""
+        options = "\n".join(f"  {index}. {name}" for index, name in enumerate(PROVIDERS, 1))
+        self.out.write(t(key, options=options) + t("installer.answer.text_hint"))
+        chosen = set()
+        for token in re.split(r"[\s,]+", self._answer().lower()):
+            if not token:
+                continue
+            if token.isdigit() and 1 <= int(token) <= len(PROVIDERS):
+                chosen.add(PROVIDERS[int(token) - 1])
+            elif token in PROVIDERS:
+                chosen.add(token)
+            else:
+                self.error(t("installer.providers.invalid", option=token))
+                raise Aborted()
+        return [name for name in PROVIDERS if name in chosen]
 
 
 # --- manifest and backup -----------------------------------------------------------------------
@@ -490,6 +581,7 @@ class Assistant:
     def __init__(self, ui):
         self.ui = ui
         self.manifest = None
+        self.manage = True      # `manage: false` only when the person says the workspace does not manage
 
     def manifest_for(self):
         if self.manifest is None:
@@ -630,21 +722,53 @@ class Assistant:
                            dir=display(HOME / COMPLETION_DIR)))
 
     def install_config(self):
+        """Ask the two item 93 questions and seed/update only what was chosen.
+
+        Before writing anything: whether the workspace manages the agent options (`manage`) and
+        which providers to include. An existing config keeps every other key and every profile it
+        already had; the marked profiles are added or updated. The install never seeds the whole
+        example, so unmarked providers are not written."""
         self.ui.section(t("installer.config.title"))
         path = config_path()
         legacy = legacy_config_path()
-        if path.exists() or path.is_symlink():
-            self.ui.line(t("installer.config.exists", path=display(path)))
-            return
-        if legacy.exists() or legacy.is_symlink():
+        existing = path.exists() or path.is_symlink()
+        if not existing and (legacy.exists() or legacy.is_symlink()):
             self.ui.warn(t("installer.config.legacy", legacy=display(legacy), config=display(path)))
             return
-        self.ui.line(t("installer.config.plan", path=display(path)))
-        self.ui.confirm("installer.config.confirm")
+        self.manage = self.ui.yes_no("installer.manage.question")
+        selected = self.ui.providers("installer.providers.question")
+        agent = selected[0] if selected else "claude"
+        if existing:
+            try:
+                data = read_config_file(path)
+            except (OSError, ValueError) as error:
+                self.ui.error(t("installer.config.read_failed", path=display(path), error=str(error)))
+                raise Aborted()
+            self.ui.line(t("installer.config.exists", path=display(path)))
+        else:
+            self.ui.line(t("installer.config.plan", path=display(path)))
+            data = example_config()
+        profiles = data.get("profiles")
+        if not isinstance(profiles, dict):
+            profiles = {}
+        for name in selected:
+            profiles[name] = copy.deepcopy(PROVIDER_PROFILES[name])
+        data["manage"] = self.manage
+        data["agent"] = agent
+        if profiles or "profiles" in data:
+            data["profiles"] = profiles
+        manage_text = t("installer.manage.true") if self.manage else t("installer.manage.false")
+        selected_text = ", ".join(selected) if selected else t("installer.providers.none")
+        self.ui.line(t("installer.config.update_plan", path=display(path), manage=manage_text,
+                       agent=agent, profiles=selected_text))
+        self.ui.confirm("installer.config.update_confirm" if existing else "installer.config.confirm")
+        text = yaml_min.dumps(data)
+        if yaml_min.loads(text) != data:
+            raise OSError(t("installer.config.roundtrip", path=display(path)))
         self.ensure_dir(path.parent)
-        self.manifest_for().record(path)
-        shutil.copy2(ROOT / "config" / "config.example.yaml", path)
-        self.ui.ok(t("installer.config.created", path=display(path)))
+        self.write(path, text)
+        self.ui.ok(t("installer.config.updated" if existing else "installer.config.created",
+                     path=display(path)))
 
     def install_harness(self):
         self.ui.section(t("installer.harness.title"))
@@ -721,6 +845,9 @@ class Assistant:
         third-party hooks selectively.
         """
         self.ui.section(t("installer.hooks.title"))
+        if not self.manage:
+            self.ui.line(t("installer.hooks.skipped"))
+            return
         claude = HOME / ".claude"
         settings = claude / "settings.json"
         backup = claude / "settings.json.bak-workspace"
@@ -745,7 +872,7 @@ class Assistant:
         if missing:
             self.ui.warn(t("installer.done.missing", names=", ".join(missing)))
         self.ui.section(t("installer.done.title"))
-        self.ui.line(t("installer.done.next"))
+        self.ui.line(t("installer.done.next") if self.manage else t("installer.done.next_unmanaged"))
 
     def remove(self):
         if is_root():

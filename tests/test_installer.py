@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 import i18n  # noqa: E402  (path set above)
+import yaml_min  # noqa: E402
 
 BASH = shutil.which("bash") or "/bin/bash"
 INSTALL = ROOT / "install.sh"
@@ -108,8 +109,18 @@ class InstallerTest(unittest.TestCase):
         return subprocess.run([BASH, str(script)], input=stdin, env=self.env(**overrides),
                               capture_output=True, text=True, check=False, timeout=60)
 
-    def install(self, stdin="s\ns\ns\ns\ns\ns\ns\n", **overrides):
+    # install, cli, completion, manage (yes), providers (only claude), config, harness x2, hooks
+    def install(self, stdin="s\ns\ns\ns\n1\ns\ns\ns\ns\n", **overrides):
         return self.run_script(INSTALL, stdin, **overrides)
+
+    def run_lib(self, *args, **overrides):
+        return subprocess.run([sys.executable, str(ROOT / "src" / "lib.py"), *args],
+                              env=self.env(**overrides), capture_output=True, text=True,
+                              check=False, timeout=60)
+
+    def config(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        return yaml_min.loads(path.read_text(encoding="utf-8")), path
 
     def remove(self, stdin="s\n", **overrides):
         return self.run_script(REMOVE, stdin, **overrides)
@@ -181,7 +192,7 @@ class InstallerTest(unittest.TestCase):
     def test_missing_harness_offers_the_clone_command_and_declining_aborts(self):
         missing = self.root / "missing-harness"
         before = snapshot(self.home)
-        result = self.install("s\ns\ns\ns\nn\n", AT_HARNESS_SOURCE=str(missing))
+        result = self.install("s\ns\ns\ns\n1\ns\nn\n", AT_HARNESS_SOURCE=str(missing))
         self.assertEqual(result.returncode, 1)
         self.assertIn("git clone --depth 1", result.stdout)
         self.assertIn(CLONE_URL, result.stdout)
@@ -232,7 +243,7 @@ class InstallerTest(unittest.TestCase):
         (missing_bin / "dirname").symlink_to(shutil.which("dirname"))
         (missing_bin / "readlink").symlink_to(shutil.which("readlink"))
         executable(missing_bin / "pacman")
-        result = self.install("s\ns\ns\ns\ns\ns\ns\ns\n", PATH=str(missing_bin))
+        result = self.install("s\ns\ns\ns\ns\n1\ns\ns\ns\ns\n", PATH=str(missing_bin))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("faltando (obrigatórias): tmux, git, claude", result.stdout)
         self.assertIn("pkexec pacman -S --needed tmux", result.stdout)
@@ -330,7 +341,7 @@ class InstallerTest(unittest.TestCase):
     def test_every_literal_i18n_key_exists(self):
         source = INSTALLER.read_text(encoding="utf-8")
         strings = json.loads((ROOT / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
-        keys = set(re.findall(r'(?:t|confirm)\(\s*"(installer[^"]*)"\s*[,)]', source))
+        keys = set(re.findall(r'(?:t|confirm|yes_no|providers)\(\s*"(installer[^"]*)"\s*[,)]', source))
         keys.update(f"installer.remove.kind.{kind}" for kind in
                     ("file", "dir", "symlink", "absent", "absent_tree", "clone", "settings"))
         keys.update(f"installer.remove.reason.{reason}" for reason in
@@ -368,6 +379,126 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 125, result.stdout + result.stderr)
         self.assertIn(f"sh -c 'touch {marker}'", result.stdout)
         self.assertFalse(marker.exists())
+
+    # 19 (item 93) ----------------------------------------------------------------------------
+    def test_install_without_management_writes_pure_claude_and_no_settings_or_hooks(self):
+        before = snapshot(self.home)
+        # install, cli, completion, manage (no), providers (only claude), config, harness x2
+        installed = self.install("s\ns\ns\nn\n1\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, path = self.config()
+        self.assertIs(cfg["manage"], False)
+        self.assertEqual(cfg["profiles"], {"claude": "claude"})
+        self.assertEqual(cfg["agent"], "claude")
+        self.assertFalse((self.home / ".claude" / "settings.json").exists(),
+                         "manage: false must not register hooks")
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertFalse((self.state / "settings").exists(),
+                         "manage: false must not generate settings")
+        self.assertIn(i18n.t("installer.hooks.skipped"), installed.stdout)
+
+        launched = self.run_lib("profile-cmd", "claude")
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        self.assertEqual(launched.stdout.strip(), "claude")
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, launched.stdout)
+
+        ensured = self.run_lib("ensure-settings", "claude")
+        self.assertEqual(ensured.returncode, 0, ensured.stderr)
+        self.assertEqual(ensured.stdout.strip(), "")
+        self.assertFalse((self.state / "settings").exists(),
+                         "ensure-settings must not write anything with manage: false")
+
+        repo = self.root / "repo"
+        repo.mkdir()
+        self.assertEqual(self.run_lib("opening-command", str(repo)).returncode, 0)
+        resumed = self.run_lib("opening-command", str(repo))
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("--continue", resumed.stdout)
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, resumed.stdout)
+
+        removed = self.remove()
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(snapshot(self.home), before)
+
+    # 20 (item 93) ----------------------------------------------------------------------------
+    def test_install_with_all_providers_writes_the_four_profiles_without_bypass(self):
+        # install, cli, completion, manage (yes), all four providers, config, harness x2, hooks
+        installed = self.install("s\ns\ns\ns\n1 2 3 4\ns\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, path = self.config()
+        self.assertIs(cfg["manage"], True)
+        self.assertEqual(cfg["agent"], "claude")
+        self.assertEqual(set(cfg["profiles"]),
+                         {"claude", "claude-deepseek", "opencode-deepseek", "opencode-free"})
+
+        deepseek = cfg["profiles"]["claude-deepseek"]
+        self.assertEqual(deepseek["command"], "claude")
+        self.assertEqual(deepseek["settings"]["env"]["ANTHROPIC_BASE_URL"],
+                         "https://api.deepseek.com/anthropic")
+        self.assertEqual(deepseek["settings"]["apiKeyHelper"], "pass show deepseek/api-key")
+        self.assertNotIn("permissions", deepseek)
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", deepseek["settings"]["env"])
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("bypass", text.lower(), "no profile may carry a bypass")
+
+        opencode = cfg["profiles"]["opencode-deepseek"]
+        self.assertEqual(opencode["harness"], "opencode")
+        self.assertEqual(opencode["command"], "opencode")
+        self.assertIn("opencode-deepseek.json", opencode["config"])
+        self.assertEqual(opencode["model"], "deepseek/deepseek-flash")
+        free = cfg["profiles"]["opencode-free"]
+        self.assertEqual(free["harness"], "opencode")
+        self.assertIn("opencode-free.json", free["config"])
+        self.assertEqual(free["model"], "opencode/deepseek-v4.1-flash-free")
+        for profile in (opencode, free):
+            self.assertNotIn("settings", profile, "OpenCode profiles carry no Claude settings")
+
+        generated = self.run_lib("ensure-settings", "claude-deepseek")
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        settings = json.loads((self.state / "settings" / "claude-deepseek.json").read_text())
+        self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"],
+                         "https://api.deepseek.com/anthropic")
+        self.assertNotIn("bypassPermissions", json.dumps(settings))
+
+    # 21 (item 93) ----------------------------------------------------------------------------
+    def test_agent_is_the_first_marked_provider_in_canonical_order(self):
+        installed = self.install("s\ns\ns\ns\n4 2\ns\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertEqual(cfg["agent"], "claude-deepseek")
+        self.assertEqual(set(cfg["profiles"]), {"claude-deepseek", "opencode-free"})
+
+    # 22 (item 93) ----------------------------------------------------------------------------
+    def test_existing_config_is_preserved_and_only_manage_agent_and_marked_profiles_change(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        path.parent.mkdir(parents=True)
+        original = {
+            "manage": True,
+            "agent": "antigo",
+            "main": "~/Codes/main-repo",
+            "groups": {"IA": ["~/Codes/a", {"path": "~/Codes/b", "siblings": ["~/Codes/a"]}]},
+            "editor": {"prose": [{"name": "micro", "command": "micro", "fullscreen": True}]},
+            "prompts": ["p1", "p2"],
+            "options": [{"label": "X", "run": "true"}],
+            "profiles": {"antigo": "claude --settings ~/.claude/antigo.json"},
+        }
+        path.write_text(yaml_min.dumps(original), encoding="utf-8")
+        before = snapshot(self.home)
+        # install, cli, completion, manage (no), providers (only claude), update config, harness x2
+        installed = self.install("s\ns\ns\nn\n1\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], False)
+        self.assertEqual(cfg["agent"], "claude")
+        self.assertEqual(cfg["profiles"]["antigo"], "claude --settings ~/.claude/antigo.json")
+        self.assertEqual(cfg["profiles"]["claude"], "claude")
+        for key in ("main", "groups", "editor", "prompts", "options"):
+            self.assertEqual(cfg[key], original[key], f"{key} must be preserved")
+        removed = self.remove()
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertEqual(snapshot(self.home), before)
 
 
 if __name__ == "__main__":

@@ -5,9 +5,10 @@ Claude Code records every mode change in the transcript as
 `{"type": "permission-mode", "permissionMode": "<mode>"}`. The Stop/SessionEnd hook stores the last
 one per repo; `opening_command` reads it and passes `--permission-mode` on the next launch. The mode is
 only applied while the agent command is the same: a profile switch opens in the profile default
-(decision D10). The `claude` profile opens in acceptEdits; a non-Claude profile opens in
-bypassPermissions, because the classifier does not run there and acceptEdits would stop every Bash
-command on a prompt. A non-Claude profile never gets `auto`.
+(decision D10). Every profile of the Claude harness opens in acceptEdits, the Claude default: a
+custom Anthropic-compatible endpoint (such as `claude-deepseek`) is still the Claude harness and
+never starts in bypass. OpenCode profiles do not call this module (they carry no Claude flags).
+`auto` is only reapplied on the Claude harness.
 
 This module is stdlib-only at import time: hook.py imports it on every Stop.
 """
@@ -21,8 +22,7 @@ try:
 except ImportError:     # no fcntl (Windows): updates are not serialized
     fcntl = None
 
-DEFAULT_MODE = "acceptEdits"            # `claude` profile: the classifier still runs there
-NON_CLAUDE_MODE = "bypassPermissions"   # no classifier: acceptEdits would prompt on every Bash
+DEFAULT_MODE = "acceptEdits"            # every Claude harness profile starts here
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 
 
@@ -125,19 +125,19 @@ def record_launch(repo, command, mode):
         pass
 
 
-def mode_for(repo, command, claude):
-    """Mode to launch: the last one for the same command, else the profile default.
+def mode_for(repo, command, claude_harness=True):
+    """Mode to launch: the last one for the same command, else acceptEdits.
 
     A different command means a profile switch, so the saved mode is not applied on that first
-    opening. The `claude` profile defaults to acceptEdits; a non-Claude profile defaults to
-    bypassPermissions, since without the classifier acceptEdits would prompt on every Bash command.
-    A non-Claude profile never gets `auto`, even when the `claude` profile saved it."""
-    default = DEFAULT_MODE if claude else NON_CLAUDE_MODE
+    opening. Every Claude harness profile (including `claude-deepseek`) defaults to acceptEdits and
+    never starts in bypass. `auto` is only reapplied on the Claude harness; OpenCode profiles never
+    reach this function."""
+    default = DEFAULT_MODE
     try:
         entry = read().get(_repo(repo))
         if not isinstance(entry, dict) or entry.get("command") != command:
             return default
         mode = _valid(entry.get("mode"))
-        return mode if claude or mode != "auto" else default
+        return mode if claude_harness or mode != "auto" else default
     except Exception:
         return default
