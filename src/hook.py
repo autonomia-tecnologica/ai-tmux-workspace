@@ -123,7 +123,8 @@ def _record_permission_mode(d):
     mode = _last_permission_mode(d)
     if mode:
         try:
-            permission_state.record_mode(d.get("cwd") or "", mode)
+            permission_state.record_mode(d.get("cwd") or "", mode,
+                                         profile=os.environ.get("WS_SESSION_PROFILE", ""))
         except Exception:
             pass
 
@@ -237,7 +238,8 @@ def _has_background_work(d):
 def _apply(e, ev, d, ctx):
     """Applies one event to the session state `e`, in place. Returns False when nothing is written."""
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=ctx["now"], pane=ctx["pane"],
-             tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"])
+             tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"],
+             profile=os.environ.get("WS_SESSION_PROFILE", ""))
     if d.get("transcript_path"):
         e["transcript_path"] = str(d["transcript_path"])
     e["agents"] = list(e.get("agents") or [])

@@ -1,16 +1,14 @@
-"""Tests for the per-repo agent command state that decides how a repo's Claude pane opens: the same command
-keeps `--continue` (today's flow); a different command, an unknown repo, or a last opening that never produced
-a transcript opens a new session and, when a previous transcript exists, passes the i18n migration prompt as
-the positional argument of `claude`. Each test runs `src/lib.py` in a child process with temporary HOME,
-WS_STATE and AT_WS_CONFIG, so the real config, cache and transcripts are never read or written."""
+"""Tests for the per-profile session command (item 97): every profile opens with `--continue ||` and
+falls back to a fresh session; the workspace-generated settings and permission mode only apply to
+managed Claude profiles; the OpenCode harness carries only its own config; the recorded identity is
+the base line, without the session box. Each test runs `src/lib.py` in a child process with
+temporary HOME, WS_STATE and AT_WS_CONFIG."""
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -18,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "src" / "lib.py"
 
 
-class OpeningCommandTest(unittest.TestCase):
+class SessionCommandTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -30,224 +28,98 @@ class OpeningCommandTest(unittest.TestCase):
         self.config = self.root / "config.json"
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        self.set_command("claude --settings ~/.claude/settings.a.json")
 
-    def set_command(self, command, agent="a"):
-        self.agent = agent
-        self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: command}}), encoding="utf-8")
-        self.command = command
+    def configure(self, config):
+        self.config.write_text(json.dumps(config), encoding="utf-8")
 
-    def set_opencode(self, config="~/oc.json", command="opencode", agent="oc"):
-        """An OpenCode profile: the workspace must not add any Claude launch detail."""
-        profile = {"harness": "opencode", "command": command}
-        if config:
-            profile["config"] = config
-        self.agent = agent
-        self.config.write_text(json.dumps({"agent": agent, "profiles": {agent: profile}}), encoding="utf-8")
-        self.command = command
+    def env(self):
+        return dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state),
+                    AT_WS_CONFIG=str(self.config),
+                    AT_HARNESS_DIR=str(self.root / "no-harness"))
 
-    def box(self, repo=None):
-        """Session prefix the launcher puts in front of every repo launch (item 64)."""
-        root = str(Path(repo or self.repo).resolve())
-        return f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={root}"
-
-    def launch_for(self, repo=None):
-        """Command line the workspace actually runs: the session box, then the profile's line. Every
-        Claude-harness profile gets the workspace-generated settings (`--settings`), except a legacy
-        string command that already passes its own; a profile whose name is not `claude` disables
-        tool search (D9). Every Claude-harness profile opens in acceptEdits (D10), never bypass; the
-        OpenCode harness is covered by its own tests and carries no Claude flag."""
-        cmd = self.command
-        if "--settings" not in cmd:
-            cmd = f"{cmd} --settings {shlex.quote(str(self.state / 'settings' / f'{self.agent}.json'))}"
-        base = cmd if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
-        return f"{self.box(repo)} {base} --permission-mode acceptEdits"
-
-    @property
-    def launch(self):
-        return self.launch_for(self.repo)
-
-    def opening(self, repo=None):
-        env = dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config),
-                   AT_HARNESS_DIR=str(self.root / "no-harness"))
-        proc = subprocess.run([sys.executable, str(LIB), "opening-command", str(repo or self.repo)],
-                              env=env, capture_output=True, text=True, check=False)
+    def run_lib(self, *args):
+        proc = subprocess.run([sys.executable, str(LIB), *args], env=self.env(),
+                              capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def transcript(self, repo=None, name="old.jsonl", mtime=None):
-        folder = self.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo or self.repo))
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / name
-        path.write_text('{"type": "user"}\n', encoding="utf-8")
-        if mtime is not None:
-            os.utime(path, (mtime, mtime))
-        return path
+    def box(self, profile, repo=None):
+        root = str(Path(repo or self.repo).resolve())
+        return f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={root} WS_SESSION_PROFILE={profile}"
 
-    def new_session_transcript(self, repo=None, name="new.jsonl"):
-        """Transcript a successful opening would leave: newer than the state recorded before it."""
-        return self.transcript(repo, name=name, mtime=time.time() + 60)
+    def claude(self, profile="claude", command="claude", **config):
+        cfg = {"agent": profile, "profiles": {profile: command}}
+        cfg.update(config)
+        self.configure(cfg)
 
-    def saved(self):
-        return json.loads((self.state / "agent.json").read_text(encoding="utf-8"))
+    def opencode(self, profile="oc", command="opencode", config="~/oc.json"):
+        entry = {"harness": "opencode", "command": command}
+        if config:
+            entry["config"] = config
+        self.configure({"agent": profile, "profiles": {profile: entry}})
 
-    def assert_prompt(self, out, transcript):
-        self.assertNotIn("--continue", out)
-        argv = shlex.split(out)
-        base = shlex.split(self.launch)
-        # "<agent command> <prompt> || <agent command>": one positional argument, the prompt
-        self.assertEqual(argv[:len(base)], base)
-        self.assertEqual(argv[len(base) + 1:], ["||"] + base)
-        self.assertEqual(len(argv), 2 * len(base) + 2)
-        prompt = argv[len(base)]
-        self.assertIn(str(transcript), prompt)
-        self.assertIn("migrado", prompt)
-        self.assertIn("releia a transcrição", prompt.lower())
-
-    def test_first_opening_without_record_does_not_resume(self):
-        self.assertEqual(self.opening(), self.launch)
-
-    def test_non_claude_profile_disables_tool_search(self):
-        out = self.opening()
-        self.assertTrue(out.startswith(f"{self.box()} env ENABLE_TOOL_SEARCH=false "))
-        self.assertIn(self.command, out)
-
-    def test_claude_profile_keeps_tool_search(self):
-        self.set_command("claude", agent="claude")
-        self.assertEqual(self.opening(), self.launch)
-
-    def test_tool_search_prefix_is_not_part_of_the_recorded_identity(self):
-        self.opening()
-        self.assertEqual(self.saved()[str(self.repo)]["command"], self.command)
-        self.new_session_transcript()
-        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
-
-    def test_first_opening_with_a_transcript_gets_the_migration_prompt(self):
-        old = self.transcript()
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assert_prompt(self.opening(), old)
-
-    def test_same_command_after_restart_or_reload_keeps_continue(self):
-        self.opening()                          # records command A, no session yet
-        self.new_session_transcript()           # the session this opening started
-        out = self.opening()
-        self.assertEqual(out, f"{self.launch} --continue || {self.launch}")
-
-    def test_prompt_is_shown_only_once_per_change(self):
-        self.opening()
-        old = self.transcript()
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assert_prompt(self.opening(), old)             # first opening with the new command
-        again = self.opening()
-        self.assertNotIn("migrado", again)
-        self.assertEqual(again, f"{self.launch} --continue || {self.launch}")
-
-    def test_prompt_is_shown_once_across_repos(self):
-        second = self.root / "second"
-        second.mkdir()
-        self.opening()                          # record command A for both repos (no transcripts yet)
-        self.opening(second)
-        old = self.transcript()
-        self.transcript(second)
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assert_prompt(self.opening(), old)             # first repo of the new environment
-        out = self.opening(second)
-        self.assertEqual(out, self.launch_for(second))                  # new session, prompt not repeated
-        self.assertNotIn("migrado", out)
-
-    def test_old_string_state_format_is_understood(self):
-        (self.state / "agent.json").write_text(json.dumps({str(self.repo): self.command}), encoding="utf-8")
-        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
-
-    def test_changed_command_opens_new_session_with_prompt_citing_the_transcript(self):
-        self.opening()
-        old = self.transcript()
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assert_prompt(self.opening(), old)
-
-    def test_second_opening_with_the_new_command_continues(self):
-        self.opening()
-        self.transcript()                       # transcript from the old environment
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertNotIn("--continue", self.opening())
-        self.new_session_transcript()           # the new session this opening started
-        self.assertEqual(self.opening(), f"{self.launch} --continue || {self.launch}")
-        self.assertEqual(self.saved()[str(self.repo)]["command"], self.command)
-
-    def test_repo_without_transcript_opens_new_session_without_prompt(self):
-        other = self.root / "other"
-        other.mkdir()
-        self.opening(other)                     # last opening of `other` used command A
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(other), self.launch_for(other))
-
-    def test_newest_transcript_in_the_project_folder_wins(self):
-        self.transcript(name="old.jsonl", mtime=1000)
-        new = self.transcript(name="new.jsonl", mtime=2000)
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        out = self.opening()
-        self.assertIn(str(new), out)
-        self.assertNotIn("old.jsonl", out)
-
-    def test_transcript_fallback_from_the_session_cache(self):
-        transcript = self.root / "cached.jsonl"
-        transcript.write_text("{}\n", encoding="utf-8")
-        sessions = self.state / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "abc.json").write_text(json.dumps({
-            "cwd": str(self.repo), "ts": 1, "transcript_path": str(transcript)}), encoding="utf-8")
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        out = self.opening()
-        self.assertIn(str(transcript), out)
-        self.assertNotIn("--continue", out)
-
-    def test_cache_entry_of_another_repo_is_not_used(self):
-        transcript = self.root / "elsewhere.jsonl"
-        transcript.write_text("{}\n", encoding="utf-8")
-        sessions = self.state / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "abc.json").write_text(json.dumps({
-            "cwd": str(self.root / "elsewhere"), "ts": 1, "transcript_path": str(transcript)}),
-            encoding="utf-8")
-        self.set_command("claude --settings ~/.claude/settings.b.json")
-        self.assertEqual(self.opening(), self.launch_for(self.repo))
-
-    # --- OpenCode harness ------------------------------------------------------------------
-    def test_opencode_profile_runs_without_any_claude_flag(self):
-        self.set_opencode()
-        out = self.opening()
-        self.assertEqual(out, f"{self.box()} env OPENCODE_CONFIG={self.home / 'oc.json'} opencode")
-        for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
-            self.assertNotIn(flag, out)
-        self.assertFalse((self.state / "settings").exists())
-
-    def test_opencode_profile_without_config_runs_the_command_as_written(self):
-        self.set_opencode(config="")
-        self.assertEqual(self.opening(), f"{self.box()} opencode")
-
-    def test_opencode_never_resumes_nor_sends_the_migration_prompt(self):
-        self.set_opencode()
-        first = self.opening()
-        self.transcript()                       # a Claude transcript exists for this repo
-        second = self.opening()
-        self.assertEqual(first, second)
+    # --- Claude harness ----------------------------------------------------------------------
+    def test_managed_claude_session_command_has_settings_profile_and_continue(self):
+        self.claude()
+        out = self.run_lib("session-command", "claude", str(self.repo))
+        base = (f"{self.box('claude')} claude --settings "
+                f"{shlex.quote(str(self.state / 'settings' / 'claude.json'))} "
+                f"--permission-mode acceptEdits")
+        self.assertEqual(out, f"{base} --continue || {base}")
+        second = out.split("||", 1)[1]
         self.assertNotIn("--continue", second)
-        self.assertNotIn("migrado", second)
 
-    def test_opencode_command_and_profile_are_recorded(self):
-        self.set_opencode()
-        self.opening()
-        self.assertEqual(self.saved()[str(self.repo)]["command"], "opencode [oc]")
-        self.assertFalse((self.state / "permission.json").exists())   # no Claude mode is recorded
+    def test_mapping_claude_profile_carries_its_profile_in_the_box(self):
+        self.configure({"agent": "deepseek", "profiles": {
+            "claude": "claude", "deepseek": {"command": "claude"}}})
+        out = self.run_lib("session-command", "deepseek", str(self.repo))
+        self.assertIn("WS_SESSION_PROFILE=deepseek", out)
+        self.assertIn("--permission-mode acceptEdits", out)
+        self.assertIn("--continue ||", out)
 
-    def test_switching_from_claude_to_opencode_does_not_reuse_the_claude_session(self):
-        self.opening()
-        self.transcript()
-        self.set_opencode()
-        out = self.opening()
+    def test_unmanaged_claude_session_command_has_continue_without_claude_flags(self):
+        self.claude(manage=False)
+        out = self.run_lib("session-command", "claude", str(self.repo))
+        self.assertEqual(out, f"{self.box('claude')} claude --continue || "
+                              f"{self.box('claude')} claude")
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, out)
+
+    def test_profile_cmd_has_no_continue(self):
+        self.claude()
+        out = self.run_lib("profile-cmd", "claude", str(self.repo))
         self.assertNotIn("--continue", out)
-        self.assertNotIn("migrado", out)
-        self.assertIn("OPENCODE_CONFIG", out)
+        self.assertIn("--permission-mode acceptEdits", out)
+
+    # --- OpenCode harness --------------------------------------------------------------------
+    def test_opencode_session_command_has_config_and_continue_without_claude_flags(self):
+        self.opencode()
+        out = self.run_lib("session-command", "oc", str(self.repo))
+        config = str(self.home / "oc.json")
+        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(config)} opencode"
+        self.assertEqual(out, f"{base} --continue || {base}")
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, out)
+
+    def test_opencode_without_config_has_continue_and_no_claude_flag(self):
+        self.opencode(config="")
+        out = self.run_lib("session-command", "oc", str(self.repo))
+        self.assertEqual(out, f"{self.box('oc')} opencode --continue || {self.box('oc')} opencode")
+
+    # --- opening-command delegates to the default profile ------------------------------------
+    def test_opening_command_is_the_default_profile_session_command(self):
+        self.claude()
+        self.assertEqual(self.run_lib("opening-command", str(self.repo)),
+                         self.run_lib("session-command", "claude", str(self.repo)))
+
+    # --- recorded identity -------------------------------------------------------------------
+    def test_recorded_identity_is_the_base_line_without_the_session_box(self):
+        self.opencode()
+        self.run_lib("session-command", "oc", str(self.repo))
+        saved = json.loads((self.state / "agent.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved[str(self.repo.resolve())]["command"], "opencode [oc]")
+        self.assertNotIn("WS_SESSION_ROLE", json.dumps(saved))
+        self.assertNotIn("WS_SESSION_PROFILE", json.dumps(saved))
 
 
 if __name__ == "__main__":
