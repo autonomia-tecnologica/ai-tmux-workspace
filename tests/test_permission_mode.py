@@ -185,6 +185,24 @@ class HookPermissionModeTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(permission_state.read()[str(self.repo)]["claude"]["mode"], "bypassPermissions")
 
+    def test_stop_records_the_session_id_for_the_tab(self):
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-1",
+                              "cwd": str(self.repo), "transcript_path": str(transcript)},
+                             WS_SESSION_TAB="tab-1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.state / "tabs" / "session-tab-1").read_text(), "sess-1")
+
+    def test_tab_session_is_not_written_without_the_variable(self):
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        proc = self.run_hook({"hook_event_name": "Stop", "session_id": "sess-1",
+                              "cwd": str(self.repo), "transcript_path": str(transcript)},
+                             WS_SESSION_TAB="")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((self.state / "tabs").exists())
+
     def test_session_end_records_the_last_permission_mode(self):
         transcript = self.root / "transcript.jsonl"
         transcript.write_text(json.dumps(
