@@ -53,16 +53,15 @@ class OpeningCommandTest(unittest.TestCase):
 
     def launch_for(self, repo=None):
         """Command line the workspace actually runs: the session box, then the profile's line. Every
-        profile gets the workspace-generated settings (`--settings`), except a legacy string command
-        that already passes its own; non-Claude profiles disable tool search (D9) and open in
-        bypassPermissions, since the classifier does not run there; the claude profile opens in
-        acceptEdits (D10)."""
+        Claude-harness profile gets the workspace-generated settings (`--settings`), except a legacy
+        string command that already passes its own; a profile whose name is not `claude` disables
+        tool search (D9). Every Claude-harness profile opens in acceptEdits (D10), never bypass; the
+        OpenCode harness is covered by its own tests and carries no Claude flag."""
         cmd = self.command
         if "--settings" not in cmd:
             cmd = f"{cmd} --settings {shlex.quote(str(self.state / 'settings' / f'{self.agent}.json'))}"
         base = cmd if self.agent == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
-        mode = "acceptEdits" if self.agent == "claude" else "bypassPermissions"
-        return f"{self.box(repo)} {base} --permission-mode {mode}"
+        return f"{self.box(repo)} {base} --permission-mode acceptEdits"
 
     @property
     def launch(self):

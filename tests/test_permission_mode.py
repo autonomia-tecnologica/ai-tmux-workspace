@@ -1,6 +1,6 @@
-"""Tests for the last permission mode per repo (D10): acceptEdits on the first opening of `claude`,
-bypassPermissions on the first opening of a non-Claude profile, the last mode reapplied for the same
-agent command, and a fallback on profile switches.
+"""Tests for the last permission mode per repo (D10): acceptEdits on the first opening of any Claude
+harness profile (including a custom endpoint such as `claude-deepseek`), never bypass by default, the
+last mode reapplied for the same agent command, and a fallback on profile switches.
 
 Every test uses a temporary HOME, WS_STATE and AT_WS_CONFIG, so the real cache and config are never
 read or written. `lib.py` and `hook.py` run in child processes, like the workspace runs them."""
@@ -91,31 +91,31 @@ class PermissionModeTest(unittest.TestCase):
         self.assertEqual(permission_state.mode_for(str(self.repo), self.command, True),
                          "bypassPermissions")
 
-    def test_non_claude_first_opening_uses_bypass_permissions(self):
-        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="deepseek")
+    def test_custom_claude_profile_first_opening_uses_accept_edits(self):
+        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="claude-deepseek")
         out = self.opening()
-        self.assertIn("--permission-mode bypassPermissions", out)
+        self.assertIn("--permission-mode acceptEdits", out)
+        self.assertNotIn("bypassPermissions", out)
         entry = self.saved()[str(self.repo)]
-        self.assertEqual(entry["mode"], "bypassPermissions")
+        self.assertEqual(entry["mode"], "acceptEdits")
 
-    def test_non_claude_never_gets_auto(self):
-        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="deepseek")
+    def test_custom_claude_profile_reapplies_auto(self):
+        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="claude-deepseek")
         self.opening()
         permission_state.record_mode(str(self.repo), "auto")
         out = self.opening()
-        self.assertIn("--permission-mode bypassPermissions", out)
-        self.assertNotIn("--permission-mode auto", out)
+        self.assertIn("--permission-mode auto", out)
 
     def test_profile_switch_does_not_apply_the_saved_mode_first(self):
         self.opening()
         permission_state.record_mode(str(self.repo), "auto")
         self.set_command("claude --settings ~/.claude/settings.other.json", agent="other")
         out = self.opening()
-        self.assertIn("--permission-mode bypassPermissions", out)
+        self.assertIn("--permission-mode acceptEdits", out)
         self.assertNotIn("--permission-mode auto", out)
 
-    def test_non_claude_keeps_a_mode_chosen_in_the_session(self):
-        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="deepseek")
+    def test_custom_claude_profile_keeps_a_mode_chosen_in_the_session(self):
+        self.set_command("claude --settings ~/.claude/settings.deepseek.json", agent="claude-deepseek")
         self.opening()
         permission_state.record_mode(str(self.repo), "plan")
         out = self.opening()

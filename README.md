@@ -22,7 +22,7 @@ Desfazer: `bash ~/.local/share/ai-tmux-workspace/app/remove.sh` (restaura o que 
 
 A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/filosofia.md`) e vale sobre este repo. O manifesto da Autonomia Tecnológica mora primariamente no site (`site/i18n/pt_BR.json`).
 
-**Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
+**Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`manage`, `profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
 
 tmux para os repos de `groups` do config.yaml. Comando: `workspace`. O agente que roda nos painéis do Claude é escolhido em `agent` do config.yaml (comandos em `profiles`,
 ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"); troca pelo menu de opções (Ctrl+b o) e reinicia o
@@ -48,12 +48,16 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `harness/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
 
+`manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (o `--continue` de retomada continua). Sem a chave, o comportamento histórico vale (`manage: true`).
+
+O instalador pergunta, antes de configurar, se o workspace gerencia as opções e quais provedores incluir, entre exatamente `claude`, `claude-deepseek`, `opencode-deepseek` e `opencode-free`. Ele grava só os marcados em `profiles` (o `agent` é o primeiro marcado na ordem canônica, ou `claude`) e preserva o resto da config: `groups`, `main`, editores, prompts e perfis que já existiam, com os nomes antigos como estão (`deepseek` e `opencode` não são renomeados).
+
 `profiles` aceita o formato antigo (linha de comando, ex. `claude`) e o novo:
 
 ```yaml
 profiles:
   claude: claude
-  deepseek:
+  claude-deepseek:
     command: claude
     settings:
       env:
@@ -63,6 +67,8 @@ profiles:
       model: deepseek-flash
       apiKeyHelper: "pass show deepseek/api-key"
 ```
+
+O perfil `claude-deepseek` usa a API Anthropic-compatible da DeepSeek sem bypass: não tem `permissions.defaultMode: bypassPermissions` nem qualquer outro bypass; a credencial fica no cofre, via `apiKeyHelper`.
 
 Uma linha de comando que já passa `--settings` continua como está: é o formato antigo, e o arquivo continua sendo seu. Para migrar, leve o conteúdo não secreto para `settings` e troque a chave por `apiKeyHelper`, um comando que imprime a chave na hora de subir. A chave de acesso nunca entra no `config.yaml`, na settings gerada nem no ambiente: a settings só aponta para o cofre, e o Claude Code executa o helper no launch. O arquivo gerado fica com modo 0600 e o workspace recusa gerar se encontrar valor literal em `ANTHROPIC_AUTH_TOKEN`, `*_API_KEY`, `*_ACCESS_TOKEN` ou algo com cara de chave. O slot Opus pode apontar para um modelo mais forte (ex.: `deepseek-v4-pro`) mantendo `ANTHROPIC_MODEL` e `CLAUDE_CODE_SUBAGENT_MODEL` em `deepseek-flash`; no Claude Code, `/model opus` escolhe esse slot.
 
@@ -74,7 +80,7 @@ Enquanto o harness instalado não existir (item 33), a base vem do `harness/sett
 
 Perfis que não são o `claude` (DeepSeek, OpenRouter, Qwen, Strata...) sobem com o *tool search* do Claude Code desligado (`ENABLE_TOOL_SEARCH=false`). O motivo é de compatibilidade: o Claude Code grava o estado do tool search no transcript como blocos `tool_addition`/`tool_definition`, e os endpoints compatíveis com a Anthropic desses provedores recusam esse variant (422 em `messages[1].content`), o que quebra o `--continue`. Desligado por padrão, a sessão nova já nasce compatível e a troca de perfil deixa de produzir esse erro. O perfil `claude` não muda.
 
-O modo de permissão segue a mesma regra de troca: o `claude` abre em `acceptEdits` e um perfil não-Claude abre em `bypassPermissions` — sem o classifier, `acceptEdits` pararia cada comando de Bash num prompt. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior, e `auto` nunca é aplicado a um perfil não-Claude. O perfil não-Claude pode declarar `permissions.defaultMode: bypassPermissions` no `settings` dele, para sessões abertas fora do workspace.
+Todo perfil do harness do Claude — inclusive um que aponta para um endpoint Anthropic-compatible, como `claude-deepseek` — abre em `acceptEdits`, o padrão do Claude Code, e nunca em `bypassPermissions` por padrão; sem o classifier, cada comando de Bash pede confirmação. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior. `auto` só é reaplicado em perfil do harness do Claude. Perfis com `harness: opencode` não recebem nenhuma flag de permissão do Claude.
 
 Sessões antigas abertas no perfil `claude` ainda não são retomadas no perfil novo: elas abrem uma sessão nova com o prompt de migração (uma vez só). Retomar o transcript antigo de verdade é item de backlog, não um passo escondido no launcher. A medida vale enquanto a ferramenta de harness não for trocada; quando o at-harness entrar, a decisão é revista. Ela não é uma barreira de segurança.
 
@@ -84,18 +90,21 @@ Um perfil com `harness: opencode` sobe o OpenCode no lugar do Claude Code:
 
 ```yaml
 profiles:
-  opencode:                                # API do DeepSeek
+  opencode-deepseek:                       # API do DeepSeek
     harness: opencode
     command: opencode                      # opcional: é o padrão do harness
-    config: ~/.config/ai-tmux-workspace/opencode.json
+    config: ~/.config/ai-tmux-workspace/opencode-deepseek.json
+    model: deepseek/deepseek-flash
   opencode-free:                           # provedor `opencode`, modelos free
     harness: opencode
+    command: opencode
     config: ~/.config/ai-tmux-workspace/opencode-free.json
+    model: opencode/deepseek-v4.1-flash-free
 ```
 
 Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH`, não gera settings e não usa `--continue`: as sessões pertencem ao OpenCode. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
 
-A credencial do provider fica no próprio OpenCode (`opencode auth login`, gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). No arquivo de config do perfil, `model` escolhe o modelo: `deepseek/deepseek-flash` para a API do DeepSeek e `opencode/deepseek-v4.1-flash-free` para o modelo free do provedor `opencode`.
+A credencial do provider fica no próprio OpenCode (`opencode auth login`, gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). O perfil declara `model`: `deepseek/deepseek-flash` para a API do DeepSeek (`opencode-deepseek`) e `opencode/deepseek-v4.1-flash-free` para o modelo free do provedor `opencode` (`opencode-free`); o arquivo de config do OpenCode aponta para o mesmo modelo.
 
 As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. O plugin do OpenCode chama a mesma política central do hook: com papel de sessão declarado, a mesma ação recebe a mesma decisão (e `ask` bloqueia, porque o plugin não tem canal de confirmação).
 

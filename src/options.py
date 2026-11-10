@@ -172,9 +172,9 @@ def repo_and_command(window):
 
 def confirm_security(name):
     """Before switching to a non-Claude profile, shows what security is lost and asks for an explicit
-    confirmation. A non-Claude Claude-harness profile loses the auto classifier and runs under
-    bypassPermissions; an OpenCode profile runs under OpenCode's own approvals. The full list is one
-    key away, on the same screen. Returns True to continue."""
+    confirmation. A non-Claude Claude-harness profile loses the auto classifier but still opens in
+    acceptEdits, never in bypassPermissions; an OpenCode profile runs under OpenCode's own approvals.
+    The full list is one key away, on the same screen. Returns True to continue."""
     if name == "claude" and lib.is_claude_harness(name):
         return True
     key = "options.agent.security" if lib.is_claude_harness(name) else "options.agent.opencode"

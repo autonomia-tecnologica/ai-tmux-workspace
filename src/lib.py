@@ -102,6 +102,15 @@ def migrate_config():
     return destination
 
 
+def manage_enabled():
+    """False only when config.yaml sets `manage: false` (item 93).
+
+    The workspace then leaves the agent options alone: no generated settings, no permission mode
+    and no tool-search flag on the launch line. A missing key keeps the historical behavior
+    (managed), so configs written before `manage` existed do not change."""
+    return read_config().get("manage", True) is not False
+
+
 def agent_name():
     """Chosen agent (config.yaml "agent"); falls back to "claude" when unset or not in "profiles"."""
     profiles = read_config().get("profiles", {})
@@ -341,10 +350,12 @@ def _safe_profile_name(name):
 
 def ensure_profile_settings(name=None):
     """Write the profile's generated settings and return its path. None means the profile has no
-    workspace-generated settings: a legacy string profile that already owns `--settings`, or an
-    OpenCode profile (its config comes from `OPENCODE_CONFIG`). Raises SettingsError when the
-    settings cannot be generated safely."""
+    workspace-generated settings: `manage: false` (the workspace leaves the agent options alone), a
+    legacy string profile that already owns `--settings`, or an OpenCode profile (its config comes
+    from `OPENCODE_CONFIG`). Raises SettingsError when the settings cannot be generated safely."""
     name = name or agent_name()
+    if not manage_enabled():
+        return None
     if not is_claude_harness(name):
         return None
     if _has_settings_flag(profile_command(name)):
@@ -382,7 +393,11 @@ def agent_launch_command(mode="", repo=None):
     With `repo`, the line is prefixed with the session box (`WS_SESSION_ROLE`/`WS_SESSION_ROOT` from
     `src/session.py`), so the hook and the OpenCode plugin enforce the same role table. Without a
     repo (the conference worker) no role is declared on purpose. `auto` is never fixed here: the
-    policy reads it from the event's `permission_mode`."""
+    policy reads it from the event's `permission_mode`.
+
+    With `manage: false` the Claude harness is left alone too: the command runs exactly as the
+    profile declares it, without `--settings`, `--permission-mode` or `ENABLE_TOOL_SEARCH`. The
+    `--continue` of a resumed session is added by the caller (`opening_command`) as usual."""
     name = agent_name()
     cmd = agent_command()
     if _KEY_LITERAL.search(cmd):
@@ -391,6 +406,8 @@ def agent_launch_command(mode="", repo=None):
     if not is_claude_harness(name):
         config = profile_config(name)
         launch = f"env OPENCODE_CONFIG={shlex.quote(config)} {cmd}" if config else cmd
+    elif not manage_enabled():
+        launch = cmd
     else:
         if not _has_settings_flag(cmd):
             settings_path = ensure_profile_settings(name)
@@ -500,7 +517,7 @@ def opening_command(repo):
         state[repo] = {"command": cmd}
         _write_agent_state(state)
         return launch
-    mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+    mode = permission_state.mode_for(repo, cmd, is_claude_harness())
     launch = agent_launch_command(mode, repo)     # may raise SettingsError: do not record a launch that did not happen
     permission_state.record_launch(repo, cmd, mode)
     state = _read_agent_state()
@@ -1041,7 +1058,7 @@ if __name__ == "__main__":
         try:
             if repo and is_claude_harness():
                 cmd = agent_identity()
-                mode = permission_state.mode_for(repo, cmd, agent_name() == "claude")
+                mode = permission_state.mode_for(repo, cmd, is_claude_harness())
                 launch = agent_launch_command(mode, repo)
                 permission_state.record_launch(repo, cmd, mode)
                 print(launch)
