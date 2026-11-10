@@ -651,7 +651,8 @@ class Assistant:
                 raise Aborted()
         self.ui.line(t("installer.harness.source", path=display(source)))
         self.ui.line(t("installer.harness.files", files=", ".join(harness_files(source))))
-        entry = source / "HARNESS.md"
+        lean = ROOT / "harness" / "HARNESS.md"
+        entry = lean if lean.is_file() else source / "HARNESS.md"
         if not entry.is_file():
             entry = source / "CLAUDE.md"
         if entry.is_file():
@@ -671,6 +672,8 @@ class Assistant:
         except OSError as error:
             self.ui.error(t("installer.harness.copy_failed", error=str(error)))
             raise Aborted()
+        if lean.is_file():
+            shutil.copy2(lean, target / "HARNESS.md")
         shutil.copy2(ROOT / "harness" / "harness.py", target / "harness.py")
         install_policy_files(target)
         rendered = subprocess.run(

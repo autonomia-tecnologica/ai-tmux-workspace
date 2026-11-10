@@ -181,6 +181,14 @@ escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, ite
 ## Comandos
 `workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica).
 
+## HARNESS.md enxuto
+
+O texto que o agente recebe em toda sessão é o `harness/HARNESS.md` deste repo, com só tópicos
+operacionais: ele é enxuto de propósito, para gastar menos token por sessão. A descrição aberta e o
+histórico das regras ficam no repositório `ambiente-de-trabalho`; o instalador copia a versão enxuta
+por cima da cópia da fonte. O `source.json` continua registrando o sha256 da fonte descritiva e o da
+cópia instalada, e o `workspace doctor` compara os dois.
+
 ## Persistência
 Sem plugins de tmux. O Claude abre com `claude --continue` (senão, sessão nova); quando a linha de comando do
 agente mudou desde a última abertura daquele repo, ou ainda não há registro, abre sessão nova (o prompt de
