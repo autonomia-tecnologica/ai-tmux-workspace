@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Top bar of each panel (1 row; arg: claude|terminal|repos|tasks|side):
-[CLAUDE] [CLAUDE (2)] [CLAUDE (3)] ... [+]. In `repos` it is REPOS and the listed plugins (no +); in `tasks` it is only the panel title (one tab, no +).
+"""Top bar of each panel (1 row; arg: session|terminal|repos|tasks|side):
+[SESSÃO] [SESSÃO (2)] [SESSÃO (3)] ... [+]. In `repos` it is REPOS and the listed plugins (no +); in `tasks` it is only the panel title (one tab, no +).
 In `side` mode the tabs are fixed (FILES, SESSIONS, DIFF, GITHUB) and choose what the right panel shows.
 
-Clicking a tab switches, clicking + opens a temporary session. With the panel focused, ←/→ move the
+Clicking a tab switches, clicking + opens a new session. With the panel focused, ←/→ move the
 cursor (lighter background) between the tabs and the +, and Enter activates. Draws and waits on mouse/keyboard;
 `workspace` restarts this panel (respawn-pane) on every tab change.
 """
@@ -25,9 +25,10 @@ from viewer import direction
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 
 
-KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("terminal", "side", "repos", "tasks") else "claude"
+_KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("terminal", "side", "repos", "tasks", "session", "claude") else "claude"
+KIND = "session" if _KIND in ("claude", "session") else _KIND
 NO_PLUS = ("side", "repos", "tasks")
-PAD = 1 if KIND in ("claude", "repos", "side") else 0   # top-row bars get a blank line above, off the status bar   # top-row bars get a blank line above, off the status bar
+PAD = 1 if KIND in ("session", "repos", "side") else 0   # top-row bars get a blank line above, off the status bar
 
 
 def t(key):
@@ -35,14 +36,12 @@ def t(key):
 
 
 def kind_label(kind):
-    """Label of a tab kind: the agent strip is OPENCODE under the OpenCode harness, CLAUDE otherwise."""
-    if kind == "claude" and not lib.is_claude_harness():
-        return t("opencode")
+    """Label of a tab kind: the generic session label for the session strip."""
     return t(kind)
 
 
 SIDE_TABS = [(k, t(k)) for k in ("tree", "diff", "github")]
-VARS = {"claude": ("@ws_tabs", "@ws_active"), "terminal": ("@ws_ttabs", "@ws_term_active")}
+VARS = {"session": ("@ws_tabs", "@ws_active"), "terminal": ("@ws_ttabs", "@ws_term_active")}
 
 
 def session_name():
@@ -84,6 +83,24 @@ def repo_window():
     return ""
 
 
+def session_labels(ids, profile_of, alive):
+    """[(pane_id, label)] of the alive session panes, numbering repeated profiles.
+
+    `profile_of` returns a pane's profile name ("" when unknown); `alive` reports whether the pane
+    still exists. The label is the upper-cased profile (the generic SESSÃO when empty); the 2nd, 3rd
+    occurrence of a profile gets " (2)", " (3)" in the order they appear.
+    """
+    seen, tabs = {}, []
+    for p in ids:
+        if not alive(p):
+            continue
+        profile = (profile_of(p) or "").upper() or t("session")
+        seen[profile] = seen.get(profile, 0) + 1
+        label = profile if seen[profile] == 1 else f"{profile} ({seen[profile]})"
+        tabs.append((p, label))
+    return tabs
+
+
 def state():
     win =tmux.run("display", "-p", "-t", os.environ.get("TMUX_PANE", ""), "#{window_id}")
     if KIND == "side":
@@ -97,6 +114,15 @@ def state():
         return win, [("repos", t("repos")), ("sessions", t("sessions"))] + plugin_tabs(session_name()), active
     if KIND == "tasks":
         return win, [(KIND, t(KIND))], KIND
+    if KIND == "session":
+        ids = tmux.run("show", "-wqv", "-t", win, "@ws_tabs").split()
+        active = tmux.run("show", "-wqv", "-t", win, "@ws_active")
+        tabs = session_labels(
+            ids,
+            profile_of=lambda p: tmux.display("#{@ws_tab_profile}", target=p),
+            alive=lambda p: bool(tmux.display("#{?pane_id,#{@role},}", target=p)),
+        )
+        return win, tabs, active
     v_tabs, v_active = VARS[KIND]
     ids = tmux.run("show", "-wqv", "-t", win, v_tabs).split()
     active = tmux.run("show", "-wqv", "-t", win, v_active)
@@ -157,6 +183,8 @@ def main():
             return
         if KIND == "side":
             cmd = [lib.WS, "side", p, win]
+        elif KIND == "session":
+            cmd = [lib.WS, "session-menu", win] if p == "new" else [lib.WS, "tab-show", win, p]
         else:
             cmd = [lib.WS, "tab-new", win, KIND] if p == "new" else [lib.WS, "tab-show", win, p]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
