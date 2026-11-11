@@ -20,6 +20,7 @@ ROOT="$(dirname "$BIN")"        # repo root
 SRC="$ROOT/src"
 export WS_DIR="$ROOT"
 MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
+SESSION_MIN_SECONDS=10   # shorter than this, a session that ended was a failed launch (never reopen the default)
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
 profile_cmd() { python3 "$SRC/lib.py" profile-cmd "$1" "${2:-}"; }
@@ -583,26 +584,27 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
 }
 
 session_run() { # $1=window $2=profile $3=path $4=tab id: the agent process of one session pane
-  local profile="$2" path="$3" tab="${4:-}" line
+  local profile="$2" path="$3" tab="${4:-}" line started="$SECONDS"
   line="$(python3 "$SRC/lib.py" session-command "$profile" "$path" "$tab")"
   if [ -z "$line" ]; then
     msg session.unknown profile="$profile" >&2
     sleep 10
-    "$BIN/workspace" session-exit "$TMUX_PANE"
+    "$BIN/workspace" session-exit "$TMUX_PANE" 0
     return 0
   fi
   cd "$path"
   sh -c "$line"
-  "$BIN/workspace" session-exit "$TMUX_PANE"
+  "$BIN/workspace" session-exit "$TMUX_PANE" "$((SECONDS - started))"
 }
 
-session_exit() { # $1=pane of a session that ended
-  local P="$1" W role first active prof path
+session_exit() { # $1=pane of a session that ended $2=how many seconds it stayed alive (optional)
+  local P="$1" alive="${2:-}" W role first active prof profile path
   W="$(tmux show -pqv -t "$P" @ws_owner 2>/dev/null)"
   [ -n "$W" ] || W="$(tmux display -p -t "$P" '#{window_id}')"
   [ -n "$W" ] || return 0
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   role="$(tmux show -pqv -t "$P" @role)"
+  profile="$(tmux show -pqv -t "$P" @ws_tab_profile)"
   tmux set -w -t "$W" @ws_tabs "$(tab_list "$W" s | grep -vxF "$P" | tr '\n' ' ')"
   state_remove_tab "$W" "$P"
   if [ "$role" = claude ]; then
@@ -622,7 +624,11 @@ session_exit() { # $1=pane of a session that ended
       # The last tab opened a new default one, so the strip never stays empty on purpose. If that
       # fails (unknown profile, cancelled risk prompt), the placeholder is the fallback.
       [ -n "$path" ] && state_sync_window "$W"
-      if [ -n "$path" ] && session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"; then
+      # A session that ends right after launch (bad settings, missing binary) must not relaunch the
+      # default profile: that would loop every few seconds. Say why and leave the placeholder.
+      if [ -n "$alive" ] && [ "$alive" -lt "$SESSION_MIN_SECONDS" ] 2>/dev/null; then
+        tmux display-message "$(msg session.failed_fast profile="$profile")" 2>/dev/null || true
+      elif [ -n "$path" ] && session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"; then
         return 0
       fi
       # last: replace this pane with the placeholder (kills this shell, so nothing may run after)
@@ -1054,8 +1060,8 @@ case "${1:-}" in
   resume) shift; resume "$@" ;;
   session-menu) session_menu "$2" ;;
   session-new) session_new "$2" "${3:-}" ;;
-  session-run) session_run "$2" "$3" "$4" ;;
-  session-exit) session_exit "$2" ;;
+  session-run) session_run "$2" "$3" "$4" "${5:-}" ;;
+  session-exit) session_exit "$2" "${3:-}" ;;
   tab-new) tab_new "$2" "${3:-}" ;;
   tab-show) tab_show "$2" "$3" ;;
   tab-step) tab_step "$2" "$3" "${4:-}" ;;

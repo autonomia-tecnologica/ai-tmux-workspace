@@ -161,6 +161,46 @@ class LayoutOwnerTest(unittest.TestCase):
         self.assertNotIn("refresh-client", self.functions["reload"])
 
 
+class SessionFastFailTest(unittest.TestCase):
+    """A session that dies right after launch (bad settings, missing binary) must not relaunch the
+    default profile every few seconds: the last one leaves the placeholder and a status warning."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = BIN.read_text(encoding="utf-8")
+        cls.functions = functions(cls.text)
+
+    def test_session_run_reports_how_long_the_agent_lived(self):
+        body = self.functions["session_run"]
+        self.assertIn('started="$SECONDS"', body)
+        self.assertRegex(body, r'session-exit "\$TMUX_PANE" "\$\(\(SECONDS - started\)\)"')
+
+    def test_unknown_profile_reports_zero_despite_the_sleep(self):
+        body = self.functions["session_run"]
+        self.assertIn('session-exit "$TMUX_PANE" 0', body)
+
+    def test_dispatch_forwards_the_new_arguments(self):
+        self.assertIn('session-exit) session_exit "$2" "${3:-}" ;;', self.text)
+        self.assertIn('session-run) session_run "$2" "$3" "$4" "${5:-}" ;;', self.text)
+
+    def test_last_session_guard_runs_before_reopening_the_default(self):
+        body = self.functions["session_exit"]
+        self.assertIn("SESSION_MIN_SECONDS", body)
+        self.assertLess(body.index("SESSION_MIN_SECONDS"), body.index("session_new"))
+        self.assertIn("session.failed_fast", body)
+        self.assertIn("session_placeholder.py", body)
+
+    def test_guard_only_applies_to_the_main_slot(self):
+        body = self.functions["session_exit"]
+        self.assertEqual(body.count("SESSION_MIN_SECONDS"), 1, body)
+        self.assertEqual(body.count("session.failed_fast"), 1, body)
+
+    def test_threshold_lives_in_a_single_symbol(self):
+        self.assertEqual(self.text.count("SESSION_MIN_SECONDS=10"), 1)
+        users = [name for name, body in self.functions.items() if "SESSION_MIN_SECONDS" in body]
+        self.assertEqual(users, ["session_exit"], users)
+
+
 class FitLockTest(unittest.TestCase):
     """`fit` takes its lock before the first tmux call: a hook burst must not open one connection to
     the server each (that is how a resize loop piled up processes and exhausted the server's fds)."""
