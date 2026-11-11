@@ -145,6 +145,29 @@ class RenameTest(unittest.TestCase):
         v = self.viewer(old)
         self.assertFalse(panel_tree.on_input(v, "x"))
 
+    def test_footer_shows_the_absolute_path_in_bold(self):
+        path = os.path.join(self.repo, "some", "file.txt")
+        text = panel_tree.footer(self.viewer(path))
+        self.assertTrue(text.startswith(panel_tree.B))
+        self.assertTrue(text.endswith(panel_tree.R))
+        self.assertIn(os.path.abspath(path), text)
+        self.assertTrue(os.path.isabs(text[len(panel_tree.B):-len(panel_tree.R)]))
+
+    def test_footer_keeps_the_slash_of_a_folder(self):
+        path = os.path.join(self.repo, "folder")
+        text = panel_tree.footer(SimpleNamespace(key=("d", path), redraw=mock.Mock()))
+        self.assertTrue(text.endswith("/" + panel_tree.R))
+        self.assertIn(os.path.abspath(path), text)
+
+    def test_footer_is_empty_without_selection_or_at_the_root(self):
+        self.assertEqual(panel_tree.footer(SimpleNamespace(key=None)), "")
+        self.assertEqual(panel_tree.footer(SimpleNamespace(key=("d", self.repo))), "")
+
+    def test_footer_does_not_depend_on_the_name_length(self):
+        name = "a" * 120 + ".txt"
+        path = self.write(name)
+        self.assertIn(os.path.abspath(path), panel_tree.footer(self.viewer(path)))
+
 
 if __name__ == "__main__":
     unittest.main()

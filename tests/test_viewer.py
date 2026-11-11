@@ -12,8 +12,8 @@ sys.path.insert(0, str(SRC))
 import viewer  # noqa: E402
 
 
-def make(text):
-    return viewer.Viewer(lambda v: ([], []), footer=lambda v: text)
+def make(text, **kwargs):
+    return viewer.Viewer(lambda v: ([], []), footer=lambda v: text, **kwargs)
 
 
 class FooterTest(unittest.TestCase):
@@ -45,6 +45,32 @@ class FooterTest(unittest.TestCase):
             v._draw(force=True)
         self.assertGreater(v._footer_rows, 3)
         self.assertEqual(v._footer_h(), v._footer_rows)
+
+    def test_a_long_path_keeps_every_line_when_the_cap_is_off(self):
+        text = "/" + "/".join(["directory"] * 20)
+        lines = make(text, max_footer_lines=None)._footer_lines(20, 100)
+        self.assertGreater(len(lines), viewer.MAX_FOOTER_LINES)
+        self.assertEqual("".join(lines), text)
+
+    def test_the_drawn_frame_uses_the_whole_height_when_the_cap_is_off(self):
+        text = f"{viewer.B}" + "/".join(["d" * 20] * 20) + viewer.R
+        v = make(text, max_footer_lines=None)
+        out = io.StringIO()
+        with mock.patch("shutil.get_terminal_size",
+                        return_value=os.terminal_size((20, 30))), \
+                mock.patch("sys.stdout", out):
+            v._draw(force=True)
+        self.assertGreater(v._footer_rows, viewer.MAX_FOOTER_LINES + 1)
+
+    def test_the_default_cap_still_limits_the_drawn_footer(self):
+        text = "m" * 1000
+        v = make(text)
+        out = io.StringIO()
+        with mock.patch("shutil.get_terminal_size",
+                        return_value=os.terminal_size((20, 30))), \
+                mock.patch("sys.stdout", out):
+            v._draw(force=True)
+        self.assertEqual(v._footer_rows, viewer.MAX_FOOTER_LINES + 1)
 
 
 if __name__ == "__main__":
