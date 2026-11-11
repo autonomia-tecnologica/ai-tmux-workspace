@@ -57,6 +57,9 @@ editor:
 # `--continue` para pegar a última sessão do repo e cai para sessão nova se não houver.
 # A credencial dos perfis OpenCode fica no próprio OpenCode (`opencode auth login <provider>`),
 # nunca neste arquivo. Nenhum perfil do catálogo aponta o Claude para um endpoint externo.
+# A conferência usa o perfil da janela: cada perfil escolhe seu adaptador de agente (Claude ou
+# OpenCode) e recebe o comando, o stream e a resposta pela mesma interface. Nenhuma flag/settings do
+# Claude entra num perfil OpenCode (e vice-versa); a decisão de permissão é sempre a política central.
 # Conferência, «Perguntar ao Claude», painel SESSÕES e métricas do status bar degradam com aviso
 # nesse harness.
 profiles:

@@ -2,9 +2,10 @@
 """One isolated agent run that answers a conference message for one repo.
 
 Started detached by `conference.say`, never by a person: `conference.py <repo> <prompt file>
-<message id> <conference created>`. It runs the window profile headless (`claude -p` or
-`opencode run`) with the repo as cwd, so the window's interactive session is neither used nor
-disturbed, captures the first paragraph of the answer and appends it to the persistent log.
+<message id> <conference created>`. It runs the window profile headless through the agent adapter
+of that profile (`src/agents/`), with the repo as cwd, so the window's interactive session is
+neither used nor disturbed, captures the first paragraph of the answer and appends it to the
+persistent log. This module never builds a harness command line itself: the adapter owns it.
 
 The run speaks only about its own repo and only from its own `README.md` and `BACKLOG.md`, and reads
 them only when Rafael asks. The prompt carries the whole conference log (capped by
@@ -23,8 +24,6 @@ Never raises: a failed run still clears the waiting mark and leaves a visible no
 """
 import json
 import os
-import re
-import shlex
 import signal
 import subprocess
 import sys
@@ -36,6 +35,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
+import agents  # noqa: E402  (stdlib-only at import time, by design)
 import conference  # noqa: E402  (stdlib-only at import time, by design)
 
 TIMEOUT_S = 300
@@ -45,8 +45,8 @@ MAX_TURNS = 0                          # kept for callers that imported the old 
 # The conference has two tools and two files. Everything else needs a permission request, which a
 # headless run denies; the worker hook enforces the path and the README proposal even when a tool
 # is listed here by mistake. Deny rules win over any allow rule from the user's settings.
-ALLOWED_TOOLS = "Read,Edit"
-DISALLOWED_TOOLS = ("Bash,Task,NotebookEdit,MultiEdit,Write,WebFetch,WebSearch,Grep,Glob")
+ALLOWED_TOOLS = agents.ALLOWED_TOOLS
+DISALLOWED_TOOLS = agents.DISALLOWED_TOOLS
 
 
 def _active_profile():
@@ -57,179 +57,22 @@ def _active_profile():
     return profile if isinstance(profile, str) else ""
 
 
-def _settings_path_from_command(command):
-    """Path of an explicit `--settings` in a profile command, or None."""
-    match = re.search(r"--settings(?:=|\s+)(?:(['\"])(.*?)\1|(\S+))", command or "")
-    if not match:
-        return None
-    return Path(match.group(2) or match.group(3) or "").expanduser()
-
-
-def _conference_settings(profile, command):
-    """Generated settings of the run: the profile/harness settings plus the conference hook.
-
-    The hook is what makes the two-file scope a mechanism: it denies every tool except `Read`/`Edit`
-    on the repo's own `README.md`/`BACKLOG.md`, and turns a README edit into a pending diff.
-    """
+def _agent(profile=None):
+    """(profile name, adapter) of the run: the window profile chooses the harness."""
     import lib
 
-    base_path = lib.ensure_profile_settings(profile)
-    source = Path(base_path) if base_path else _settings_path_from_command(command)
-    if source and source.is_file():
-        settings = json.loads(source.read_text(encoding="utf-8"))
-    else:
-        settings = lib.harness_base_settings()
-    if not isinstance(settings, dict):
-        settings = {}
-    hooks = settings.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        hooks = settings["hooks"] = {}
-    pre = hooks.setdefault("PreToolUse", [])
-    if not isinstance(pre, list):
-        pre = hooks["PreToolUse"] = []
-    command_hook = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).resolve()))} hook"
-    pre.append({"hooks": [{"type": "command", "command": command_hook}]})
-    folder = conference._ensure_dir(conference.state_dir() / "settings")
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(profile or "claude")) or "claude"
-    path = folder / f"conference-{safe}.json"
-    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-                    encoding="utf-8")
-    conference._chmod(path)
-    return path
-
-
-def _replace_settings(command, path):
-    """Point the command at the merged settings, replacing an explicit `--settings` when present."""
-    quoted = shlex.quote(str(path))
-    if re.search(r"--settings(?:=|\s+)(?:(['\"]).*?\1|\S+)", command or ""):
-        return re.sub(r"--settings(?:=|\s+)(?:(['\"]).*?\1|\S+)",
-                      f"--settings {quoted}", command, count=1)
-    return f"{command} --settings {quoted}"
-
-
-def _claude_command(profile):
-    """Headless Claude run with the profile's settings, the conference hook and only two tools."""
-    import lib
-
-    command = lib.profile_command(profile)
-    command = _replace_settings(command, _conference_settings(profile, command))
-    launch = command if profile == "claude" else f"env ENABLE_TOOL_SEARCH=false {command}"
-    system = _t("conference.system_prompt", no_answer=NO_ANSWER,
-                max_files=conference.MAX_FILES_READ, max_steps=conference.MAX_TOOL_STEPS)
-    return (f"{launch} -p --output-format stream-json --verbose --no-session-persistence "
-            f"--permission-mode default "
-            f"--append-system-prompt {shlex.quote(system)} "
-            f"--allowedTools {shlex.quote(ALLOWED_TOOLS)} "
-            f"--disallowedTools {shlex.quote(DISALLOWED_TOOLS)}")
-
-
-def _opencode_permissions():
-    """OpenCode V2 permission rules: everything denied, then the two files allowed.
-
-    `README.md` edits ask instead of allowing: a non-interactive run cannot confirm them, so the
-    direct write does not happen. The Claude path turns the same intent into a pending diff.
-    """
-    return [
-        {"action": "*", "resource": "*", "effect": "deny"},
-        {"action": "external_directory", "resource": "*", "effect": "deny"},
-        {"action": "read", "resource": "README.md", "effect": "allow"},
-        {"action": "read", "resource": "BACKLOG.md", "effect": "allow"},
-        {"action": "edit", "resource": "README.md", "effect": "ask"},
-        {"action": "edit", "resource": "BACKLOG.md", "effect": "allow"},
-    ]
-
-
-def _opencode_config(profile):
-    """Merged OpenCode config for the run: the profile's config plus the conference permissions."""
-    import lib
-
-    settings = {}
-    source = lib.profile_config(profile)
-    if source:
-        try:
-            settings = json.loads(Path(source).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            settings = {}
-    if not isinstance(settings, dict):
-        settings = {}
-    settings["permissions"] = _opencode_permissions()
-    folder = conference._ensure_dir(conference.state_dir() / "settings")
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(profile or "opencode")) or "opencode"
-    path = folder / f"opencode-conference-{safe}.json"
-    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-                    encoding="utf-8")
-    conference._chmod(path)
-    return path
-
-
-def _opencode_command(profile):
-    """Headless OpenCode run with the profile's config and the conference permissions."""
-    import lib
-
-    command = lib.profile_command(profile)
-    config = _opencode_config(profile)
-    return (f"env OPENCODE_CONFIG={shlex.quote(str(config))} {command} "
-            f"run --format json --archived")
+    name = profile or _active_profile() or lib.agent_name()
+    return name, lib.profile_adapter(name)
 
 
 def answer_command(others=None, profile=None):
-    """Command line of the isolated conference agent, with the window profile and its flags.
+    """Command line of the isolated conference agent, through the profile's adapter.
 
     `others` is accepted for compatibility with the old cross-repo conference and deliberately
-    ignored: siblings are out of scope. A Claude profile gets a shell string, like the profile is
-    written in the config (it may carry `env` prefixes, `~` paths and quotes). An OpenCode profile
-    gets its own command; no Claude flag leaks into it."""
-    import lib
-
-    profile = profile or _active_profile() or lib.agent_name()
-    if lib.profile_harness(profile) == lib.HARNESS_OPENCODE:
-        return _opencode_command(profile)
-    return _claude_command(profile)
-
-
-def _clip(text, limit=32):
-    """One-line label for the header; long paths and patterns keep the message readable."""
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
-def _short_path(repo, path):
-    """Path relative to the repo when possible; the basename for anything outside it."""
-    path = str(path or "")
-    try:
-        rel = os.path.relpath(path, repo) if path else ""
-    except (TypeError, ValueError):
-        rel = path
-    if not rel or rel.startswith(".."):
-        rel = os.path.basename(path)
-    return _clip(rel or "?")
-
-
-def _status_label(repo, name, data):
-    """Header label for the tool steps worth showing; "" for everything else."""
-    data = data if isinstance(data, dict) else {}
-    if name == "Read":
-        return _t("conference.status.reading", path=_short_path(repo, data.get("file_path")))
-    if name == "Grep":
-        return _t("conference.status.searching", pattern=_clip(data.get("pattern")))
-    if name == "Glob":
-        return _t("conference.status.looking", pattern=_clip(data.get("pattern")))
-    return ""
-
-
-def _opencode_status(repo, part):
-    """Header label for an OpenCode `tool_use` part; "" when the tool is not worth showing."""
-    part = part if isinstance(part, dict) else {}
-    state = part.get("state") if isinstance(part.get("state"), dict) else {}
-    tool_input = state.get("input") if isinstance(state.get("input"), dict) else {}
-    tool = str(part.get("tool") or "").lower()
-    if tool == "read":
-        return _t("conference.status.reading", path=_short_path(repo, tool_input.get("path")))
-    if tool == "grep":
-        return _t("conference.status.searching", pattern=_clip(tool_input.get("pattern")))
-    if tool == "glob":
-        return _t("conference.status.looking", pattern=_clip(tool_input.get("pattern")))
-    return ""
+    ignored: siblings are out of scope. The adapter owns the command line, so a Claude flag never
+    leaks into an OpenCode profile and vice versa."""
+    name, adapter = _agent(profile)
+    return adapter.command(name)
 
 
 def _set_status(repo, message_id, created, text):
@@ -252,41 +95,10 @@ def _set_status(repo, message_id, created, text):
 
 
 def _stream_answer(stream, repo, on_status=None):
-    """Final text of a Claude stream-json or OpenCode json run, reporting its tool steps."""
-    final = ""
-    texts = []
-    for line in stream:
-        try:
-            event = json.loads(line)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(event, dict):
-            continue
-        kind = event.get("type")
-        if kind == "assistant":
-            message = event.get("message")
-            content = message.get("content") if isinstance(message, dict) else []
-            for block in content or []:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                label = _status_label(repo, block.get("name"), block.get("input"))
-                if label and on_status:
-                    on_status(label)
-                texts = []          # text before a tool call is not the final answer
-        elif kind == "result" and not event.get("is_error"):
-            final = str(event.get("result") or "")
-        elif kind == "text":
-            part = event.get("part") if isinstance(event.get("part"), dict) else {}
-            text = part.get("text")
-            if isinstance(text, str):
-                texts.append(text)
-        elif kind == "tool_use":
-            part = event.get("part") if isinstance(event.get("part"), dict) else {}
-            label = _opencode_status(repo, part)
-            if label and on_status:
-                on_status(label)
-            texts = []
-    return final or "\n\n".join(texts)
+    """Final text of a Claude stream-json or OpenCode json run, reporting its tool steps.
+
+    Kept as the worker-facing name; the parsing belongs to the profile adapter (`src/agents/`)."""
+    return agents.read_stream(stream, repo, on_status)
 
 
 def _budget_state():
@@ -298,14 +110,20 @@ def _budget_state():
     return path
 
 
-def _execute(cmd, repo, prompt, on_status=None, message_id="", profile=""):
+def _execute(cmd, repo, prompt, on_status=None, message_id="", profile="", adapter=None):
     """(answer, stderr, returncode) of the headless run; the prompt comes from stdin.
 
     A watchdog kills the whole process group at TIMEOUT_S. stderr goes to a temporary file so a
     talkative child cannot fill the pipe while stdout is being read. The repo, the message id and
     the budget state file go in the child's environment, so the worker hook sees them; the file is
     removed afterwards. `WS_CONFERENCE_REPO` is deliberately not set: the old budget hook would
-    restrict writes to BACKLOG.md before the README proposal could be captured."""
+    restrict writes to BACKLOG.md before the README proposal could be captured. The stream is read
+    by the profile adapter, so the worker never knows which harness produced it."""
+    if adapter is None:
+        try:
+            _, adapter = _agent(profile)
+        except Exception:
+            adapter = None
     try:
         budget = _budget_state()
     except OSError:
@@ -329,7 +147,11 @@ def _execute(cmd, repo, prompt, on_status=None, message_id="", profile=""):
                     proc.stdin.close()
                 except (BrokenPipeError, OSError):
                     pass
-                out = _stream_answer(proc.stdout, repo, on_status)
+                out = agents.read_stream(proc.stdout, repo, on_status, selected=adapter)
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
                 code = proc.wait()
                 err_file.seek(0)
                 err = err_file.read()
@@ -508,12 +330,13 @@ def answer(repo, prompt, message_id, created, execute=None, others=None, profile
         _blocked(repo, message_id, created, found)
         return False
     try:
-        command = answer_command(others, profile=profile)
+        name, adapter = _agent(profile)
+        run = adapter.prompt(adapter.session(name, repo), prompt)
         if execute:      # tests inject the whole run
-            out, err, code = execute(command, repo, prompt)
+            out, err, code = execute(run.command, repo, run.stdin)
         else:
-            out, err, code = _execute(command, repo, prompt, on_status,
-                                      message_id=message_id, profile=profile or "")
+            out, err, code = _execute(run.command, repo, run.stdin, on_status,
+                                      message_id=message_id, profile=name, adapter=adapter)
     except Exception as exc:     # timeout, missing executable, ...
         out, err, code = "", str(exc), 1
     silent = code == 0 and NO_ANSWER in (out or "")
