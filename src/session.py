@@ -24,10 +24,12 @@ except Exception:       # installed without the reader: the main repo stays unkn
 ROLE = "WS_SESSION_ROLE"
 ROOT = "WS_SESSION_ROOT"
 PROFILE = "WS_SESSION_PROFILE"
+TAB = "WS_SESSION_TAB"
+STATE = "WS_STATE"
 HOME_ROLE = "home"
 REPO_ROLE = "repo"
 
-USAGE = "usage: session.py env <repo>"
+USAGE = "usage: session.py env <repo> [profile] [tab]"
 
 
 def _config_path():
@@ -100,13 +102,15 @@ def environment(repo, main=None):
     return {ROLE: HOME_ROLE if main and root == main else REPO_ROLE, ROOT: root}
 
 
-def prefix(repo, main=None, profile=None):
+def prefix(repo, main=None, profile=None, tab=None):
     """`env WS_SESSION_ROLE=... WS_SESSION_ROOT=...` for a repo, or "" without one.
 
     The `env` form survives both `tmux send-keys` (a shell line) and `shlex.split` + `subprocess`
     (the options popup), so the same launch line works in the two callers. A non-empty `profile` adds
     `WS_SESSION_PROFILE=<profile>` after the role/root pair, so the hook and the permission state can
-    tell which profile a session belongs to.
+    tell which profile a session belongs to. A non-empty `tab` adds `WS_SESSION_TAB=<tab>` and
+    `WS_STATE=<state dir>`: the hook and the OpenCode plugin record the real session id per tab, and
+    the session itself sees the same state directory as the launcher.
     """
     values = environment(repo, main)
     if not values:
@@ -114,6 +118,11 @@ def prefix(repo, main=None, profile=None):
     if profile:
         values = dict(values)
         values[PROFILE] = str(profile)
+    if tab:
+        values = dict(values)
+        values[TAB] = str(tab)
+        values[STATE] = os.environ.get(
+            STATE) or str(Path.home() / ".cache" / "workspace")
     return "env " + " ".join(f"{name}={shlex.quote(value)}" for name, value in values.items())
 
 
@@ -122,10 +131,12 @@ def main(argv=None):
     if argv and argv[0] in ("-h", "--help"):
         print(USAGE)
         return 0
-    if len(argv) != 2 or argv[0] != "env":
+    if len(argv) < 2 or len(argv) > 4 or argv[0] != "env":
         print(USAGE, file=sys.stderr)
         return 2
-    text = prefix(argv[1])
+    text = prefix(argv[1],
+                  profile=argv[2] if len(argv) > 2 and argv[2] else None,
+                  tab=argv[3] if len(argv) > 3 and argv[3] else None)
     if text:
         print(text)
     return 0

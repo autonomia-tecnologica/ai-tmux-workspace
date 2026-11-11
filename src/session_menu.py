@@ -31,7 +31,9 @@ def menu_items(window):
     """[(label, key, command)] of every profile, default first marked with ●, others ○."""
     items = []
     default = lib.agent_name()
-    for profile, key in zip(lib.profile_names(), keys()):
+    names = lib.profile_names()
+    ordered = [default] + [profile for profile in names if profile != default]
+    for profile, key in zip(ordered, keys()):
         marker = "●" if profile == default else "○"
         line = quiet([lib.WS, "session-new", window, profile])
         command = "run-shell -b " + tmux.quote_cmd(["sh", "-c", line])
