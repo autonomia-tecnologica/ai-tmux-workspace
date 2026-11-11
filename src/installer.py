@@ -51,40 +51,29 @@ REQUIRED = ("tmux", "python3", "git", "claude")
 OPTIONAL = ("gh", "nvim", "micro")
 MANIFEST_VERSION = 1
 
-# Item 93: the provider list is exactly these four, in this canonical order (the first one marked
-# becomes `agent`). The installer only adds/updates the marked profiles: older names in an existing
-# config are never renamed or removed.
-PROVIDERS = ("claude", "claude-deepseek", "opencode-deepseek", "opencode-free")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/anthropic"
-DEEPSEEK_VAULT = "pass show deepseek/api-key"   # the credential stays in the vault (F08)
+# Item 107: the provider list is exactly these five, in this canonical order (the first one marked
+# is the suggested default). Only `claude` uses the Claude harness; every external provider runs
+# through OpenCode and takes its credential from the OpenCode auth store, never from this config.
+PROVIDERS = ("claude", "opencode-claude", "opencode-deepseek", "opencode-openrouter", "opencode-free")
 PROVIDER_PROFILES = {
     "claude": "claude",
-    "claude-deepseek": {
-        "command": "claude",
-        "settings": {
-            "env": {
-                "ANTHROPIC_BASE_URL": DEEPSEEK_BASE_URL,
-                "ANTHROPIC_MODEL": "deepseek-flash",
-                # Opus slot: the strongest model, chosen with /model opus
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-flash",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash",
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
-                "DISABLE_TELEMETRY": "1",
-                "DISABLE_ERROR_REPORTING": "1",
-            },
-            "model": "deepseek-flash",
-            # No `permissions.defaultMode` and no bypass: the vault command is the only credential
-            # the generated settings carry.
-            "apiKeyHelper": DEEPSEEK_VAULT,
-        },
+    "opencode-claude": {
+        "harness": "opencode",
+        "command": "opencode",
+        "config": "~/.config/ai-tmux-workspace/opencode-claude.json",
+        "model": "anthropic/claude-sonnet-5-5",
     },
     "opencode-deepseek": {
         "harness": "opencode",
         "command": "opencode",
         "config": "~/.config/ai-tmux-workspace/opencode-deepseek.json",
         "model": "deepseek/deepseek-flash",
+    },
+    "opencode-openrouter": {
+        "harness": "opencode",
+        "command": "opencode",
+        "config": "~/.config/ai-tmux-workspace/opencode-openrouter.json",
+        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
     },
     "opencode-free": {
         "harness": "opencode",
@@ -93,6 +82,16 @@ PROVIDER_PROFILES = {
         "model": "opencode/deepseek-v4.1-flash-free",
     },
 }
+
+# Item 107: names from the earlier catalog, migrated once in an existing config. Only these keys
+# move (the profile value, including its `config` path, stays as it is); every other key is kept.
+LEGACY_PROFILE_RENAMES = {
+    "opencode": "opencode-deepseek",
+    "openrouter": "opencode-openrouter",
+}
+LEGACY_DEEPSEEK = "deepseek"
+LEGACY_DEEPSEEK_TARGET = "opencode-deepseek"
+LEGACY_DEEPSEEK_HOST = "deepseek.com"
 
 # Package names per manager; only shown to the person, never executed by the assistant.
 PACKAGE_NAMES = {
@@ -197,6 +196,42 @@ def example_config():
     data = read_config_file(ROOT / "config" / "config.example.yaml")
     data.pop("profiles", None)
     return data
+
+
+def is_legacy_claude_deepseek(profile):
+    """True only for the old Claude+DeepSeek profile: the Claude harness pointed at DeepSeek."""
+    if not isinstance(profile, dict) or profile.get("command") != "claude":
+        return False
+    settings = profile.get("settings")
+    if not isinstance(settings, dict):
+        return False
+    env = settings.get("env")
+    base_url = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+    if not isinstance(base_url, str):
+        base_url = settings.get("base_url")
+    return isinstance(base_url, str) and LEGACY_DEEPSEEK_HOST in base_url.lower()
+
+
+def migrate_legacy_profiles(profiles, agent):
+    """Apply the known legacy renames/removals to an existing config, in place.
+
+    A rename happens only when the canonical key is absent, so a config that already has both keeps
+    both. `deepseek` is removed only when it is the old Claude+DeepSeek profile; a homonym from
+    another harness is preserved. Returns the applied old->new map and the matching `agent`.
+    """
+    applied = {}
+    if not isinstance(profiles, dict):
+        return applied, agent
+    for old, new in LEGACY_PROFILE_RENAMES.items():
+        if old in profiles and new not in profiles:
+            profiles[new] = profiles.pop(old)
+            applied[old] = new
+    if LEGACY_DEEPSEEK in profiles and is_legacy_claude_deepseek(profiles[LEGACY_DEEPSEEK]):
+        del profiles[LEGACY_DEEPSEEK]
+        applied[LEGACY_DEEPSEEK] = LEGACY_DEEPSEEK_TARGET
+    if isinstance(agent, str) and agent in applied:
+        agent = applied[agent]
+    return applied, agent
 
 
 def state_dir():
@@ -386,9 +421,24 @@ class UI:
             elif token in PROVIDERS:
                 chosen.add(token)
             else:
-                self.error(t("installer.providers.invalid", option=token))
+                self.error(t("installer.providers.invalid", option=token, count=len(PROVIDERS)))
                 raise Aborted()
         return [name for name in PROVIDERS if name in chosen]
+
+    def default_profile(self, key, names):
+        """Choose the default profile among the marked ones; an empty answer keeps the first."""
+        options = "\n".join(f"  {index}. {name}" for index, name in enumerate(names, 1))
+        self.out.write(t(key, options=options, default=names[0]) + t("installer.answer.text_hint"))
+        answer = self._answer()
+        if not answer:
+            return names[0]
+        token = answer.split()[0].lower()
+        if token.isdigit() and 1 <= int(token) <= len(names):
+            return names[int(token) - 1]
+        if token in names:
+            return token
+        self.error(t("installer.default.invalid", option=token, count=len(names)))
+        raise Aborted()
 
 
 # --- manifest and backup -----------------------------------------------------------------------
@@ -723,12 +773,13 @@ class Assistant:
                            dir=display(HOME / COMPLETION_DIR)))
 
     def install_config(self):
-        """Ask the two item 93 questions and seed/update only what was chosen.
+        """Ask the item 93/107 questions and seed/update only what was chosen.
 
-        Before writing anything: whether the workspace manages the agent options (`manage`) and
-        which providers to include. An existing config keeps every other key and every profile it
-        already had; the marked profiles are added or updated. The install never seeds the whole
-        example, so unmarked providers are not written."""
+        Before writing anything: whether the workspace manages the agent options (`manage`), which
+        providers to include, and which marked profile is the default. An existing config keeps
+        every other key and every profile it already had; the known legacy names are migrated and
+        the marked profiles are added or updated. The install never seeds the whole example, so
+        unmarked providers are not written."""
         self.ui.section(t("installer.config.title"))
         path = config_path()
         legacy = legacy_config_path()
@@ -742,7 +793,8 @@ class Assistant:
         else:
             self.harness_managed = self.ui.yes_no("installer.harness_managed.question")
         selected = self.ui.providers("installer.providers.question")
-        agent = selected[0] if selected else "claude"
+        default = (self.ui.default_profile("installer.default.question", selected)
+                   if selected else None)
         if existing:
             try:
                 data = read_config_file(path)
@@ -756,8 +808,13 @@ class Assistant:
         profiles = data.get("profiles")
         if not isinstance(profiles, dict):
             profiles = {}
+        _applied, agent = migrate_legacy_profiles(profiles, data.get("agent"))
         for name in selected:
             profiles[name] = copy.deepcopy(PROVIDER_PROFILES[name])
+        if default:
+            agent = default
+        if not agent:
+            agent = "claude"
         data["manage"] = self.manage
         data["harness_managed"] = self.harness_managed
         data["agent"] = agent

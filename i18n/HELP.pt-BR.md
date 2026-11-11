@@ -87,7 +87,8 @@ No painel de sessões:
 - O painel principal abre vazio, com o aviso para abrir uma sessão pelo `+` na tira de abas.
 - `+` (ou `ctrl+b t`) abre o menu de perfis aprovados; a primeira sessão ocupa o painel principal e as seguintes viram abas. Clique/Enter numa aba (ou `ctrl+b n`/`p`) troca; sair da última sessão volta ao aviso.
 - Toda sessão (Claude ou OpenCode) tenta `--continue` para retomar a última do repo.
-- Com `manage: true`, o Claude usa a settings gerada; um perfil `harness: opencode` com `config` usa `OPENCODE_CONFIG`. O `agent` do `config.yaml` é o perfil padrão das novas sessões; mudá-lo não reinicia o workspace.
+- O catálogo do instalador tem `claude`, `opencode-claude`, `opencode-deepseek`, `opencode-openrouter` e `opencode-free`; só o `claude` usa o Claude Code, os demais sobem pelo OpenCode. O instalador pergunta quais incluir e qual é o padrão entre os marcados (sugere o primeiro) e grava a resposta em `agent`.
+- Com `manage: true`, o Claude usa a settings gerada; um perfil `harness: opencode` com `config` usa `OPENCODE_CONFIG`. A credencial dos perfis OpenCode fica no próprio OpenCode (`opencode auth login anthropic`, `opencode auth login openrouter` ou `opencode auth login deepseek`), nunca no `config.yaml`. O `agent` do `config.yaml` é o perfil padrão das novas sessões; mudá-lo não reinicia o workspace.
 - Foco na tira (`ctrl+b ↑`): ←→ move, Enter ativa.
 
 No TERMINAL, a tira de abas funciona como antes: `+` (ou `ctrl+b t`, com o foco no painel) abre uma aba temporária no mesmo repo. Abas de sessão e de terminal não são restauradas no `restart`.
