@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -197,6 +198,73 @@ class SessionTest(unittest.TestCase):
         without = self.lib("profile-cmd", "claude")
         self.assertEqual(without.returncode, 0, without.stderr)
         self.assertNotIn("WS_SESSION_ROLE", without.stdout)
+
+    # --- agent binary found without the interactive PATH (item 105) -----------------------------
+    def opencode_free(self):
+        self.config.write_text(json.dumps({
+            "main": str(self.main),
+            "agent": "opencode-free",
+            "profiles": {
+                "claude": "claude",
+                "opencode-free": {"harness": "opencode", "command": "opencode",
+                                  "config": "~/.config/ai-tmux-workspace/opencode-free.json"},
+            },
+        }), encoding="utf-8")
+
+    def fake_opencode(self):
+        bindir = self.home / ".opencode" / "bin"
+        bindir.mkdir(parents=True)
+        binary = bindir / "opencode"
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+        return bindir, binary
+
+    @staticmethod
+    def launch_env(line):
+        return dict(arg.split("=", 1) for arg in shlex.split(line) if "=" in arg)
+
+    def test_opencode_launch_adds_the_existing_user_bin_dirs_to_path(self):
+        self.opencode_free()
+        bindir, binary = self.fake_opencode()
+        path = f"/usr/bin{os.pathsep}/bin"
+        proc = self.lib("profile-cmd", "opencode-free", str(self.repo), PATH=path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout.strip()
+        exports = self.launch_env(out)
+        self.assertEqual(exports["PATH"], f"{path}{os.pathsep}{bindir}")
+        self.assertEqual(shutil.which("opencode", path=exports["PATH"]), str(binary))
+        self.assertEqual(exports["OPENCODE_CONFIG"],
+                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode-free.json"))
+        self.assertTrue(out.endswith(" opencode"))
+
+    def test_opencode_launch_does_not_repeat_bin_dirs_already_in_path(self):
+        self.opencode_free()
+        bindir, _ = self.fake_opencode()
+        extra = self.home / "bin"
+        extra.mkdir()
+        path = f"{bindir}{os.pathsep}/usr/bin"
+        proc = self.lib("profile-cmd", "opencode-free", str(self.repo), PATH=path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        exports = self.launch_env(proc.stdout.strip())
+        self.assertEqual(exports["PATH"], f"{path}{os.pathsep}{extra}")
+        self.assertEqual(exports["PATH"].split(os.pathsep).count(str(bindir)), 1)
+
+    def test_opencode_launch_keeps_the_recorded_identity(self):
+        self.opencode_free()
+        bindir, _ = self.fake_opencode()
+        proc = self.lib("session-command", "opencode-free", str(self.repo),
+                        PATH=f"/usr/bin{os.pathsep}/bin")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        saved = json.loads((self.state / "agent.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved[str(self.repo)]["command"], "opencode [opencode-free]")
+        self.assertNotIn(str(bindir), json.dumps(saved))
+
+    def test_claude_launch_does_not_add_the_path(self):
+        (self.home / ".opencode" / "bin").mkdir(parents=True)
+        proc = self.lib("profile-cmd", "claude", str(self.repo),
+                        PATH=f"/usr/bin{os.pathsep}/bin")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("PATH=", proc.stdout)
 
     def test_identity_is_recorded_without_the_session_prefix(self):
         self.assertEqual(self.lib("opening-command", str(self.main)).returncode, 0)

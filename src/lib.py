@@ -395,6 +395,29 @@ def ensure_profile_settings(name=None):
     return path
 
 
+# Usual per-user binary folders that a tmux server started without the interactive shell may lack:
+# the rc that appends `~/.opencode/bin` never runs, so `env opencode` exits with "No such file or
+# directory". They are added to the launch line's PATH when they exist and are missing from it.
+AGENT_BIN_DIRS = ("~/.opencode/bin", "~/.local/bin", "~/bin", "~/.bun/bin")
+
+
+def agent_path(path=None):
+    """PATH (the current one by default) plus the existing AGENT_BIN_DIRS missing from it.
+
+    Entries are compared after `normpath`, so a folder already present is never added twice. The
+    user and the cwd stay untouched: only the launch line's environment changes."""
+    entries = (os.environ.get("PATH", "") if path is None else path).split(os.pathsep)
+    seen = {os.path.normpath(entry) for entry in entries if entry}
+    for folder in AGENT_BIN_DIRS:
+        full = os.path.expanduser(folder)
+        key = os.path.normpath(full)
+        if key in seen or not os.path.isdir(full):
+            continue
+        entries.append(full)
+        seen.add(key)
+    return os.pathsep.join(entries)
+
+
 def agent_launch_command(mode="", repo=None, profile=None):
     """Command line that actually launches one profile's agent.
 
@@ -403,7 +426,8 @@ def agent_launch_command(mode="", repo=None, profile=None):
     command already passes one; profiles other than `claude` run with tool search off; `mode` is added
     as `--permission-mode` when given. With `manage: false` the Claude command runs exactly as the
     profile declares it (no settings, mode or tool search). OpenCode harness: none of the Claude flags
-    apply; the profile's `config` is exported as `OPENCODE_CONFIG`.
+    apply; the profile's `config` is exported as `OPENCODE_CONFIG`, and `PATH` gains the existing
+    user binary folders that the tmux server's PATH may be missing (`agent_path`).
 
     With `repo`, the line is prefixed with the session box (`WS_SESSION_ROLE`/`WS_SESSION_ROOT`/
     `WS_SESSION_PROFILE` from `src/session.py`), so the hook and the OpenCode plugin enforce the same
@@ -416,7 +440,13 @@ def agent_launch_command(mode="", repo=None, profile=None):
         raise SettingsError(t("settings.err.secret_value", path=f"profiles[{name}].command"))
     if not is_claude_harness(name):
         config = profile_config(name)
-        launch = f"env OPENCODE_CONFIG={shlex.quote(config)} {cmd}" if config else cmd
+        current = os.environ.get("PATH", "")
+        path = agent_path(current)
+        # Only export PATH when it actually grows: an already complete PATH keeps the old line.
+        exports = [f"PATH={shlex.quote(path)}"] if path != current else []
+        if config:
+            exports.append(f"OPENCODE_CONFIG={shlex.quote(config)}")
+        launch = f"env {' '.join(exports)} {cmd}" if exports else cmd
     elif not manage_enabled():
         launch = cmd
     else:
