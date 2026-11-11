@@ -15,7 +15,6 @@
   "session.placeholder.title": "SESSÕES",
   "session.placeholder.hint": "Abra uma sessão pelo + na tira de abas acima.",
   "session.menu.title": "Nova sessão",
-  "session.opened": "Sessão {profile} aberta.",
   "session.unknown": "Perfil desconhecido: {profile}.",
   "session.risk.deepseek.title": "Claude com DeepSeek",
   "session.risk.deepseek.summary": "Deseja mesmo usar Claude com DeepSeek? O Claude muda constantemente o código, e a API pode ficar desatualizada rapidamente. Use por sua conta e risco.",

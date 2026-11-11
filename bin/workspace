@@ -462,7 +462,6 @@ session_new() { # $1=window $2=profile (default: the configured agent)
   fi
   tab_render "$W" s
   mobile_apply "$W"
-  msg session.opened profile="$profile"
   return 0
 }
 

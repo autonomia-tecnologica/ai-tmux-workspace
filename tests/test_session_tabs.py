@@ -35,9 +35,19 @@ class MenuItemsTest(unittest.TestCase):
             items = session_menu.menu_items("%7")
 
         _, _, command = items[0]
-        self.assertEqual(
-            command, "run-shell -b " + tmux.quote_cmd(["/bin/workspace", "session-new", "%7", "claude"]))
+        line = "/bin/workspace session-new %7 claude >/dev/null 2>&1"
+        self.assertEqual(command, "run-shell -b " + tmux.quote_cmd(["sh", "-c", line]))
         self.assertTrue(command.startswith("run-shell -b "))
+
+    def test_item_output_is_discarded_so_no_message_covers_the_new_session(self):
+        with mock.patch.object(session_menu.lib, "profile_names", return_value=["claude", "opencode"]), \
+                mock.patch.object(session_menu.lib, "agent_name", return_value="claude"), \
+                mock.patch.object(session_menu.lib, "WS", "/bin/workspace"):
+            items = session_menu.menu_items("%7")
+
+        for _, _, command in items:
+            with self.subTest(command=command):
+                self.assertIn(">/dev/null 2>&1", command)
 
 
 class SessionLabelsTest(unittest.TestCase):
