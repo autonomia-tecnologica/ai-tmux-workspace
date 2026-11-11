@@ -30,6 +30,10 @@ approved conversation on the next prompt).
 
 This module is stdlib-only at import time: it is imported by the worker itself. The heavier modules
 (lib, help, viewer, i18n) are imported inside the screen and command functions only.
+
+Terminal-ownership exception (raw keys): the request popup reads one key in raw mode; the conference
+screen itself draws through viewer. The raw-mode read is registered, with this reason, in
+tests/test_architecture.py.
 """
 import contextlib
 import difflib

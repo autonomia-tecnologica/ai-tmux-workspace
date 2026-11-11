@@ -7,6 +7,9 @@ Screen: 1 s on a red background with an animated sine wave (get ready), then gre
 live waveform of the captured audio, then a short "transcribing" screen while faster-whisper runs
 offline (src/stt.py, in the venv at ~/.cache/at-whisper/venv, override with AT_WHISPER_VENV).
 Usage: mic.py <window id>
+
+Terminal-ownership exception: the dictation screen owns its loop (full-screen clear and alt-screen)
+instead of painting through viewer. It is registered, with this reason, in tests/test_architecture.py.
 """
 import math
 import os
