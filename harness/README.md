@@ -12,10 +12,14 @@ já declara.
 ## Índice
 
 - [`backlog-format.md`](backlog-format.md) — o formato do `BACKLOG.md`.
+- [`choke-point.md`](choke-point.md) — dono único por efeito: quem desenha, chama `tmux`, escreve
+  arquivo ou formata caminho, a dívida de desenho e o teste de allowlist que só encolhe.
 
 ## Como usar
 
 - Leia só o arquivo que a tarefa pede, e só quando ela pedir. Não leia a pasta inteira.
+- Ao criar ou mover um efeito (desenhar, chamar `tmux`, escrever arquivo, formatar caminho), leia
+  `choke-point.md` antes da primeira linha.
 - O `HARNESS.md` instalado vence este harness em segurança, isolamento e no que ele já declara. O que
   estiver aqui vale como regra deste projeto.
 - Harness é texto; freio é código, e mecanismo não mora no harness.
