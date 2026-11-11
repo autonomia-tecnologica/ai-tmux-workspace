@@ -216,6 +216,27 @@ def agent_command(profile=None):
     return profile_command(profile or agent_name())
 
 
+def profile_adapter(name=None):
+    """ACP-shaped adapter of a profile (`src/agents`), chosen by the profile's harness.
+
+    The window profile is the only selector: a Claude profile gets the Claude adapter and an
+    OpenCode profile gets the OpenCode adapter, so no caller has to know either harness. Imported
+    lazily to keep `lib` free of an import cycle with the adapters."""
+    import agents
+
+    return agents.adapter_for(name or agent_name())
+
+
+def agent_adapter(profile=None):
+    """Alias of `profile_adapter`, for callers that name the argument `profile`."""
+    return profile_adapter(profile)
+
+
+def adapter_for(profile=None):
+    """Alias of `profile_adapter`, matching the `src/agents` entry point name."""
+    return profile_adapter(profile)
+
+
 def agent_identity(profile=None):
     """Recorded identity of a profile for `--continue` and permission-mode decisions.
 

@@ -77,6 +77,14 @@ function decideMany(events, options) {
   return (events || []).map((event) => decide(event, options));
 }
 
+/**
+ * ACP-shaped permission alias: the agent layer's `permission` asks the same central decision, so the
+ * same battery of actions returns the same decision through the Claude hook and this adapter.
+ */
+function permission(event, options) {
+  return decide(event, options);
+}
+
 function opencodeEvent(input, output) {
   const event = {
     tool_name: input && (input.tool || input.toolName || input.name),
@@ -136,6 +144,7 @@ async function plugin(_context) {
 module.exports = plugin;
 module.exports.decide = decide;
 module.exports.decideMany = decideMany;
+module.exports.permission = permission;
 module.exports.before = before;
 module.exports.recordSession = recordSession;
 module.exports.resolveCli = resolveCli;
