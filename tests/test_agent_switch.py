@@ -1,6 +1,7 @@
 """Tests for the per-profile session command (item 97): every profile opens with `--continue ||` and
-falls back to a fresh session; the workspace-generated settings and permission mode only apply to
-managed Claude profiles; the OpenCode harness carries only its own config; the recorded identity is
+falls back to a fresh session; a tab with a recorded id resumes it (an OpenCode tab falls back to
+`--continue` before a fresh session); the workspace-generated settings and permission mode only apply
+to managed Claude profiles; the OpenCode harness carries only its own config; the recorded identity is
 the base line, without the session box. Each test runs `src/lib.py` in a child process with
 temporary HOME, WS_STATE and AT_WS_CONFIG."""
 import json
@@ -155,12 +156,14 @@ class SessionCommandTest(unittest.TestCase):
         self.assertNotEqual(new, "missing-session")
         self.assertIn(new, calls[1])
 
-    def test_opencode_new_tab_starts_a_new_session_and_records_the_tab(self):
+    def test_opencode_new_tab_continues_the_last_session_and_records_the_tab(self):
         self.opencode()
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
+        base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
+                f"env OPENCODE_CONFIG={shlex.quote(str(self.home / 'oc.json'))} opencode")
+        self.assertEqual(out, f"{base} --continue || {base}")
         self.assertIn("WS_SESSION_TAB=tab-2", out)
         self.assertIn(f"WS_STATE={self.state}", out)
-        self.assertNotIn("--continue", out)
         self.assertNotIn("--session ", out)
         self.assertEqual(session_state.read(self.repo)["tabs"][0]["profile"], "oc")
 
@@ -168,12 +171,14 @@ class SessionCommandTest(unittest.TestCase):
         self.opencode()
         session_state.add(str(self.repo), "tab-2", "oc", "sess-oc")
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
+        base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
+                f"env OPENCODE_CONFIG={shlex.quote(str(self.home / 'oc.json'))} opencode")
         self.assertIn("--session sess-oc ||", out)
         self.assertIn("reset-session", out)
-        self.assertNotIn("--continue", out)
+        self.assertIn("--continue ||", out)
         fallback = out.split("||", 1)[1]
         self.assertIn("&&", fallback)
-        self.assertIn(" opencode; }", fallback)
+        self.assertIn(f"{base} --continue || {base}; }}", fallback)
         self.assertNotIn("--session ", fallback)
 
     def test_legacy_two_argument_command_keeps_continue(self):

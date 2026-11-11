@@ -557,8 +557,10 @@ def session_command(profile, repo, tab=""):
     - Claude: a new tab gets `--session-id <id>`; a tab with a recorded id gets
       `--resume <id> || <new id>`, because an id that no longer exists must fall back to a fresh
       session.
-    - OpenCode: a new tab starts a new session; a tab with a recorded id gets
-      `--session <id> || <new session>`.
+    - OpenCode: a new tab continues the last session of the repo
+      (`--continue || <new session>`); a tab with a recorded id gets
+      `--session <id> || <continue || new session>`, so an id that no longer exists falls back
+      to the repo's last session before starting a fresh one.
 
     The permission mode is read and recorded per repo+profile, so two profiles can run in the same
     repo without overwriting each other's mode. OpenCode records the identity in `agent.json` (no
@@ -592,9 +594,10 @@ def session_command(profile, repo, tab=""):
     if session:
         session_state.add(repo, tab, profile, session)
         reset = _state_call(repo, tab)
-        return f"{launch} --session {shlex.quote(session)} || {{ {reset} && {launch}; }}"
+        return (f"{launch} --session {shlex.quote(session)} || "
+                f"{{ {reset} && {launch} --continue || {launch}; }}")
     session_state.add(repo, tab, profile)
-    return launch
+    return f"{launch} --continue || {launch}"
 
 
 def opening_command(repo, profile=None):

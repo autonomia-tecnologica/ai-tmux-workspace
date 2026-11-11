@@ -26,7 +26,7 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 
 tmux para os repos de `groups` do config.yaml. Comando: `workspace`. Na janela de um repo, o painel principal abre as abas de sessão persistidas; sem nenhuma aba persistida, abre uma sessão do perfil padrão (`agent` no config.yaml) e o `+` da tira de sessões abre o menu de perfis aprovados, com o padrão primeiro (comandos em `profiles`,
 ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"). Mudar o perfil padrão pelo menu de opções (Ctrl+b o) não reinicia o
-workspace: só vale para sessões novas. `claude` e `opencode-*` podem ser abertos na mesma janela, cada um na sua aba; cada aba pertence a um perfil e a tira rotula `PERFIL` ou `PERFIL (n)`. Cada aba guarda o próprio id de sessão e volta nele depois de `reload`, `restart` ou de fechar/abrir o workspace: Claude com `--session-id` na primeira abertura e `--resume` ao restaurar, OpenCode com `--session` (o id real é gravado pelo plugin). Id inválido cai para uma sessão nova. O
+workspace: só vale para sessões novas. `claude` e `opencode-*` podem ser abertos na mesma janela, cada um na sua aba; cada aba pertence a um perfil e a tira rotula `PERFIL` ou `PERFIL (n)`. Cada aba guarda o próprio id de sessão e volta nele depois de `reload`, `restart` ou de fechar/abrir o workspace: Claude com `--session-id` na primeira abertura e `--resume` ao restaurar, OpenCode com `--session` (o id real é gravado pelo plugin). No OpenCode, a aba nova continua a última sessão do repo (`--continue`) e um id inválido tenta `--continue` antes de cair para uma sessão nova. O
 servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
@@ -79,7 +79,7 @@ Perfis do harness do Claude que não são o `claude` (por exemplo, um perfil pr�
 
 Todo perfil do harness do Claude — inclusive um perfil próprio que aponte para um endpoint compatível com a Anthropic — abre em `acceptEdits`, o padrão do Claude Code, e nunca em `bypassPermissions` por padrão; sem o classifier, cada comando de Bash pede confirmação. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior. `auto` só é reaplicado em perfil do harness do Claude. Perfis com `harness: opencode` não recebem nenhuma flag de permissão do Claude.
 
-Cada aba tem o próprio id de sessão; uma aba nova abre com `--session-id` (Claude) ou uma sessão nova (OpenCode), e a restauração usa `--resume`/`--session`. Se o id não existir mais, a aba cai para uma sessão nova. Isso não é uma barreira de segurança.
+Cada aba tem o próprio id de sessão; uma aba nova abre com `--session-id` (Claude) ou continua a última sessão do repo com `--continue` (OpenCode), e a restauração usa `--resume`/`--session`. Se o id não existir mais, o Claude cai para uma sessão nova e o OpenCode tenta `--continue` antes de abrir uma. Isso não é uma barreira de segurança.
 
 ## OpenCode
 
@@ -109,7 +109,7 @@ profiles:
     model: opencode/deepseek-v4.1-flash-free
 ```
 
-Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings; as sessões pertencem ao OpenCode. Cada aba abre uma sessão nova; ao restaurar, usa `--session <id>` e cai para sessão nova se o id não existir mais. O id real é gravado pelo plugin do OpenCode em `$WS_STATE/tabs/session-<aba>`. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
+Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings; as sessões pertencem ao OpenCode. Uma aba nova continua a última sessão do repo (`--continue`); ao restaurar, usa `--session <id>` e, se o id não existir mais, tenta `--continue` antes de abrir uma sessão nova. O id real é gravado pelo plugin do OpenCode em `$WS_STATE/tabs/session-<aba>`. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
 
 A credencial do provider fica no próprio OpenCode (`opencode auth login anthropic`, `opencode auth login openrouter` ou `opencode auth login deepseek`; gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). Nenhuma chave entra no `config.yaml`. O perfil declara `model`: `anthropic/claude-sonnet-5-5` (`opencode-claude`), `deepseek/deepseek-flash` (`opencode-deepseek`), `openrouter/deepseek/deepseek-v4-flash-0731` (`opencode-openrouter`) e `opencode/deepseek-v4.1-flash-free` (`opencode-free`); o arquivo de config do OpenCode aponta para o mesmo modelo.
 
