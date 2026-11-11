@@ -27,7 +27,8 @@ An empty list does not open the menu. An inactive item is dimmed and Enter on it
 Text input: `on_input(viewer, key)` runs before navigation and returns True when it consumed the key;
 `footer(viewer)` draws the footer where the screen shows the text being typed. The footer wraps its
 text and grows as needed, up to `MAX_FOOTER_LINES`; past that, it keeps the end visible (the cursor
-of a message box is at the end).
+of a message box is at the end). A viewer can pass `max_footer_lines=None` to use all the available
+height instead (the files panel shows the full path there).
 """
 import os
 import re
@@ -130,8 +131,10 @@ def close_on_esc(v, k):
 
 class Viewer:
     def __init__(self, collect, interval=2.0, cursor=False, on_enter=None, initial_key=None,
-                 on_key=None, on_focus_lost=None, footer=None, actions=None, wrap=False, on_input=None):
+                 on_key=None, on_focus_lost=None, footer=None, actions=None, wrap=False, on_input=None,
+                 max_footer_lines=MAX_FOOTER_LINES):
         self.collect, self.interval, self.cursor = collect, interval, cursor
+        self.max_footer_lines = max_footer_lines   # None: the footer may use all the available height
         self.wrap = wrap        # up on the first row goes to the last, down on the last goes to the first
         self.on_enter, self.on_key, self.on_focus_lost = on_enter, on_key, on_focus_lost
         self.on_input = on_input  # on_input(viewer, key) -> True when it consumed the key (text input)
@@ -205,7 +208,8 @@ class Viewer:
         if self.footer:
             room = max(0, height - n_header - 1)     # at least the separator plus one text row
             if room:
-                footer_rows = self._footer_lines(cols, min(room, MAX_FOOTER_LINES))
+                limit = room if self.max_footer_lines is None else min(room, self.max_footer_lines)
+                footer_rows = self._footer_lines(cols, limit)
                 self._footer_rows = len(footer_rows) + 1
         h = max(0, height - n_header - self._footer_rows)
         self.top = max(0, min(self.top, max(0, len(body) - h)))

@@ -124,13 +124,14 @@ RENAME = {"active": False, "key": None, "name": ""}
 
 
 def footer(v):
-    """Full name of the selected entry (the row itself is cut at the pane width). While renaming,
-    shows the prompt and the inline buffer with a block cursor."""
+    """Absolute path of the selected entry in bold (the row itself is cut at the pane width). While
+    renaming, shows the prompt and the inline buffer with a block cursor."""
     if RENAME["active"]:
         return f"{B}{t('tree.rename_prompt')}{R} {RENAME['name']}█"
     if not v.key or v.key[1] == REPO:
         return ""
-    return os.path.relpath(v.key[1], REPO) + ("/" if v.key[0] == "d" else "")
+    path = os.path.abspath(v.key[1])
+    return f"{B}{path}{'/' if v.key[0] == 'd' else ''}{R}"
 
 
 def _popup_command(choice, path):
@@ -290,4 +291,4 @@ def on_key(v, k):
 
 if __name__ == "__main__":
     Viewer(collect, interval=2.0, cursor=True, on_enter=enter, on_key=on_key, initial_key=("d", REPO), footer=footer,
-           actions=actions, on_input=on_input).run()
+           actions=actions, on_input=on_input, max_footer_lines=None).run()
