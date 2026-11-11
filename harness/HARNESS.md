@@ -37,6 +37,12 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Código em inglês; texto ao usuário por i18n (pt-BR principal).
 - Nada fixo da demanda no código: entra por argumento ou `config.json`.
 - Um script por tarefa, não por caso; estender o que já existe.
+- Todo efeito (desenhar na tela, chamar tmux, escrever arquivo, formatar caminho) tem um dono; o
+  resto pede a ele.
+- Antes de implementar, rode o grep do efeito e diga qual é o dono; se já existe, altere o dono, não
+  crie outro.
+- Se importar o dono dá trabalho, conserte o dono, não copie; exceção só declarada no arquivo.
+- Quem coleta não pinta: o painel devolve dados e o dono desenha.
 - Script reutilizável fica na pasta de scripts do repo, não em temporário.
 - Pasta de scripts tem README; atualizar ao criar, renomear ou remover.
 
