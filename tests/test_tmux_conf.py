@@ -6,7 +6,10 @@ windows resizes the new window but fires no client hook, so without a window/ses
 kept the desktop pane layout squeezed into its width (no zoom) until some client event happened.
 These tests read config/tmux.conf and bin/workspace; they need no tmux server.
 """
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -156,6 +159,84 @@ class LayoutOwnerTest(unittest.TestCase):
 
     def test_reload_does_not_refresh_the_client(self):
         self.assertNotIn("refresh-client", self.functions["reload"])
+
+
+class FitLockTest(unittest.TestCase):
+    """`fit` takes its lock before the first tmux call: a hook burst must not open one connection to
+    the server each (that is how a resize loop piled up processes and exhausted the server's fds)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = functions(BIN.read_text(encoding="utf-8"))["fit"]
+
+    def test_takes_the_lock_before_any_tmux_call(self):
+        first_tmux = re.search(r"(?m)^\s*tmux\b", self.body)
+        self.assertIsNotNone(first_tmux, self.body)
+        self.assertIn('mkdir "$lock"', self.body)
+        self.assertLess(self.body.index('mkdir "$lock"'), first_tmux.start())
+
+    def test_stale_lock_is_removed_and_the_mkdir_retried_once(self):
+        self.assertIn("kill -0", self.body)
+        first = self.body.index('mkdir "$lock"')
+        second = self.body.index('mkdir "$lock"', first + 1)
+        self.assertLess(self.body.index('rm -rf "$lock"', first), second)
+
+    def test_trap_releases_the_lock_before_the_server_is_contacted(self):
+        trap = 'trap \'rm -rf "$lock"\' EXIT'
+        self.assertIn(trap, self.body)
+        self.assertLess(self.body.index(trap), self.body.index("has-session"))
+
+
+# Fake tmux: logs the subcommand and answers only what `fit` needs, with an empty window list (no
+# layout_apply). TMUX_SLEEP widens the window the lock holder keeps, TMUX_NO_SESSION fakes no server.
+FAKE_TMUX = """#!/bin/sh
+cmd="$1"
+[ "$1" = "-L" ] && cmd="$3"
+printf '%s\\n' "$cmd" >> "$TMUX_LOG"
+case "$cmd" in
+  has-session) sleep "${TMUX_SLEEP:-0}"; [ -z "${TMUX_NO_SESSION:-}" ] || exit 1 ;;
+  display) printf '/tmp/fake-tmux.sock,1,0\\n' ;;
+esac
+exit 0
+"""
+
+
+class FitBurstTest(unittest.TestCase):
+    """50 concurrent fits reach the server at most once; the lock is always released on exit."""
+
+    PROFILE = "fit-burst"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        bindir = self.root / "bin"
+        bindir.mkdir()
+        self.log = self.root / "tmux.log"
+        fake = bindir / "tmux"
+        fake.write_text(FAKE_TMUX, encoding="utf-8")
+        fake.chmod(0o755)
+        self.env = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+                        TMPDIR=self.tmp.name, TMUX_LOG=str(self.log))
+        self.env.pop("TMUX", None)
+        self.lock = self.root / f"ws-fit-{self.PROFILE}-{os.getuid()}"
+
+    def test_a_burst_of_concurrent_fits_opens_one_connection(self):
+        procs = [subprocess.Popen([str(BIN), "fit", self.PROFILE], env=dict(self.env, TMUX_SLEEP="1.5"),
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 for _ in range(50)]
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=30), 0)
+        calls = self.log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(calls.count("has-session"), 1, calls)
+        self.assertEqual(calls[0], "has-session", calls)
+        self.assertFalse(self.lock.exists())
+
+    def test_lock_is_released_when_the_server_does_not_exist(self):
+        subprocess.run([str(BIN), "fit", self.PROFILE], env=dict(self.env, TMUX_NO_SESSION="1"),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        self.assertEqual(self.log.read_text(encoding="utf-8").splitlines(), ["has-session"])
+        self.assertFalse(self.lock.exists())
 
 
 if __name__ == "__main__":

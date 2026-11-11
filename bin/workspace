@@ -912,15 +912,23 @@ ensure_window() { # $1=window $2=repo path $3=tree
 # fit runs at a time; layout_apply already no-ops when the geometry did not change.
 fit() {
   local profile="${1:-claude}" sock="ws-${1:-claude}" W   # lock stays global: the EXIT trap uses it
+  # The lock comes before any tmux call: a burst of hooks must not open one connection to the server
+  # each (a stuck server would pile up processes and fds). Everyone but the holder exits untouched.
+  lock="${TMPDIR:-/tmp}/ws-fit-$profile-$(id -u)"
+  if ! mkdir "$lock" 2>/dev/null; then
+    # stale lock (the previous fit died before its EXIT trap): drop it and try the mkdir once more
+    if [ -f "$lock/pid" ] && ! kill -0 "$(cat "$lock/pid")" 2>/dev/null; then
+      rm -rf "$lock"
+      mkdir "$lock" 2>/dev/null || return 0
+    else
+      return 0
+    fi
+  fi
+  trap 'rm -rf "$lock"' EXIT
+  echo $$ >"$lock/pid"
   tmux -L "$sock" has-session -t "$profile" 2>/dev/null || return 0
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PROFILE="$profile"
-  lock="${TMPDIR:-/tmp}/ws-fit-$profile-$(id -u)"
-  if ! mkdir "$lock" 2>/dev/null; then
-    if [ -f "$lock/pid" ] && ! kill -0 "$(cat "$lock/pid")" 2>/dev/null; then rm -rf "$lock"; fi   # stale lock
-    return 0
-  fi
-  echo $$ >"$lock/pid"; trap 'rm -rf "$lock"' EXIT
   while read -r W; do layout_apply "$W"; done < <(tmux list-windows -t "$profile:" -F '#{window_id}')
 }
 
