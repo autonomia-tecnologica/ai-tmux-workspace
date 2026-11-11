@@ -4,8 +4,10 @@
 In `side` mode the tabs are fixed (FILES, SESSIONS, DIFF, GITHUB) and choose what the right panel shows.
 
 Clicking a tab switches, clicking + opens a new session. With the panel focused, ←/→ move the
-cursor (lighter background) between the tabs and the +, and Enter activates. Draws and waits on mouse/keyboard;
-`workspace` restarts this panel (respawn-pane) on every tab change.
+cursor (lighter background) between the tabs and the +, and Enter activates. Draws once and waits;
+on SIGUSR1 (`workspace` signals a tab change, without respawning the panel) or SIGWINCH (a real
+resize) it rereads the state and redraws only what changed. A quiet 60s timeout does the same, so a
+lost signal only delays the redraw.
 """
 import os
 import re
@@ -153,80 +155,140 @@ def draw(tabs, active, cursor=None):
     return out.rstrip(" "), map   # no trailing space: on a full-width bar it would wrap and scroll the bar up
 
 
-def main():
+def view_items(tabs):
+    """Keys of the bar, in order: the tabs plus the + when the kind has one."""
+    return [p for p, _ in tabs] + ([] if KIND in NO_PLUS else ["new"])
+
+
+def cursor_index(items, active, previous=None):
+    """Keyboard cursor position: keep `previous` when it still exists, else the active tab."""
+    if previous in items:
+        return items.index(previous)
+    return items.index(active) if active in items else 0
+
+
+def load(view):
+    """Rereads the strip into `view` (win, tabs, active, items, cursor), clamping the cursor.
+
+    Signals arrive after a tab opened, closed or switched, so the captured state must be replaced by
+    a fresh `state()`; the cursor stays on the tab the person had focused while it still exists.
+    """
     win, tabs, active = state()
-    items = [p for p, _ in tabs] + ([] if KIND in NO_PLUS else ["new"])
-    cur = items.index(active) if active in items else 0
-    text, map = draw(tabs, active, items[cur])
+    items = view_items(tabs)
+    cursor = items[cursor_index(items, active, view.get("cursor"))]
+    view.update(win=win, tabs=tabs, active=active, items=items, cursor=cursor)
+    return view
+
+
+def paint(view, first=False):
+    """Draws the bar; returns False and writes nothing when the state did not change."""
+    text, mapping = draw(view["tabs"], view["active"], view["cursor"])
+    if not first and text == view.get("text"):
+        return False
+    view["text"], view["map"] = text, mapping
+    out = "\x1b[?25l\x1b[2J" if first else "\x1b[2J"
+    out += f"\x1b[{PAD + 1};1H" + text
+    if first:
+        out += "\x1b[?1000h\x1b[?1006h"
+    sys.stdout.write(out)
+    sys.stdout.flush()
+    return True
+
+
+def main():
+    view = {}
+    load(view)
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setcbreak(fd)
-    sys.stdout.write("\x1b[?25l\x1b[2J" + f"\x1b[{PAD + 1};1H" + text + "\x1b[?1000h\x1b[?1006h")
-    sys.stdout.flush()
+    paint(view, first=True)
 
-    def open(p):
-        if KIND == "repos" and p.startswith("plugin:"):
-            wid = plugin_window(p)
+    def open(pane):
+        win = view["win"]
+        if KIND == "repos" and pane.startswith("plugin:"):
+            wid = plugin_window(pane)
             if wid:
                 tmux.run("select-window", "-t", wid)
             return
-        if KIND == "repos" and p in ("repos", "sessions") and tmux.run("display", "-p", "-t", win, "#{window_name}").startswith("plugin:"):
+        if KIND == "repos" and pane in ("repos", "sessions") and tmux.run("display", "-p", "-t", win, "#{window_name}").startswith("plugin:"):
             wid = repo_window()
             if wid:
                 tmux.run("select-window", "-t", wid)
-                subprocess.Popen([lib.WS, "left", p, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen([lib.WS, "left", pane, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
-        if KIND == "repos" and p in ("repos", "sessions"):
-            subprocess.Popen([lib.WS, "left", p, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if KIND == "repos" and pane in ("repos", "sessions"):
+            subprocess.Popen([lib.WS, "left", pane, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if KIND in ("repos", "tasks"):
             return
         if KIND == "side":
-            cmd = [lib.WS, "side", p, win]
+            cmd = [lib.WS, "side", pane, win]
         elif KIND == "session":
-            cmd = [lib.WS, "session-menu", win] if p == "new" else [lib.WS, "tab-show", win, p]
+            cmd = [lib.WS, "session-menu", win] if pane == "new" else [lib.WS, "tab-show", win, pane]
         else:
-            cmd = [lib.WS, "tab-new", win, KIND] if p == "new" else [lib.WS, "tab-show", win, p]
+            cmd = [lib.WS, "tab-new", win, KIND] if pane == "new" else [lib.WS, "tab-show", win, pane]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    cursor = [cur]
+    def move(step):
+        items = view["items"]
+        cur = items.index(view["cursor"])
+        view["cursor"] = items[max(0, min(len(items) - 1, cur + step))]
+        paint(view)
 
-    def redraw(*_):   # resize (fit_window) can scroll the bar up: clear and draw again on its row
-        sys.stdout.write("\x1b[2J" + f"\x1b[{PAD + 1};1H" + draw(tabs, active, items[cursor[0]])[0])
-        sys.stdout.flush()
+    # SIGUSR1 comes from `workspace` when a tab changes (the strip is not respawned any more); SIGWINCH
+    # is a real resize. The wakeup fd ends the select; the loop then rereads the state and repaints only
+    # when something changed.
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_w, False)
+    os.set_blocking(wake_r, False)
+    signal.set_wakeup_fd(wake_w)
+    signal.signal(signal.SIGUSR1, lambda *_: None)
+    signal.signal(signal.SIGWINCH, lambda *_: None)
 
-    signal.signal(signal.SIGWINCH, redraw)
+    def consume_wake():
+        try:
+            while os.read(wake_r, 64):
+                pass
+        except BlockingIOError:
+            pass
+
     try:
         buf = b""
         while True:
             try:
-                if not select.select([fd], [], [], 60)[0]:
+                ready = select.select([fd, wake_r], [], [], 60)[0]
+            except InterruptedError:
+                continue
+            if wake_r in ready:
+                consume_wake()
+                load(view)
+                paint(view)
+                if fd not in ready:
                     continue
+            if fd not in ready:   # quiet 60s timeout: reread anyway (paint writes only on change)
+                load(view)
+                paint(view)
+                continue
+            try:
                 buf += os.read(fd, 4096)
             except InterruptedError:
                 continue
             for m in SGR.finditer(buf):
                 b, x, press = int(m.group(1)), int(m.group(2)) - 1, m.group(4) == b"M"
                 if b == 0 and press:
-                    for offset, end, p in map:
+                    for offset, end, pane in view["map"]:
                         if offset <= x <= end:
-                            open(p)
+                            open(pane)
                             break
             buf = SGR.sub(b"", buf)
-            step = 0
             for k in re.findall(rb"\x1b[\[O][CD]|\r|\n|[hl]", buf):
                 d = direction(k.decode("latin1"))
                 if d == "left":
-                    step = -1
+                    move(-1)
                 elif d == "right":
-                    step = 1
+                    move(1)
                 else:
-                    open(items[cur])
-                    continue
-                cur = max(0, min(len(items) - 1, cur + step))
-                cursor[0] = cur
-                sys.stdout.write(f"\x1b[{PAD + 1};1H" + draw(tabs, active, items[cur])[0])
-                sys.stdout.flush()
+                    open(view["cursor"])
             buf = b"" if len(buf) < 64 else buf[-8:]
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)

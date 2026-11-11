@@ -74,5 +74,61 @@ class PlaceholderTest(unittest.TestCase):
                          (i18n.t("session.placeholder.title"), i18n.t("session.placeholder.hint")))
 
 
+class PanelStateTest(unittest.TestCase):
+    def test_load_rereads_the_state_and_keeps_a_live_cursor(self):
+        view = {"cursor": "%2"}
+        with mock.patch.object(panel_tabs, "state",
+                               return_value=("%9", [("%1", "A"), ("%2", "B"), ("%3", "C")], "%1")):
+            panel_tabs.load(view)
+
+        self.assertEqual(view["win"], "%9")
+        self.assertEqual(view["items"], ["%1", "%2", "%3", "new"])
+        self.assertEqual(view["cursor"], "%2")
+
+    def test_cursor_falls_back_to_the_active_tab_when_its_tab_is_gone(self):
+        view = {"cursor": "%2"}
+        with mock.patch.object(panel_tabs, "state",
+                               return_value=("%9", [("%1", "A"), ("%3", "C")], "%3")):
+            panel_tabs.load(view)
+
+        self.assertEqual(view["cursor"], "%3")
+
+    def test_cursor_index_is_clamped_without_an_active_tab(self):
+        self.assertEqual(panel_tabs.cursor_index(["%1", "new"], "gone"), 0)
+        self.assertEqual(panel_tabs.cursor_index(["%1", "new"], "gone", "%1"), 0)
+
+
+class _Out:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, text):
+        self.writes.append(text)
+
+    def flush(self):
+        pass
+
+
+class PanelPaintTest(unittest.TestCase):
+    def test_unchanged_state_draws_nothing(self):
+        view = {"tabs": [("%1", "A")], "active": "%1", "cursor": "%1"}
+        out = _Out()
+        with mock.patch.object(panel_tabs.sys, "stdout", out):
+            self.assertTrue(panel_tabs.paint(view, first=True))
+            self.assertFalse(panel_tabs.paint(view))
+
+        self.assertEqual(len(out.writes), 1)
+
+    def test_changed_state_draws_again(self):
+        view = {"tabs": [("%1", "A")], "active": "%1", "cursor": "%1"}
+        out = _Out()
+        with mock.patch.object(panel_tabs.sys, "stdout", out):
+            panel_tabs.paint(view, first=True)
+            view["tabs"] = [("%1", "A"), ("%2", "B")]
+            self.assertTrue(panel_tabs.paint(view))
+
+        self.assertEqual(len(out.writes), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
