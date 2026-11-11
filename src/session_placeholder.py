@@ -4,6 +4,10 @@
 Draws the SESSÕES title and hint and redraws them on SIGWINCH; it never spawns a shell. It reads
 only the two session.placeholder i18n keys (with a literal fallback) and does not import lib/tmux,
 so it keeps working while the workspace panels are reloading.
+
+Terminal-ownership exception (legitimate): it draws the placeholder itself so it survives a reload
+without lib/tmux, and it is named with this reason in tests/test_architecture.py, not left as a
+silent second owner.
 """
 import signal
 import sys

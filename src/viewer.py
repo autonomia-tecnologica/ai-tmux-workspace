@@ -4,6 +4,22 @@ No full-screen clear/refresh (that is what leaves character artifacts). Each pan
 `collect(viewer) -> (header, body)` — run on a thread, from time to time — and the main loop only
 draws, scrolls and handles keyboard/mouse.
 
+Terminal effects have a single owner: this module. A panel never paints; it returns rows from
+`collect(viewer)` and the owner draws them. The contract is the table below:
+
+    effect                owner
+    --------------------  -------------------------------------------------------------
+    drawing rows          Viewer._draw, the only writer of screen rows
+    full-screen clear     Viewer (not used: it repaints only the rows that changed)
+    alt-screen            Viewer.run: enters `?1049h` and restores the screen on exit
+    SIGWINCH redraw       Viewer.run wakes the loop; the next `_draw` repaints from state
+    cursor / mouse        Viewer.run: enables 1000/1006/1004 and restores them on exit
+    raw input             Viewer.run: cbreak via termios/tty, read in the main loop
+
+The known exceptions (modules that still own a terminal loop) are named, with the reason for each
+one, in tests/test_architecture.py; that list only shrinks as every panel migrates to
+`collect(viewer)`.
+
 Context menu: with `actions(viewer, key) -> [(label, active, action)]`, Space or a right click on an
 item opens an overlay; arrows/j/k navigate, Enter runs `action(viewer, key)`, Esc closes.
 An empty list does not open the menu. An inactive item is dimmed and Enter on it just closes.

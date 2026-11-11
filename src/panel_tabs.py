@@ -8,6 +8,10 @@ cursor (lighter background) between the tabs and the +, and Enter activates. Dra
 on SIGUSR1 (`workspace` signals a tab change, without respawning the panel) or SIGWINCH (a real
 resize) it rereads the state and redraws only what changed. A quiet 60s timeout does the same, so a
 lost signal only delays the redraw.
+
+Terminal-ownership exception: it paints the strip itself (full clear + cbreak) instead of returning
+`collect(viewer)` rows. It is registered, with this reason, in tests/test_architecture.py until that
+debt is paid.
 """
 import os
 import re
