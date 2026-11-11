@@ -161,6 +161,31 @@ class LayoutOwnerTest(unittest.TestCase):
         self.assertNotIn("refresh-client", self.functions["reload"])
 
 
+class BuildWindowTest(unittest.TestCase):
+    """A new repo window is mounted off screen and only revealed once it is assembled, so no pane or
+    placeholder respawn is seen appearing one at a time."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = BIN.read_text(encoding="utf-8")
+        cls.functions = functions(cls.text)
+
+    def test_build_window_creates_the_window_hidden(self):
+        self.assertIn("new-window -d", self.functions["build_window"])
+
+    def test_build_window_selects_only_after_sessions_layout_and_shells(self):
+        body = self.functions["build_window"]
+        select = body.index("select-window")
+        for step in ("open_sessions", "layout_apply", "shells_start"):
+            with self.subTest(step=step):
+                self.assertLess(body.index(step), select, f"{step} must run before select-window")
+
+    def test_build_window_with_dash_d_stays_hidden(self):
+        body = self.functions["build_window"]
+        self.assertRegex(body, r'\[ -n "\$d" \] && return')
+        self.assertLess(body.index(r'[ -n "$d" ] && return'), body.index("select-window"))
+
+
 class SessionFastFailTest(unittest.TestCase):
     """A session that dies right after launch (bad settings, missing binary) must not relaunch the
     default profile every few seconds: the last one leaves the placeholder and a status warning."""
