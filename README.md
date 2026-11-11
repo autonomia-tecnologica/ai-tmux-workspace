@@ -24,9 +24,9 @@ A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/
 
 **Configuração:** um único `~/.config/ai-tmux-workspace/config.yaml` (`manage`, `profiles`, `main`, `groups` e `prompts`; modelo em `config/config.example.yaml`). O repo guarda só a estrutura. Outro caminho: `AT_WS_CONFIG`. Quem ainda tem o `settings.json` antigo pode migrar pela tela de opções (`ctrl+b o`).
 
-tmux para os repos de `groups` do config.yaml. Comando: `workspace`. Na janela de um repo, o painel principal abre vazio e o `+` da tira de sessões abre o menu de perfis aprovados; o perfil padrão das novas sessões é `agent` no config.yaml (comandos em `profiles`,
+tmux para os repos de `groups` do config.yaml. Comando: `workspace`. Na janela de um repo, o painel principal abre as abas de sessão persistidas; sem nenhuma aba persistida, abre uma sessão do perfil padrão (`agent` no config.yaml) e o `+` da tira de sessões abre o menu de perfis aprovados, com o padrão primeiro (comandos em `profiles`,
 ex.: `claude`, ou o mapa com `command` e `settings` descrito em "Settings gerada do agente"). Mudar o perfil padrão pelo menu de opções (Ctrl+b o) não reinicia o
-workspace: só vale para sessões novas. `claude` e `opencode-*` podem ser abertos na mesma janela, cada um na sua aba; cada aba pertence a um perfil e a tira rotula `PERFIL` ou `PERFIL (n)`. Toda sessão (Claude ou OpenCode) abre com `<linha> --continue || <linha>`: tenta retomar a última sessão do repo e cai para sessão nova se falhar. O
+workspace: só vale para sessões novas. `claude` e `opencode-*` podem ser abertos na mesma janela, cada um na sua aba; cada aba pertence a um perfil e a tira rotula `PERFIL` ou `PERFIL (n)`. Cada aba guarda o próprio id de sessão e volta nele depois de `reload`, `restart` ou de fechar/abrir o workspace: Claude com `--session-id` na primeira abertura e `--resume` ao restaurar, OpenCode com `--session` (o id real é gravado pelo plugin). Id inválido cai para uma sessão nova. O
 servidor tmux (socket `ws-claude`) é separado do seu tmux normal.
 
     ┌ status: repo • modelo • consumo (5h / 7d, tokens) ───────────────┐
@@ -45,7 +45,7 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `harness/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
 
-`manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (o `--continue` de retomada continua). Sem a chave, o comportamento histórico vale (`manage: true`).
+`manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (a retomada por aba continua). Sem a chave, o comportamento histórico vale (`manage: true`).
 
 `harness_managed` (padrão `true`) é um interruptor separado: com `manage: false` e `harness_managed: true`, o instalador instala o `HARNESS.md` em `~/.local/share/ai-tmux-workspace/harness/` e acrescenta um bloco idempotente em `~/.claude/CLAUDE.md` mandando ler e seguir essa cópia — é o `claude` bruto com o harness apontado, sem settings nem hooks (o `remove.sh` restaura o arquivo). Com `harness_managed: false`, nada é copiado para o harness nem escrito em `~/.claude`. `manage: true` implica `harness_managed: true`, sem pergunta.
 
@@ -75,11 +75,11 @@ Enquanto o harness instalado não existir (item 33), a base vem do `harness/sett
 
 ## Compatibilidade com modelos não-Claude
 
-Perfis do harness do Claude que não são o `claude` (por exemplo, um perfil próprio com endpoint compatível com a Anthropic) sobem com o *tool search* do Claude Code desligado (`ENABLE_TOOL_SEARCH=false`). O motivo é de compatibilidade: o Claude Code grava o estado do tool search no transcript como blocos `tool_addition`/`tool_definition`, e os endpoints compatíveis com a Anthropic desses provedores recusam esse variant (422 em `messages[1].content`), o que quebra o `--continue`. Desligado por padrão, a sessão nova já nasce compatível e a troca de perfil deixa de produzir esse erro. O perfil `claude` não muda; perfis com `harness: opencode` não recebem essa flag.
+Perfis do harness do Claude que não são o `claude` (por exemplo, um perfil próprio com endpoint compatível com a Anthropic) sobem com o *tool search* do Claude Code desligado (`ENABLE_TOOL_SEARCH=false`). O motivo é de compatibilidade: o Claude Code grava o estado do tool search no transcript como blocos `tool_addition`/`tool_definition`, e os endpoints compatíveis com a Anthropic desses provedores recusam esse variant (422 em `messages[1].content`), o que quebra a retomada da sessão (`--continue`/`--resume`). Desligado por padrão, a sessão nova já nasce compatível e a troca de perfil deixa de produzir esse erro. O perfil `claude` não muda; perfis com `harness: opencode` não recebem essa flag.
 
 Todo perfil do harness do Claude — inclusive um perfil próprio que aponte para um endpoint compatível com a Anthropic — abre em `acceptEdits`, o padrão do Claude Code, e nunca em `bypassPermissions` por padrão; sem o classifier, cada comando de Bash pede confirmação. O último modo escolhido é salvo por repo (enquanto a linha de comando do perfil for a mesma) e reaplicado nas aberturas seguintes daquele repo; a troca de perfil não reaplica o modo do perfil anterior. `auto` só é reaplicado em perfil do harness do Claude. Perfis com `harness: opencode` não recebem nenhuma flag de permissão do Claude.
 
-Toda abertura tenta retomar a última sessão do repo com `--continue`; se o endpoint recusar o transcript, abre uma sessão nova. Isso não é uma barreira de segurança.
+Cada aba tem o próprio id de sessão; uma aba nova abre com `--session-id` (Claude) ou uma sessão nova (OpenCode), e a restauração usa `--resume`/`--session`. Se o id não existir mais, a aba cai para uma sessão nova. Isso não é uma barreira de segurança.
 
 ## OpenCode
 
@@ -109,7 +109,7 @@ profiles:
     model: opencode/deepseek-v4.1-flash-free
 ```
 
-Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings; as sessões pertencem ao OpenCode. A abertura tenta `--continue` para pegar a última sessão do repo e cai para sessão nova se não houver. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
+Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings; as sessões pertencem ao OpenCode. Cada aba abre uma sessão nova; ao restaurar, usa `--session <id>` e cai para sessão nova se o id não existir mais. O id real é gravado pelo plugin do OpenCode em `$WS_STATE/tabs/session-<aba>`. O `config` do perfil é exportado como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). Sem `config`, o comando roda como está no perfil.
 
 A credencial do provider fica no próprio OpenCode (`opencode auth login anthropic`, `opencode auth login openrouter` ou `opencode auth login deepseek`; gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). Nenhuma chave entra no `config.yaml`. O perfil declara `model`: `anthropic/claude-sonnet-5-5` (`opencode-claude`), `deepseek/deepseek-flash` (`opencode-deepseek`), `openrouter/deepseek/deepseek-v4-flash-0731` (`opencode-openrouter`) e `opencode/deepseek-v4.1-flash-free` (`opencode-free`); o arquivo de config do OpenCode aponta para o mesmo modelo.
 
@@ -161,7 +161,7 @@ an expired token just fails silently. Amounts come in minor units and are divide
 - `ctrl+b h` abre a ajuda · `ctrl+b o` abre a tela de opções (uma árvore só, já expandida: os prompts salvos em `prompts` no `config.yaml`, que são digitados na sessão ativa sem enviar, e perguntar ao Haiku via `claude -p --model haiku` no repo da janela; a conferência com os irmãos ou com repos selecionados do workspace, numa tela de conversa com o log ao vivo e caixa de mensagem no rodapé (digite e Enter envia, Ctrl+X encerra); `options` no `config.yaml` acrescenta nós `ask`, `run` e `type`) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
 - barra do painel de repos: REPOS · SESSÕES (sessões do Claude Code abertas em todos os repos do workspace, agrupadas por repo; subagentes em execução viram uma linha `↳` dentro da sessão pai; Enter foca o painel da sessão; sessões OpenCode não aparecem aqui).
 - painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para a sessão ativa (implementar, refinar ou "o que preciso validar?").
-- tira de sessões (1 linha no topo do painel principal): o painel abre vazio, com o aviso para abrir uma sessão pelo `+`; `+` (ou `ctrl+b t`) abre o menu de perfis aprovados. A primeira sessão ocupa o painel principal e as seguintes viram abas; cada aba guarda o perfil e a tira rotula `PERFIL` / `PERFIL (n)`; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Sair da última sessão volta ao aviso. Abas não são restauradas no `restart`.
+- tira de sessões (1 linha no topo do painel principal): a janela abre as abas de sessão persistidas; sem nenhuma, abre uma sessão do perfil padrão e, se ela falhar, mostra o aviso para abrir uma sessão pelo `+`. `+` (ou `ctrl+b t`) abre o menu de perfis aprovados, com o padrão primeiro. A primeira sessão ocupa o painel principal e as seguintes viram abas; cada aba guarda o perfil e o próprio id de sessão, e a tira rotula `PERFIL` / `PERFIL (n)`; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Sair da última sessão abre uma nova aba do perfil padrão; se ela falhar, volta ao aviso. As abas de sessão são restauradas no `reload` e no `restart`; as de terminal não.
 - `shift+setas` pulam entre painéis.
 
 ## Conferência: irmãos ou repos selecionados
@@ -206,7 +206,7 @@ por cima da cópia da fonte. O `source.json` continua registrando o sha256 da fo
 cópia instalada, e o `workspace doctor` compara os dois.
 
 ## Persistência
-Sem plugins de tmux. Toda sessão (Claude e OpenCode) abre com `<linha> --continue || <linha>`: tenta retomar a última sessão do repo e cai para sessão nova se não houver. O resto vem do `config.yaml` e dos arquivos do repo.
+Sem plugins de tmux. As abas de sessão de cada repo ficam em `$WS_STATE/tabs/`: uma lista ordenada com o perfil e o id de cada aba, mais `session-<aba>` com o id real gravado pelo hook do Claude e pelo plugin do OpenCode. `reload`, `restart` e fechar/abrir o workspace restauram as abas na ordem, cada uma no próprio id; sem abas persistidas, abre a padrão. O resto vem do `config.yaml` e dos arquivos do repo.
 O estado de runtime fica em `~/.cache/workspace` (`WS_STATE`). Os nomes de contrato interno agora são em inglês
 (`WS_STATE`/`WS_PROFILE`, opções `@ws_*`, `@role`, papéis e chaves de estado); o estado antigo é descartável e um
 `workspace restart` é necessário depois desta mudança. O desenho aprovado separa

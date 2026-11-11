@@ -23,7 +23,7 @@ class MenuItemsTest(unittest.TestCase):
             items = session_menu.menu_items("%7")
 
         self.assertEqual([label for label, _, _ in items],
-                         ["○ claude", "● opencode-free", "○ deepseek"])
+                         ["● opencode-free", "○ claude", "○ deepseek"])
         keys = [key for _, key, _ in items]
         self.assertEqual(keys, ["1", "2", "3"])
         self.assertEqual(len(keys), len(set(keys)))

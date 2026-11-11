@@ -156,6 +156,24 @@ class SessionTest(unittest.TestCase):
             session.prefix(str(self.repo), profile="my profile"),
             f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} WS_SESSION_PROFILE='my profile'")
 
+    def test_prefix_with_tab_adds_the_session_tab_and_state_dir(self):
+        with patched_env(WS_STATE=str(self.state)):
+            self.assertEqual(
+                session.prefix(str(self.repo), profile="deepseek", tab="tab-1"),
+                f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} "
+                f"WS_SESSION_PROFILE=deepseek WS_SESSION_TAB=tab-1 WS_STATE={self.state}")
+        self.assertEqual(
+            shlex.split(session.prefix(str(self.repo), profile="deepseek", tab="tab-1")),
+            ["env", "WS_SESSION_ROLE=repo", f"WS_SESSION_ROOT={self.repo}",
+             "WS_SESSION_PROFILE=deepseek", "WS_SESSION_TAB=tab-1", f"WS_STATE={self.state}"])
+
+    def test_prefix_with_tab_without_ws_state_uses_the_default_state_dir(self):
+        with patched_env(WS_STATE=None):
+            self.assertEqual(
+                session.prefix(str(self.repo), tab="tab-1"),
+                f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} "
+                f"WS_SESSION_TAB=tab-1 WS_STATE={self.home / '.cache' / 'workspace'}")
+
     def test_prefix_reads_the_main_repo_from_the_config(self):
         self.assertEqual(session.prefix(str(self.main)),
                          f"env WS_SESSION_ROLE=home WS_SESSION_ROOT={self.main}")
@@ -182,6 +200,10 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(),
                          f"env WS_SESSION_ROLE=home WS_SESSION_ROOT={self.main}")
+        proc = self.session_cli("env", str(self.repo), "deepseek", "tab-1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("WS_SESSION_PROFILE=deepseek WS_SESSION_TAB=tab-1", proc.stdout)
+        self.assertIn(f"WS_STATE={self.state}", proc.stdout)
 
     # --- prefix in the launch line --------------------------------------------------------------
     def test_opening_command_and_profile_cmd_pass_the_repo(self):

@@ -11,9 +11,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "src" / "lib.py"
+sys.path.insert(0, str(ROOT / "src"))
+
+import session_state  # noqa: E402
 
 
 class SessionCommandTest(unittest.TestCase):
@@ -28,6 +32,9 @@ class SessionCommandTest(unittest.TestCase):
         self.config = self.root / "config.json"
         self.repo = self.root / "repo"
         self.repo.mkdir()
+        state_env = mock.patch.dict(os.environ, {"WS_STATE": str(self.state)})
+        state_env.start()
+        self.addCleanup(state_env.stop)
 
     def configure(self, config):
         self.config.write_text(json.dumps(config), encoding="utf-8")
@@ -105,6 +112,76 @@ class SessionCommandTest(unittest.TestCase):
         self.opencode(config="")
         out = self.run_lib("session-command", "oc", str(self.repo))
         self.assertEqual(out, f"{self.box('oc')} opencode --continue || {self.box('oc')} opencode")
+
+    # --- per-tab session ids (item 102) ------------------------------------------------------
+    def test_claude_new_tab_uses_a_recorded_session_id_and_falls_back_to_resume(self):
+        self.claude()
+        out = self.run_lib("session-command", "claude", str(self.repo), "tab-1")
+        self.assertIn("WS_SESSION_TAB=tab-1", out)
+        self.assertIn(f"WS_STATE={self.state}", out)
+        self.assertNotIn("--continue", out)
+        self.assertIn("--session-id", out)
+        session = session_state.session_for(str(self.repo), "tab-1")
+        self.assertTrue(session)
+        self.assertIn(session, out)
+        self.assertEqual(session_state.read(self.repo)["tabs"][0]["id"], "tab-1")
+
+        resumed = self.run_lib("session-command", "claude", str(self.repo), "tab-1")
+        self.assertIn(f"--resume {session} ||", resumed)
+        self.assertIn("reset-session", resumed)
+        self.assertIn("--session-id", resumed)
+        self.assertNotIn("--continue", resumed)
+
+    def test_claude_resume_fallback_starts_a_new_session_when_the_id_is_invalid(self):
+        self.claude()
+        session_state.add(str(self.repo), "tab-1", "claude", "missing-session")
+        line = self.run_lib("session-command", "claude", str(self.repo), "tab-1")
+        bindir = self.root / "bin"
+        bindir.mkdir()
+        fake = bindir / "claude"
+        log = self.root / "claude.log"
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\n"
+                        "case \"$*\" in *--resume*) exit 1 ;; esac\nexit 0\n",
+                        encoding="utf-8")
+        fake.chmod(0o755)
+        proc = subprocess.run(["/bin/sh", "-c", line],
+                              env=dict(self.env(), PATH=str(bindir) + os.pathsep + self.env()["PATH"]),
+                              cwd=str(self.repo), capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("--resume missing-session", calls[0])
+        self.assertIn("--session-id", calls[1])
+        new = session_state.session_for(str(self.repo), "tab-1")
+        self.assertNotEqual(new, "missing-session")
+        self.assertIn(new, calls[1])
+
+    def test_opencode_new_tab_starts_a_new_session_and_records_the_tab(self):
+        self.opencode()
+        out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
+        self.assertIn("WS_SESSION_TAB=tab-2", out)
+        self.assertIn(f"WS_STATE={self.state}", out)
+        self.assertNotIn("--continue", out)
+        self.assertNotIn("--session ", out)
+        self.assertEqual(session_state.read(self.repo)["tabs"][0]["profile"], "oc")
+
+    def test_opencode_recorded_tab_resumes_with_session_and_falls_back(self):
+        self.opencode()
+        session_state.add(str(self.repo), "tab-2", "oc", "sess-oc")
+        out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
+        self.assertIn("--session sess-oc ||", out)
+        self.assertIn("reset-session", out)
+        self.assertNotIn("--continue", out)
+        fallback = out.split("||", 1)[1]
+        self.assertIn("&&", fallback)
+        self.assertIn(" opencode; }", fallback)
+        self.assertNotIn("--session ", fallback)
+
+    def test_legacy_two_argument_command_keeps_continue(self):
+        self.claude()
+        out = self.run_lib("session-command", "claude", str(self.repo))
+        self.assertIn("--continue ||", out)
+        self.assertNotIn("WS_SESSION_TAB", out)
+        self.assertNotIn("--session-id", out)
 
     # --- opening-command delegates to the default profile ------------------------------------
     def test_opening_command_is_the_default_profile_session_command(self):

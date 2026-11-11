@@ -123,9 +123,13 @@ build_window() { # $1=path  $2=-d (do not select)
   build_tree "$W" "$path" "$REPO_TREE"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
-  # No agent starts on its own: the main pane shows the SESSÕES placeholder until a session is opened.
+  # The main pane starts as the SESSÕES placeholder, so no session is adopted by mistake; the
+  # restore/default step below turns it into the first session.
   tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
   tmux select-pane -t "$P"
+  # Restore the recorded session tabs (order, profile and session id) or open the default profile
+  # only when the repo has no recorded tab.
+  open_sessions "$W" "$path"
   mobile_apply "$W"
 }
 
@@ -221,6 +225,7 @@ tab_show() { # $1=window $2=tab pane
     prof="$(tmux show -pqv -t "$T" @ws_tab_profile)"
     tmux set -w -t "$W" @ws_session_profile "$prof"
     tmux set -w -t "$W" @ws_mview session
+    state_active_tab "$W" "$T"
   else
     tmux set -w -t "$W" @ws_mview terminal
   fi
@@ -406,6 +411,98 @@ profile_for_window() { # $1=window: the active session's profile, falling back t
   echo "$p"
 }
 
+# Persistent session tabs ($WS_STATE/tabs): one file per repo with the ordered tabs, each with its
+# stable id and profile, plus `session-<tab>` where the hook/plugin write the real session id. The id
+# is also the `WS_SESSION_TAB` of the session and travels in the pane option @ws_tab_id, so the state
+# can be rebuilt from a live server before a `restart` kills it.
+state_cmd() { python3 "$SRC/session_state.py" "$@"; }
+
+tab_state_id() { # $1=pane: stable tab id, created the first time the pane is recorded
+  local P="$1" id
+  id="$(tmux show -pqv -t "$P" @ws_tab_id 2>/dev/null)"
+  if [ -z "$id" ]; then
+    id="$(state_cmd new-id)"
+    tmux set -p -t "$P" @ws_tab_id "$id"
+  fi
+  printf '%s\n' "$id"
+}
+
+state_add_tab() { # $1=window $2=pane: records a live session tab (profile from the pane)
+  local W="$1" P="$2" path id prof
+  path="$(tmux show -wqv -t "$W" @ws_repo)"; [ -n "$path" ] || return 0
+  id="$(tab_state_id "$P")"; [ -n "$id" ] || return 0
+  prof="$(tmux show -pqv -t "$P" @ws_tab_profile)"
+  state_cmd add "$path" "$id" "$prof" >/dev/null
+}
+
+state_active_tab() { # $1=window $2=pane
+  local W="$1" P="$2" path id
+  path="$(tmux show -wqv -t "$W" @ws_repo)"; [ -n "$path" ] || return 0
+  id="$(tab_state_id "$P")"; [ -n "$id" ] || return 0
+  state_cmd active "$path" "$id" >/dev/null
+}
+
+state_remove_tab() { # $1=window $2=pane
+  local W="$1" P="$2" path id
+  path="$(tmux show -wqv -t "$W" @ws_repo)"; [ -n "$path" ] || return 0
+  id="$(tmux show -pqv -t "$P" @ws_tab_id 2>/dev/null)"; [ -n "$id" ] || return 0
+  state_cmd remove "$path" "$id" >/dev/null
+}
+
+state_sync_window() { # $1=window: writes the live session tabs, in order, exactly as they are
+  local W="$1" path active active_id p id prof
+  path="$(tmux show -wqv -t "$W" @ws_repo)"; [ -n "$path" ] || return 0
+  active="$(tmux show -wqv -t "$W" @ws_active)"
+  active_id=""
+  if [ -n "$active" ] && tab_alive "$active"; then active_id="$(tab_state_id "$active")"; fi
+  {
+    for p in $(tab_list "$W" s); do
+      id="$(tab_state_id "$p")"
+      prof="$(tmux show -pqv -t "$p" @ws_tab_profile)"
+      printf '%s\t%s\n' "$id" "$prof"
+    done
+  } | state_cmd save "$path" "$active_id"
+}
+
+state_sync_profile() { # $1=profile: every open repo window (the caller points tmux at the server)
+  local W path
+  while IFS='|' read -r W path; do
+    [ -n "$path" ] && state_sync_window "$W"
+  done < <(tmux list-windows -t "$1:" -F '#{window_id}|#{@ws_repo}')
+}
+
+# Creates the tabs recorded for the repo, in order and with their own profile/id. Returns 1 when the
+# repo has no recorded tab, so the caller can open the default profile only in that case.
+session_restore() { # $1=window $2=repo path
+  local W="$1" path="$2" active="" kind a b c p i
+  local -a ids=() profiles=()
+  # `list` prints `active<TAB>id` and `id<TAB>tab id<TAB>profile<TAB>session`; the session id
+  # comes from session_for when the pane launches, so restoring only needs the tab id and profile.
+  while IFS=$'\t' read -r kind a b c; do
+    case "$kind" in
+      active) active="$a" ;;
+      id) ids+=("$a"); profiles+=("${b:-}") ;;
+    esac
+  done < <(state_cmd list "$path")
+  [ "${#ids[@]}" -gt 0 ] || return 1
+  for i in "${!ids[@]}"; do
+    session_new "$W" "${profiles[$i]}" "${ids[$i]}" 1 || true
+  done
+  if [ -n "$active" ]; then
+    for p in $(tab_list "$W" s); do
+      if [ "$(tmux show -pqv -t "$p" @ws_tab_id)" = "$active" ]; then
+        tab_show "$W" "$p"
+        break
+      fi
+    done
+  fi
+  return 0
+}
+
+open_sessions() { # $1=window $2=repo path: restore the recorded tabs, else open the default profile
+  session_restore "$1" "$2" || session_new "$1" "$(python3 "$SRC/lib.py" default-profile)"
+}
+
 session_menu() { # $1=window: blocking profile menu for a new session
   python3 "$SRC/session_menu.py" "$1"
 }
@@ -426,8 +523,8 @@ risk_check() { # $1=window $2=profile $3=path
   [ "$answer" = "yes" ]
 }
 
-session_new() { # $1=window $2=profile (default: the configured agent)
-  local W="$1" profile="${2:-}" path S n P
+session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id $4=1 when restoring
+  local W="$1" profile="${2:-}" path S n P tab="${3:-}" restore="${4:-}"
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   [ -n "$path" ] || return 1
   S="$(env_global WS_PROFILE)"
@@ -436,17 +533,21 @@ session_new() { # $1=window $2=profile (default: the configured agent)
     msg session.unknown profile="$profile" >&2
     return 1
   fi
-  risk_check "$W" "$profile" "$path" || return 1
+  # Restoring a recorded tab does not ask again: the person already accepted this profile.
+  [ -n "$restore" ] || risk_check "$W" "$profile" "$path" || return 1
+  [ -n "$tab" ] || tab="$(state_cmd new-id)"
   if [ -z "$(tab_list "$W" s)" ]; then
     # first session: it takes the main slot (the pane that showed the placeholder)
     P="$(pane_with_role "$W" claude)"
     [ -n "$P" ] || return 1
     tmux set -p -t "$P" @ws_tab_profile "$profile"
+    tmux set -p -t "$P" @ws_tab_id "$tab"
     tmux set -pu -t "$P" @ws_placeholder
     tmux set -w -t "$W" @ws_tabs "$P"
     tmux set -w -t "$W" @ws_active "$P"
     tmux set -w -t "$W" @ws_session_profile "$profile"
-    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q}"
+    state_add_tab "$W" "$P"
+    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q} ${tab@Q}"
     tmux select-pane -t "$P"
   else
     # another session: a hidden window, swapped into the slot
@@ -455,19 +556,21 @@ session_new() { # $1=window $2=profile (default: the configured agent)
     tmux set -p -t "$P" @role "tmp $n"
     tmux set -p -t "$P" @ws_owner "$W"
     tmux set -p -t "$P" @ws_tab_profile "$profile"
+    tmux set -p -t "$P" @ws_tab_id "$tab"
     tmux set -w -t "$W" @ws_tabs "$(tab_list "$W" s | tr '\n' ' ')$P"
     tmux set -w -t "$W" @ws_next $((n + 1))
+    state_add_tab "$W" "$P"
     tab_show "$W" "$P"
-    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q}"
+    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q} ${tab@Q}"
   fi
   tab_render "$W" s
   mobile_apply "$W"
   return 0
 }
 
-session_run() { # $1=window $2=profile $3=path: the agent process of one session pane
-  local profile="$2" path="$3" line
-  line="$(python3 "$SRC/lib.py" session-command "$profile" "$path")"
+session_run() { # $1=window $2=profile $3=path $4=tab id: the agent process of one session pane
+  local profile="$2" path="$3" tab="${4:-}" line
+  line="$(python3 "$SRC/lib.py" session-command "$profile" "$path" "$tab")"
   if [ -z "$line" ]; then
     msg session.unknown profile="$profile" >&2
     sleep 10
@@ -484,8 +587,10 @@ session_exit() { # $1=pane of a session that ended
   W="$(tmux show -pqv -t "$P" @ws_owner 2>/dev/null)"
   [ -n "$W" ] || W="$(tmux display -p -t "$P" '#{window_id}')"
   [ -n "$W" ] || return 0
+  path="$(tmux show -wqv -t "$W" @ws_repo)"
   role="$(tmux show -pqv -t "$P" @role)"
   tmux set -w -t "$W" @ws_tabs "$(tab_list "$W" s | grep -vxF "$P" | tr '\n' ' ')"
+  state_remove_tab "$W" "$P"
   if [ "$role" = claude ]; then
     # the session in the main slot ended
     tmux set -p -t "$P" @ws_placeholder 1   # mark first: tab_list must not re-adopt this pane
@@ -493,7 +598,6 @@ session_exit() { # $1=pane of a session that ended
     if [ -n "$first" ]; then
       tab_show "$W" "$first"   # promote the next session; P stays hidden, its process is done
     else
-      path="$(tmux show -wqv -t "$W" @ws_repo)"
       tmux set -w -t "$W" @ws_active ""
       tmux set -w -t "$W" @ws_session_profile ""
       tmux set -w -t "$W" @ws_mview session
@@ -502,6 +606,12 @@ session_exit() { # $1=pane of a session that ended
       tmux select-pane -t "$P"
       tab_render "$W" s
       mobile_apply "$W"
+      # The last tab opened a new default one, so the strip never stays empty on purpose. If that
+      # fails (unknown profile, cancelled risk prompt), the placeholder is the fallback.
+      [ -n "$path" ] && state_sync_window "$W"
+      if [ -n "$path" ] && session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"; then
+        return 0
+      fi
       # last: replace this pane with the placeholder (kills this shell, so nothing may run after)
       tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
       return 0
@@ -526,6 +636,7 @@ session_exit() { # $1=pane of a session that ended
     prof="$(tmux show -pqv -t "$active" @ws_tab_profile)"
   fi
   tmux set -w -t "$W" @ws_session_profile "$prof"
+  [ -n "$path" ] && state_sync_window "$W"
   tab_render "$W" s
   mobile_apply "$W"
 }
@@ -544,15 +655,32 @@ prune() { # $1=session
   return 0
 }
 
-# Kills the server and starts it again (Claude comes back with `claude --continue`).
+# Kills the server and starts it again (the recorded session tabs come back with their ids).
 # New hooks/config only take effect this way: detach is not enough, Claude reads the hooks on open.
 restart() {
-  local profile="${1:-claude}" sock="ws-${1:-claude}"
+  local profile="${1:-claude}" sock="ws-${1:-claude}" old_tmux="${TMUX-}"
   if env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
+    # Save the live tabs (id, profile, order and active one) before losing the panes.
+    export TMUX="$(env -u TMUX tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
+    export WS_PROFILE="$profile"
+    state_sync_profile "$profile"
     env -u TMUX tmux -L "$sock" kill-server
     sleep 1
   fi
+  if [ -n "$old_tmux" ]; then export TMUX="$old_tmux"; else unset TMUX; fi
   start_workspace "$profile"
+}
+
+# Kills the profile's server, saving the live session tabs first so opening it again restores them.
+stop_workspace() {
+  local profile="${1:-claude}" sock="ws-${1:-claude}" old_tmux="${TMUX-}"
+  if env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
+    export TMUX="$(env -u TMUX tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
+    export WS_PROFILE="$profile"
+    state_sync_profile "$profile"
+  fi
+  env -u TMUX tmux -L "$sock" kill-server 2>/dev/null
+  if [ -n "$old_tmux" ]; then export TMUX="$old_tmux"; else unset TMUX; fi
 }
 
 # Restarts the panels (repos, side column, tab strip), re-reading the code: kills each python
@@ -706,6 +834,7 @@ ensure_window() { # $1=window $2=repo path $3=tree
   tmux set -w -t "$W" @ws_session_profile "$prof"
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
+  [ -n "$(tmux show -wqv -t "$W" @ws_repo)" ] && state_sync_window "$W"
   fit_window "$W"
 }
 
@@ -866,7 +995,7 @@ case "${1:-}" in
   install-hooks) install_hooks ;;
   privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
-  stop) tmux -L "ws-${2:-claude}" kill-server ;;
+  stop) stop_workspace "${2:-claude}" ;;
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;
   fit) shift; fit "$@" ;;
