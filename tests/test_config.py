@@ -31,16 +31,16 @@ class YamlMinTest(unittest.TestCase):
         cfg = yaml_min.loads(EXAMPLE.read_text(encoding="utf-8"))
         self.assertIs(cfg["manage"], True)
         self.assertEqual(cfg["profiles"]["claude"], "claude")
-        deepseek = cfg["profiles"]["claude-deepseek"]
-        self.assertEqual(deepseek["command"], "claude")
-        self.assertEqual(deepseek["settings"]["env"]["ANTHROPIC_MODEL"], "deepseek-flash")
-        self.assertEqual(deepseek["settings"]["apiKeyHelper"], "pass show deepseek/api-key")
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", deepseek["settings"]["env"])
-        self.assertNotIn("ANTHROPIC_API_KEY", deepseek["settings"]["env"])
-        self.assertNotIn("permissions", deepseek)
-        self.assertEqual(cfg["profiles"]["opencode-deepseek"]["model"], "deepseek/deepseek-flash")
-        self.assertEqual(cfg["profiles"]["opencode-free"]["model"],
-                         "opencode/deepseek-v4.1-flash-free")
+        expected_models = {
+            "opencode-claude": "anthropic/claude-sonnet-5-5",
+            "opencode-deepseek": "deepseek/deepseek-flash",
+            "opencode-openrouter": "openrouter/deepseek/deepseek-v4-flash-0731",
+            "opencode-free": "opencode/deepseek-v4.1-flash-free",
+        }
+        for name, model in expected_models.items():
+            self.assertEqual(cfg["profiles"][name]["harness"], "opencode")
+            self.assertEqual(cfg["profiles"][name]["model"], model)
+        self.assertNotIn("claude-deepseek", cfg["profiles"])
         self.assertEqual(cfg["groups"]["Example"][1]["siblings"], ["~/Codes/some-repo"])
         self.assertEqual(yaml_min.loads(yaml_min.dumps(cfg)), cfg)
 

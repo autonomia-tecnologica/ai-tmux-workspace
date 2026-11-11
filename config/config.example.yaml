@@ -55,33 +55,29 @@ editor:
 # Claude. `command` é opcional (padrão `opencode`). `config` é o arquivo do OpenCode daquele perfil,
 # exportado como `OPENCODE_CONFIG` (o OpenCode mescla com a config global). A abertura tenta
 # `--continue` para pegar a última sessão do repo e cai para sessão nova se não houver.
+# A credencial dos perfis OpenCode fica no próprio OpenCode (`opencode auth login <provider>`),
+# nunca neste arquivo. Nenhum perfil do catálogo aponta o Claude para um endpoint externo.
 # Conferência, «Perguntar ao Claude», painel SESSÕES e métricas do status bar degradam com aviso
 # nesse harness.
 profiles:
   claude: claude
-  claude-deepseek:
-    command: claude
-    settings:
-      env:
-        ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-        ANTHROPIC_MODEL: deepseek-flash
-        # slot Opus: o modelo mais forte, escolhido com /model opus
-        ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-v4-pro
-        ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-flash
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-flash
-        CLAUDE_CODE_SUBAGENT_MODEL: deepseek-flash
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000"
-        DISABLE_TELEMETRY: "1"
-        DISABLE_ERROR_REPORTING: "1"
-      model: deepseek-flash
-      apiKeyHelper: "pass show deepseek/api-key"   # exemplo: aponte para o seu cofre
+  opencode-claude:                               # harness do OpenCode, API da Anthropic
+    harness: opencode
+    command: opencode
+    config: ~/.config/ai-tmux-workspace/opencode-claude.json
+    model: anthropic/claude-sonnet-5-5
   opencode-deepseek:                             # harness do OpenCode, API do DeepSeek
     harness: opencode
     command: opencode
     config: ~/.config/ai-tmux-workspace/opencode-deepseek.json
     model: deepseek/deepseek-flash
+  opencode-openrouter:                           # harness do OpenCode, API do OpenRouter
+    harness: opencode
+    command: opencode
+    config: ~/.config/ai-tmux-workspace/opencode-openrouter.json
+    model: openrouter/deepseek/deepseek-v4-flash-0731
   # mesmo harness, outro arquivo de config: o provedor `opencode` tem modelos free (ex.:
-  # `opencode/deepseek-v4.1-flash-free`); o perfil acima aponta para a API do DeepSeek.
+  # `opencode/deepseek-v4.1-flash-free`).
   opencode-free:
     harness: opencode
     command: opencode
