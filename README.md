@@ -121,7 +121,7 @@ Decision: Windows is supported only through WSL2, plus the system toast notifica
 Why:
 - tmux does not run on native Windows, and the whole workspace is built on it.
 - The launcher (`bin/workspace`) is a bash script.
-- `src/viewer.py` and `src/panel_tabs.py` use the POSIX terminal APIs `termios`, `tty`, `select` and `SIGWINCH`.
+- `src/viewer.py` and `src/panel_tabs.py` use the POSIX terminal APIs `termios`, `tty`, `select`, `SIGWINCH` and `SIGUSR1`.
 - `src/statusbar.py` uses `fcntl.flock`, which is also POSIX-only.
 
 Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution.

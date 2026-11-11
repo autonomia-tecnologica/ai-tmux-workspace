@@ -4,7 +4,7 @@
 #   workspace install         links `workspace` into ~/.local/bin
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
 #   workspace restart [profile] kill the tmux server and start again (Claude resumes with --continue)
-#   workspace fit [profile]    re-apply only the pane sizes (run by the tmux hooks on attach/resize)
+#   workspace fit [profile]    re-apply the layout once, only what changed (run by the tmux hooks on attach/resize)
 #   workspace reload [profile] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
@@ -69,10 +69,12 @@ pane_with_role() { # $1=window $2=role
 }
 
 # Creates, in tree order, the panes the window lacks (a role already present is skipped, and so is a missing parent).
-# Does not apply the final sizes: the caller decides (build_window does not, ensure_window calls fit_window).
+# Does not apply the final sizes: layout_apply is the only owner of the geometry, and the caller runs it
+# once after all panes exist. Shell panes are started only after that (shells_start), at their final size.
 build_tree() { # $1=window $2=repo path $3=tree (see REPO_TREE)
-  local W="$1" path="$2" tree="$3" role parent split size cmd anchor P width id dir sh shells=""
-  local opts hfix=""
+  local W="$1" path="$2" tree="$3" role parent split size cmd anchor P width id dir sh
+  local opts
+  LAYOUT_SHELLS=""
   P="$(pane_with_role "$W" claude)"; [ -n "$P" ] || return 0
   width="$(tmux display -p -t "$W" '#{window_width}')"
   while IFS='|' read -r role parent split size cmd; do
@@ -97,13 +99,17 @@ build_tree() { # $1=window $2=repo path $3=tree (see REPO_TREE)
       id="$(tmux split-window "${opts[@]}" -t "$anchor" -c "$path" -P -F '#{pane_id}')"
     fi
     tmux set -p -t "$id" @role "$role"
-    case "$split" in h*) [ -n "$size" ] && hfix="$hfix $id:$size" ;; esac
-    [ "$cmd" = shell ] && shells="$shells $id"
+    [ "$cmd" = shell ] && LAYOUT_SHELLS="$LAYOUT_SHELLS $id"
   done <<<"$tree"
-  # side columns get their exact width once all splits exist (a later split can shrink them)
-  for x in $hfix; do tmux resize-pane -t "${x%%:*}" -x "${x#*:}"; done
-  # shell panes start only now, at their final size (no stray "%")
-  for id in $shells; do tmux respawn-pane -k -t "$id" -c "$path"; done
+  return 0
+}
+
+# Starts the shell panes build_tree just created, only now, at their final size: a resize while zsh
+# starts prints a stray "%". Always run it right after layout_apply (build_tree fills LAYOUT_SHELLS).
+shells_start() { # $1=path
+  local id
+  for id in ${LAYOUT_SHELLS:-}; do tmux respawn-pane -k -t "$id" -c "$1"; done
+  LAYOUT_SHELLS=""
 }
 
 # Builds a repo window:  [repos | claude (5) / terminal (1) | side]   ~22% : rest : ~19% (clamped)
@@ -130,7 +136,9 @@ build_window() { # $1=path  $2=-d (do not select)
   # Restore the recorded session tabs (order, profile and session id) or open the default profile
   # only when the repo has no recorded tab.
   open_sessions "$W" "$path"
-  mobile_apply "$W"
+  # the layout is applied once, after every pane exists; then the shells start at their final size
+  layout_apply "$W"
+  shells_start "$path"
 }
 
 # --- Temporary tabs (Claude and terminal) ------------------------------------------------------
@@ -194,12 +202,20 @@ tab_list() { # $1=window $2=s|t: live ids, in order
   for p in $(tmux show -wqv -t "$1" $K_TABS); do tab_alive "$p" && echo "$p"; done
 }
 
-tab_render() { # $1=window $2=s|t: restarts the tab strip (panel_tabs.py) to reflect the current state
-  local pane kind="${2:-s}" name
-  tab_vars "$kind"; name=session; [ "$kind" = t ] && name=terminal
-  pane="$(tmux list-panes -t "$1" -F '#{pane_id}|#{@role}' | awk -F'|' -v r="$K_STRIP" '$2==r{print $1}')"
-  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" "$(loop_cmd tabs "$name")"
+# Asks a strip panel to re-read its state and redraw (SIGUSR1), instead of respawning it on every tab
+# change. If it is not running, the panel loop starts it within 1s and it draws the current state.
+panel_signal() { # $1=window $2=strip role
+  local pane pid
+  pane="$(pane_with_role "$1" "$2")"; [ -n "$pane" ] || return 0
+  pid="$(tmux display -p -t "$pane" '#{pane_pid}' 2>/dev/null)"; [ -n "$pid" ] || return 0
+  pkill -USR1 -P "$pid" -f 'panel_tabs.py' 2>/dev/null || true
   return 0
+}
+
+tab_render() { # $1=window $2=s|t: the strip rereads the state and redraws only what changed
+  local kind="${2:-s}"
+  tab_vars "$kind"
+  panel_signal "$1" "$K_STRIP"
 }
 
 tab_show() { # $1=window $2=tab pane
@@ -208,7 +224,9 @@ tab_show() { # $1=window $2=tab pane
   kind="$(tab_kind "$(tmux show -pqv -t "$T" @role)")"; tab_vars "$kind"
   current="$(tmux show -wqv -t "$W" $K_ACT)"
   if [ "$current" != "$T" ]; then
-    tmux swap-pane -d -s "$T" -t "$current" || return 1
+    # -Z keeps the window zoomed: on the phone the session that enters the slot is already inside the
+    # geometry, so the switch needs no resize/zoom afterwards (older tmux: plain swap, next fit fixes it).
+    tmux swap-pane -dZ -s "$T" -t "$current" || tmux swap-pane -d -s "$T" -t "$current" || return 1
     tmux set -w -t "$W" $K_ACT "$T"
     if [ "$kind" = s ]; then
       # keep the slot anchored to role `claude`: the pane now in the slot becomes the main one and the
@@ -229,7 +247,6 @@ tab_show() { # $1=window $2=tab pane
   else
     tmux set -w -t "$W" @ws_mview terminal
   fi
-  mobile_apply "$W"
 }
 
 tab_new() { # $1=window $2=role of the focused pane (sets the kind; default session)
@@ -284,7 +301,7 @@ open_repo() {
     tab_alive "$focus" 2>/dev/null || focus="$(tmux list-panes -t "$existing" -F '#{pane_id}|#{@role}' | awk -F'|' '$2=="claude"{print $1}')"
     [ -n "$focus" ] && tmux select-pane -t "$focus"
     tmux set -w -t "$existing" @ws_mview session   # phone: picking a repo lands on its session
-    mobile_apply "$existing"
+    layout_apply "$existing"
     return
   fi
   build_window "$path" || return 1        # profile settings error: the message already went to stderr
@@ -307,25 +324,23 @@ worktree_cmd() { # $1=new|list|remove|merge ...
 }
 
 side() { # $1=mode $2=window
-  local pane strip
+  local pane
   pane="$(pane_with_role "$2" side)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_side "$1"
   tmux respawn-pane -k -t "$pane" "$(loop_cmd "$1")"
-  # restart the strip so it redraws with the new active tab
-  strip="$(pane_with_role "$2" dtabs)"
-  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(loop_cmd tabs side)"
+  # the strip only rereads the state (no respawn): it redraws the new active tab
+  panel_signal "$2" dtabs
 }
 
 # Left-top panel mode (repos | sessions), next to REPOS in the rtabs strip.
 left() { # $1=repos|sessions $2=window
-  local pane strip
+  local pane
   pane="$(pane_with_role "$2" repos)"
   [ -n "$pane" ] || return 0
   tmux set -w -t "$2" @ws_left "$1"
   tmux respawn-pane -k -t "$pane" "$(loop_cmd "$1")"
-  strip="$(pane_with_role "$2" rtabs)"
-  [ -n "$strip" ] && tmux respawn-pane -k -t "$strip" "$(loop_cmd tabs repos)"
+  panel_signal "$2" rtabs
   return 0
 }
 
@@ -564,7 +579,6 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
     tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q} ${tab@Q}"
   fi
   tab_render "$W" s
-  mobile_apply "$W"
   return 0
 }
 
@@ -605,7 +619,6 @@ session_exit() { # $1=pane of a session that ended
       tmux set -p -t "$P" @ws_placeholder 1
       tmux select-pane -t "$P"
       tab_render "$W" s
-      mobile_apply "$W"
       # The last tab opened a new default one, so the strip never stays empty on purpose. If that
       # fails (unknown profile, cancelled risk prompt), the placeholder is the fallback.
       [ -n "$path" ] && state_sync_window "$W"
@@ -638,7 +651,6 @@ session_exit() { # $1=pane of a session that ended
   tmux set -w -t "$W" @ws_session_profile "$prof"
   [ -n "$path" ] && state_sync_window "$W"
   tab_render "$W" s
-  mobile_apply "$W"
 }
 
 # Closes windows (and their hidden tab windows) whose repo is no longer in config.yaml.
@@ -696,8 +708,8 @@ panels() { # $1=profile (default: claude)
 
 # --- Phone layout --------------------------------------------------------------------------------
 # On a narrow window (portrait phone) the window shows ONE pane at a time (tmux zoom): Claude by default,
-# and the hamburger menu (status bar, or ctrl+b m) picks the view. State: window option @ws_mview.
-is_mobile() { [ "$(tmux display -p -t "$1" '#{window_width}')" -lt "$MOBILE_W" ]; }
+# and the hamburger menu (status bar, or ctrl+b m) picks the view. State: window option @ws_mview, which
+# layout_apply turns into the zoom (the only place that zooms).
 
 mview_target() { # $1=window $2=session|claude|terminal|repos|tasks|side -> pane id
   local W="$1" p=""
@@ -711,27 +723,6 @@ mview_target() { # $1=window $2=session|claude|terminal|repos|tasks|side -> pane
   echo "$p"
 }
 
-# Idempotent: zooms the current view on a narrow window, undoes our zoom on a wide one.
-mobile_apply() { # $1=window
-  local W="$1" view target
-  [ -n "$(tmux show -wqv -t "$W" @ws_repo)" ] || return 0   # plugin windows keep their own layout
-  if ! is_mobile "$W"; then
-    if [ "$(tmux show -wqv -t "$W" @ws_mzoom)" = 1 ]; then
-      [ "$(tmux display -p -t "$W" '#{window_zoomed_flag}')" = 1 ] && tmux resize-pane -Z -t "$W"
-      tmux set -wu -t "$W" @ws_mzoom
-    fi
-    return 0
-  fi
-  view="$(tmux show -wqv -t "$W" @ws_mview)"; view="${view:-session}"
-  target="$(mview_target "$W" "$view")"; [ -n "$target" ] || return 0
-  tmux set -w -t "$W" @ws_mzoom 1
-  if [ "$(tmux display -p -t "$W" '#{window_zoomed_flag}')" = 1 ]; then
-    tmux select-pane -Z -t "$target"
-  else
-    tmux select-pane -t "$target"; tmux resize-pane -Z -t "$target"
-  fi
-}
-
 mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tree|diff|github)
   local W="$1" view="$2"
   [ "$view" = claude ] && view=session
@@ -740,7 +731,8 @@ mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tre
     side) [ -n "${3:-}" ] && side "$3" "$W" ;;
   esac
   tmux set -w -t "$W" @ws_mview "$view"
-  mobile_apply "$W"
+  # the target view changed: this is the only session-facing entry that reapplies the layout
+  layout_apply "$W"
   return 0
 }
 
@@ -764,24 +756,100 @@ menu() { # $1=client $2=window
     '#{@t_menu_tterm_next}' P "run-shell -b \"$w tab-step $W 1 terminal\""
 }
 
-# Re-applies only the pane sizes of one window (cheap; used by ensure_window and the tmux hooks).
-# One list-panes and one batched tmux call: this runs on every client switch, so it must be fast.
-fit_window() { # $1=window
-  local W="$1" rows w h id role cmd=()
-  rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}|#{window_width}|#{window_height}')"
-  rid() { awk -F'|' -v r="$1" '$2==r{print $1; exit}' <<<"$rows"; }   # bash 3.2 (macOS): no associative arrays
-  [ -n "$(rid claude)" ] || return 0
-  IFS='|' read -r _ _ w h <<<"${rows%%$'\n'*}"
-  if [ "$w" -ge "$MOBILE_W" ]; then
-    id="$(rid repos)";    [ -n "$id" ] && cmd+=(resize-pane -t "$id" -x "$(col_w left "$w")" ';')
-    id="$(rid side)";  [ -n "$id" ] && cmd+=(resize-pane -t "$id" -x "$(col_w right "$w")" ';')
-    id="$(rid terminal)"; [ -n "$id" ] && cmd+=(resize-pane -t "$id" -y "$(( (h - 2) * 17 / 100 ))" ';')
-    for role in ttabs:1 tabs:2 dtabs:2 rtabs:2 ktabs:1; do
-      id="$(rid "${role%%:*}")"; [ -n "$id" ] && cmd+=(resize-pane -t "$id" -y "${role##*:}" ';')
-    done
-    [ "${#cmd[@]}" -gt 0 ] && tmux "${cmd[@]}" refresh-client 2>/dev/null
+# --- Layout (single owner of the geometry) ------------------------------------------------------
+# Every pane size, the phone zoom and the client refresh happen here and nowhere else: side column
+# widths, terminal height, strip heights and the mobile view. The tmux hooks call `fit` on every
+# client event, so this compares the current geometry with the target and emits NO tmux command at
+# all when they are equal (a repeated client-active/client-focus-in redraws nothing).
+layout_pane() { # $1=list-panes dump $2=role -> pane_id|width|height|active
+  awk -F'|' -v r="$2" '$2==r{print $1"|"$3"|"$4"|"$5; exit}' <<<"$1"
+}
+
+layout_value() { # $1=list-panes dump $2=role $3=field (1 id, 2 width, 3 height, 4 active)
+  layout_pane "$1" "$2" | cut -d'|' -f"$3"
+}
+
+layout_apply() { # $1=window
+  local W="$1" rows w h zoomed view target active cmd=()
+  local role flag value cur id pw ph
+  local claude_p term_p ttabs_p term_h ttabs_h delta term_target
+  rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}|#{pane_width}|#{pane_height}|#{pane_active}|#{window_width}|#{window_height}|#{window_zoomed_flag}')"
+  [ -n "$rows" ] || return 0
+  claude_p="$(layout_value "$rows" claude 1)"
+  [ -n "$claude_p" ] || return 0
+  IFS='|' read -r _ _ _ _ _ w h zoomed <<<"${rows%%$'\n'*}"
+  # Leaving the phone: a zoomed pane reports its zoomed (full-window) size, so the target comparison
+  # below would be wrong. Undo our zoom first, then reread the real (unzoomed) geometry. This happens
+  # once on the transition; later desktop events are silent.
+  if [ "$w" -ge "$MOBILE_W" ] && [ "$(tmux show -wqv -t "$W" @ws_mzoom)" = 1 ]; then
+    [ "$zoomed" = 1 ] && tmux resize-pane -Z -t "$W"
+    tmux set -wu -t "$W" @ws_mzoom
+    rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}|#{pane_width}|#{pane_height}|#{pane_active}|#{window_width}|#{window_height}|#{window_zoomed_flag}')"
+    [ -n "$rows" ] || return 0
+    claude_p="$(layout_value "$rows" claude 1)"
+    [ -n "$claude_p" ] || return 0
+    IFS='|' read -r _ _ _ _ _ w h zoomed <<<"${rows%%$'\n'*}"
   fi
-  mobile_apply "$W"   # narrow: zooms the phone view; wide: undoes the phone zoom, if any
+  # A zoomed (phone) window keeps one view: resizing its hidden panes fails, so only the zoom applies.
+  if [ "$w" -ge "$MOBILE_W" ]; then
+    while IFS='|' read -r role flag value; do
+      [ -n "$role" ] || continue
+      cur="$(layout_pane "$rows" "$role")"; [ -n "$cur" ] || continue
+      id="${cur%%|*}"; cur="${cur#*|}"; pw="${cur%%|*}"; cur="${cur#*|}"; ph="${cur%%|*}"
+      case "$flag" in
+        x) [ "$pw" = "$value" ] && continue ;;
+        y) [ "$ph" = "$value" ] && continue ;;
+      esac
+      cmd+=(resize-pane -t "$id" "-$flag" "$value" ';')
+    done <<EOF
+repos|x|$(col_w left "$w")
+side|x|$(col_w right "$w")
+tabs|y|2
+rtabs|y|2
+ktabs|y|1
+dtabs|y|2
+EOF
+    # The terminal and its strip share one container, so resizing them directly only moves the line
+    # between them; the container total belongs to the main pane. Fix it there (relative, so the exact
+    # border lines do not matter), then put the strip back and the terminal lands on its target.
+    term_target=$(( (h - 2) * 17 / 100 ))
+    term_p="$(layout_value "$rows" terminal 1)"
+    ttabs_p="$(layout_value "$rows" ttabs 1)"
+    if [ -n "$term_p" ] && [ -n "$ttabs_p" ]; then
+      term_h="$(layout_value "$rows" terminal 3)"
+      ttabs_h="$(layout_value "$rows" ttabs 3)"
+      delta=$(( ttabs_h + term_h + 1 - (term_target + 2) ))
+      if [ "$delta" -gt 0 ]; then
+        cmd+=(resize-pane -t "$claude_p" -D "$delta" ';')
+      elif [ "$delta" -lt 0 ]; then
+        cmd+=(resize-pane -t "$claude_p" -U "$((-delta))" ';')
+      fi
+      [ $((ttabs_h - delta)) -ne 1 ] && cmd+=(resize-pane -t "$ttabs_p" -y 1 ';')
+    elif [ -n "$term_p" ] && [ "$(layout_value "$rows" terminal 3)" != "$term_target" ]; then
+      cmd+=(resize-pane -t "$term_p" -y "$term_target" ';')
+    elif [ -n "$ttabs_p" ] && [ "$(layout_value "$rows" ttabs 3)" != 1 ]; then
+      cmd+=(resize-pane -t "$ttabs_p" -y 1 ';')
+    fi
+  fi
+  if [ -z "$(tmux show -wqv -t "$W" @ws_repo)" ]; then
+    # plugin windows: only the bar is ours, and they never get the phone zoom
+    [ "${#cmd[@]}" -gt 0 ] && tmux "${cmd[@]}" refresh-client 2>/dev/null
+    return 0
+  fi
+  if [ "$w" -lt "$MOBILE_W" ]; then
+    view="$(tmux show -wqv -t "$W" @ws_mview)"; view="${view:-session}"
+    target="$(mview_target "$W" "$view")"
+    active="$(awk -F'|' '$5==1{print $1; exit}' <<<"$rows")"
+    [ -n "$target" ] || target="$active"
+    [ "$(tmux show -wqv -t "$W" @ws_mzoom)" = 1 ] || cmd+=(set -w -t "$W" @ws_mzoom 1 ';')
+    if [ "$zoomed" != 1 ]; then
+      # not zoomed (fresh window or the person unzoomed): show the target view alone
+      cmd+=(select-pane -t "$target" ';' resize-pane -Z -t "$target" ';')
+    elif [ "$target" != "$active" ]; then
+      cmd+=(select-pane -Z -t "$target" ';')   # already zoomed: move the zoom to the new view
+    fi
+  fi
+  [ "${#cmd[@]}" -gt 0 ] && tmux "${cmd[@]}" refresh-client 2>/dev/null
   return 0
 }
 
@@ -835,36 +903,30 @@ ensure_window() { # $1=window $2=repo path $3=tree
   T="$(pane_with_role "$W" terminal)"
   [ -n "$T" ] && init_tabs "$W" "$T" t
   [ -n "$(tmux show -wqv -t "$W" @ws_repo)" ] && state_sync_window "$W"
-  fit_window "$W"
+  layout_apply "$W"
+  shells_start "$path"
 }
 
-# Light subcommand: re-applies the pane sizes in every window of the profile (no panel restart).
-# Many events arrive at once when the active client changes (client-active, resized, focus), so only one
-# fit runs at a time; events during a run just ask for another pass, and it repeats until the window
-# sizes stop changing (tmux resizes a window gradually when the latest client switches).
+# Light subcommand: re-applies the layout of every window of the profile (no panel restart). Many
+# events arrive at once when the active client changes (client-active, resized, focus), so only one
+# fit runs at a time; layout_apply already no-ops when the geometry did not change.
 fit() {
-  local profile="${1:-claude}" sock="ws-${1:-claude}" W sig last=""   # lock stays global: the EXIT trap uses it
+  local profile="${1:-claude}" sock="ws-${1:-claude}" W   # lock stays global: the EXIT trap uses it
   tmux -L "$sock" has-session -t "$profile" 2>/dev/null || return 0
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PROFILE="$profile"
   lock="${TMPDIR:-/tmp}/ws-fit-$profile-$(id -u)"
   if ! mkdir "$lock" 2>/dev/null; then
     if [ -f "$lock/pid" ] && ! kill -0 "$(cat "$lock/pid")" 2>/dev/null; then rm -rf "$lock"; fi   # stale lock
-    touch "$lock.again" 2>/dev/null; return 0
+    return 0
   fi
   echo $$ >"$lock/pid"; trap 'rm -rf "$lock"' EXIT
-  for _ in 1 2 3 4 5; do
-    rm -f "$lock.again"
-    while read -r W; do fit_window "$W"; done < <(tmux list-windows -t "$profile:" -F '#{window_id}')
-    sig="$(tmux list-windows -t "$profile:" -F '#{window_id}#{window_width}x#{window_height}')"
-    [ "$sig" = "$last" ] && [ ! -e "$lock.again" ] && break
-    last="$sig"; sleep 0.2
-  done
+  while read -r W; do layout_apply "$W"; done < <(tmux list-windows -t "$profile:" -F '#{window_id}')
 }
 
 # Applies a new config/tmux.conf and the tab strip to the windows already open, without killing the server.
 reload() {
-  local profile="${1:-claude}" sock="ws-${1:-claude}" W P path strip
+  local profile="${1:-claude}" sock="ws-${1:-claude}" W path
   tmux -L "$sock" has-session -t "$profile" 2>/dev/null || { msg cli.no_workspace profile="$profile" >&2; exit 1; }
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PROFILE="$profile"
@@ -877,7 +939,7 @@ reload() {
   plugin_sync "$profile"
   panels "$profile"
   doctor --warn >&2 || true   # drift warning: never fails the reload
-  tmux refresh-client -S 2>/dev/null; msg cli.reloaded profile="$profile"
+  msg cli.reloaded profile="$profile"
 }
 
 start_workspace() {
