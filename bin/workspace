@@ -115,10 +115,12 @@ shells_start() { # $1=path
 
 # Builds a repo window:  [repos | claude (5) / terminal (1) | side]   ~22% : rest : ~19% (clamped)
 build_window() { # $1=path  $2=-d (do not select)
-  local path="$1" d="${2:-}" S name W P T
+  local path="$1" d="${2:-}" S name W P T focus
   S="$(env_global WS_PROFILE)"
   name="$(basename "$path")"
-  W="$(tmux new-window ${d:+-d} -P -F '#{window_id}' -t "$S:" -n "$name" -c "$path")"
+  # The window is always built hidden: every pane (placeholder, strips, sessions, shells) is mounted
+  # off screen, so the person sees it already assembled instead of one pane appearing at a time.
+  W="$(tmux new-window -d -P -F '#{window_id}' -t "$S:" -n "$name" -c "$path")"
   P="$(tmux display -p -t "$W" '#{pane_id}')"
   tmux set -w -t "$W" @ws_repo "$path"
   tmux set -w -t "$W" @ws_profile "$S"
@@ -140,6 +142,15 @@ build_window() { # $1=path  $2=-d (do not select)
   # the layout is applied once, after every pane exists; then the shells start at their final size
   layout_apply "$W"
   shells_start "$path"
+  # Only now reveal the window, with the layout already in the target geometry: the fit fired by
+  # session-window-changed then finds nothing to resize. $2=-d keeps it hidden for the caller.
+  [ -n "$d" ] && return 0
+  tmux select-window -t "$W"
+  # focus on the main screen: the active tab (or the main Claude)
+  focus="$(tmux show -wqv -t "$W" @ws_active)"
+  tab_alive "$focus" 2>/dev/null || focus="$(pane_with_role "$W" claude)"
+  [ -n "$focus" ] && tmux select-pane -t "$focus"
+  return 0
 }
 
 # --- Temporary tabs (Claude and terminal) ------------------------------------------------------
