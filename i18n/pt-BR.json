@@ -4,6 +4,7 @@
   "tabs.session": "SESSÃO",
   "tabs.terminal": "TERMINAL",
   "tabs.repos": "REPOS",
+  "tabs.folders": "PASTAS",
   "tabs.tasks": "TAREFAS",
   "tabs.tree": "ARQUIVOS",
   "tree.copied": "{name} copiado: cole (Ctrl+V) onde precisar",
@@ -527,5 +528,10 @@
   "repos.filter.off": "desligados",
   "repos.disabled": "desligado",
   "repos.toggled": "{repo}: {state}",
-  "repos.open_disabled": "{repo} está desligado: ligue com T antes de abrir"
+  "repos.open_disabled": "{repo} está desligado: ligue com T antes de abrir",
+  "folders.hint": "Enter abre a pasta ou o arquivo · ←→ dobra · arquivos abrem no visualizador",
+  "folders.none": "nenhuma pasta livre em config.yaml (free_folders)",
+  "folders.missing": "não encontrada",
+  "folders.missing_note": "pasta não encontrada: {path}",
+  "folders.open_failed": "{name}: sem visualizador nem programa padrão para este tipo"
 }

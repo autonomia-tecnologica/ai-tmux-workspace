@@ -17,7 +17,7 @@
 #   workspace stop [profile]   kill the profile's tmux server
 #   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
 #                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
-# Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions>
+# Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions|folders>
 #   session-menu|session-new|session-run|session-exit  (profile sessions) · tab-new|tab-show|tab-step|tab-exit  (temporary terminal tabs) · plugins-sync <profile>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -38,7 +38,7 @@ settings_refresh_all() {
 }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
 doctor() { python3 "$SRC/drift.py" "$@"; }
-loop_cmd() { # $1 = repos | tasks | tree | sessions | diff | github | tabs [claude|terminal]
+loop_cmd() { # $1 = repos | tasks | folders | tree | sessions | diff | github | tabs [claude|terminal]
   printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
 }
 
@@ -351,8 +351,9 @@ side() { # $1=mode $2=window
   panel_signal "$2" dtabs
 }
 
-# Left-top panel mode (repos | sessions), next to REPOS in the rtabs strip.
-left() { # $1=repos|sessions $2=window
+# Left-top panel mode (repos | sessions | folders), next to REPOS in the rtabs strip. "folders" is the
+# free folders navigation tab of the home window (no agent session, no window of its own).
+left() { # $1=repos|sessions|folders $2=window
   local pane
   pane="$(pane_with_role "$2" repos)"
   [ -n "$pane" ] || return 0
@@ -730,7 +731,7 @@ mview_target() { # $1=window $2=session|claude|terminal|repos|tasks|side -> pane
   echo "$p"
 }
 
-mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions, side: tree|diff|github)
+mview() { # $1=window $2=view $3=optional mode (repos: repos|sessions|folders, side: tree|diff|github)
   local W="$1" view="$2"
   [ "$view" = claude ] && view=session
   case "$view" in

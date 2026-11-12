@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Top bar of each panel (1 row; arg: session|terminal|repos|tasks|side):
-[SESSÃO] [SESSÃO (2)] [SESSÃO (3)] ... [+]. In `repos` it is REPOS and the listed plugins (no +); in `tasks` it is only the panel title (one tab, no +).
+[SESSÃO] [SESSÃO (2)] [SESSÃO (3)] ... [+]. In `repos` it is REPOS and SESSIONS (plus FOLDERS in the
+home window) and the listed plugins (no +); in `tasks` it is only the panel title (one tab, no +).
 In `side` mode the tabs are fixed (FILES, SESSIONS, DIFF, GITHUB) and choose what the right panel shows.
 
 Clicking a tab switches, clicking + opens a new session. With the panel focused, ←/→ move the
@@ -78,6 +79,23 @@ def plugin_window(key):
     return ""
 
 
+def is_home(win):
+    """True when `win` is the home window: the window of the main repo from config.yaml.
+
+    Free folders are a navigation tab of the home window only (item 82); every other repo window
+    keeps just REPOS and SESSIONS."""
+    main = lib.read_main()
+    return bool(main) and tmux.show_w(win, "@ws_repo") == main[1]
+
+
+def left_tabs(home):
+    """Tabs of the left strip: REPOS and SESSIONS, plus FOLDERS in the home window."""
+    tabs = [("repos", t("repos")), ("sessions", t("sessions"))]
+    if home:
+        tabs.append(("folders", t("folders")))
+    return tabs
+
+
 def repo_window():
     """Window to go back to from a plugin window: the previous window (tmux's own history) when it is a
     repo, else the first repo window of the session. Empty when the session has no repo window."""
@@ -116,11 +134,17 @@ def state():
         mode = tmux.run("show", "-wqv", "-t", win, "@ws_side")
         return win, SIDE_TABS, mode if mode in ("diff", "github") else "tree"
     if KIND == "repos":
-        # REPOS plus the listed plugins; the active one is the window the panel runs in
+        # REPOS, SESSIONS (and FOLDERS in the home window) plus the listed plugins; the active one is
+        # the window the panel runs in
         name = tmux.run("display", "-p", "-t", win, "#{window_name}")
         mode = tmux.run("show", "-wqv", "-t", win, "@ws_left")
-        active = name if name.startswith("plugin:") else ("sessions" if mode == "sessions" else "repos")
-        return win, [("repos", t("repos")), ("sessions", t("sessions"))] + plugin_tabs(session_name()), active
+        home = is_home(win)
+        if mode == "folders" and not home:
+            mode = "repos"
+        tabs = left_tabs(home) + plugin_tabs(session_name())
+        active = (name if name.startswith("plugin:")
+                  else mode if mode in ("sessions", "folders") else "repos")
+        return win, tabs, active
     if KIND == "tasks":
         return win, [(KIND, t(KIND))], KIND
     if KIND == "session":
@@ -238,7 +262,7 @@ def main():
                 tmux.run("select-window", "-t", wid)
                 subprocess.Popen([lib.WS, "left", pane, wid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
-        if KIND == "repos" and pane in ("repos", "sessions"):
+        if KIND == "repos" and pane in ("repos", "sessions", "folders"):
             subprocess.Popen([lib.WS, "left", pane, win], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if KIND in ("repos", "tasks"):

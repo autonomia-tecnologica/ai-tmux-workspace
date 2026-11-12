@@ -722,6 +722,32 @@ def folder_repos(folder=None):
     return found
 
 
+def free_folders():
+    """[(label, path), ...] of the free folders ("free_folders" in config.yaml), in config order.
+
+    A free folder is a plain folder (Documents, Pictures, Videos...) shown as a navigation tab of
+    the home window: it is not a repo, and gets no window and no agent session. Each entry is a path
+    string, or a map with `path` and an optional `label`; paths accept ~. Entries with no usable path
+    are skipped, and a repeated path keeps the first label. A missing folder is still listed (the
+    panel shows it as not found), so a typo in the config is visible.
+    """
+    raw = read_config().get("free_folders")
+    found, seen = [], set()
+    for entry in raw if isinstance(raw, list) else []:
+        label = None
+        if isinstance(entry, dict):
+            label, entry = entry.get("label"), entry.get("path")
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        path = expand_path(entry.strip())
+        if path in seen:
+            continue
+        seen.add(path)
+        name = str(label).strip() if isinstance(label, str) and label.strip() else ""
+        found.append((name or os.path.basename(path.rstrip("/")) or path, path))
+    return found
+
+
 def disabled_repos():
     """Names of the folder repos switched off (config "repos_disabled"). Every other repo is on."""
     value = read_config().get("repos_disabled")
