@@ -35,6 +35,8 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 ## Código
 
 - Código em inglês; texto ao usuário por i18n (pt-BR principal).
+- Repo sem `ARCH.md` na raiz está fora da regra; com ele, vale `harness/arch-format.md`.
+- Mínimo: camadas separadas e dono único por efeito; desenho de tela só na camada de desenho.
 - Nada fixo da demanda no código: entra por argumento ou `config.json`.
 - Um script por tarefa, não por caso; estender o que já existe.
 - Script reutilizável fica na pasta de scripts do repo, não em temporário.

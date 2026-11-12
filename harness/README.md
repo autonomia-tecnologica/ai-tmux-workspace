@@ -11,6 +11,8 @@ já declara.
 
 ## Índice
 
+- [`arch-format.md`](arch-format.md) — o piso do `ARCH.md`: camadas, direção de dependência, dono
+  único por efeito, dívidas e manutenção.
 - [`backlog-format.md`](backlog-format.md) — o formato do `BACKLOG.md`.
 - [`choke-point.md`](choke-point.md) — dono único por efeito: quem desenha, chama `tmux`, escreve
   arquivo ou formata caminho, a dívida de desenho e o teste de allowlist que só encolhe.

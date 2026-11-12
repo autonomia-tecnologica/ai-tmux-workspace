@@ -12,6 +12,10 @@ owning the terminal for its lifetime, so only module-level imports are guarded.
 `ALLOWED` is today's debt. It may only shrink: every entry carries its reason, and the exact set is
 pinned by `EXPECTED_ALLOWED`, so adding a new exception needs an explicit edit to this test (and
 removing one means editing both down).
+
+The same file also guards the architecture document: `ARCH.md` must exist at the root, keep every
+minimum section of `harness/arch-format.md`, and name every top-level `src/*.py` in one of its
+layers. `src/agents/` enters by layer, not by this test.
 """
 import ast
 import re
@@ -20,6 +24,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
+ARCH = ROOT / "ARCH.md"
+
+# Exact titles required by harness/arch-format.md.
+ARCH_SECTIONS = (
+    "## Camadas",
+    "## Direção de dependência",
+    "## Dono único por efeito",
+    "## Idioma e contratos",
+    "## Dívidas conhecidas",
+    "## Manutenção",
+)
 
 # Modules allowed to emit a guarded terminal effect, each with the reason it is still an exception.
 ALLOWED = {
@@ -160,6 +175,38 @@ class ArchitectureTest(unittest.TestCase):
 
     def test_stdout_write_is_not_an_effect(self):
         self.assertEqual(effects('sys.stdout.write("{\\"ok\\": true}")\n'), [])
+
+
+def arch_headings(text):
+    """Level-2 headings of `text`, stripped, so a section title is matched as a heading."""
+    return {line.strip() for line in text.splitlines() if line.startswith("## ")}
+
+
+class ArchDocumentTest(unittest.TestCase):
+    def test_arch_md_exists(self):
+        self.assertTrue(
+            ARCH.is_file(),
+            "ARCH.md is missing at the repo root: it declares the layers, the dependency direction "
+            "and the single owner per effect (see harness/arch-format.md)",
+        )
+
+    def test_arch_md_has_every_minimum_section(self):
+        headings = arch_headings(ARCH.read_text(encoding="utf-8"))
+        missing = [section for section in ARCH_SECTIONS if section not in headings]
+        self.assertEqual(
+            missing, [],
+            "ARCH.md is missing the minimum section(s): " + ", ".join(missing),
+        )
+
+    def test_every_src_module_is_named_in_arch_md(self):
+        text = ARCH.read_text(encoding="utf-8")
+        missing = [path.name for path in sorted(SRC.glob("*.py"))
+                   if f"src/{path.name}" not in text]
+        self.assertEqual(
+            missing, [],
+            "ARCH.md must name every top-level src/*.py in a layer table; missing: "
+            + ", ".join(missing) + " (src/agents/ enters by layer, not by this test)",
+        )
 
 
 if __name__ == "__main__":
