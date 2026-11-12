@@ -1109,6 +1109,7 @@ case "${1:-}" in
   reload) shift; reload "$@" ;;
   fit) shift; fit "$@" ;;
   mview) shift; mview "$@" ;;
+  view) shift; python3 "$SRC/opener.py" "$@" ;;
   menu) menu "$2" "$3" ;;
   ""|-*) start_workspace claude ;;
   *) msg cli.unknown_command command="$1" >&2; exit 2 ;;
