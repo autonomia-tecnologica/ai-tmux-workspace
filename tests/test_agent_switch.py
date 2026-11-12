@@ -100,19 +100,22 @@ class SessionCommandTest(unittest.TestCase):
         self.assertIn("--permission-mode acceptEdits", out)
 
     # --- OpenCode harness --------------------------------------------------------------------
+    def generated_config(self, profile="oc"):
+        return str(self.state / "settings" / f"opencode-{profile}.json")
+
     def test_opencode_session_command_has_config_and_continue_without_claude_flags(self):
         self.opencode()
         out = self.run_lib("session-command", "oc", str(self.repo))
-        config = str(self.home / "oc.json")
-        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(config)} opencode"
+        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode"
         self.assertEqual(out, f"{base} --continue || {base}")
         for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
 
-    def test_opencode_without_config_has_continue_and_no_claude_flag(self):
+    def test_opencode_without_declared_config_gets_the_generated_one(self):
         self.opencode(config="")
         out = self.run_lib("session-command", "oc", str(self.repo))
-        self.assertEqual(out, f"{self.box('oc')} opencode --continue || {self.box('oc')} opencode")
+        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode"
+        self.assertEqual(out, f"{base} --continue || {base}")
 
     # --- per-tab session ids (item 102) ------------------------------------------------------
     def test_claude_new_tab_uses_a_recorded_session_id_and_falls_back_to_resume(self):
@@ -156,12 +159,14 @@ class SessionCommandTest(unittest.TestCase):
         self.assertNotEqual(new, "missing-session")
         self.assertIn(new, calls[1])
 
-    def test_opencode_new_tab_continues_the_last_session_and_records_the_tab(self):
+    def test_opencode_new_tab_starts_a_fresh_session_and_records_the_tab(self):
         self.opencode()
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
         base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
-                f"env OPENCODE_CONFIG={shlex.quote(str(self.home / 'oc.json'))} opencode")
-        self.assertEqual(out, f"{base} --continue || {base}")
+                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode")
+        # No stored id: a declared fresh session, never the repo's last session in silence.
+        self.assertEqual(out, base)
+        self.assertNotIn("--continue", out)
         self.assertIn("WS_SESSION_TAB=tab-2", out)
         self.assertIn(f"WS_STATE={self.state}", out)
         self.assertNotIn("--session ", out)
@@ -172,13 +177,14 @@ class SessionCommandTest(unittest.TestCase):
         session_state.add(str(self.repo), "tab-2", "oc", "sess-oc")
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
         base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
-                f"env OPENCODE_CONFIG={shlex.quote(str(self.home / 'oc.json'))} opencode")
+                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode")
         self.assertIn("--session sess-oc ||", out)
         self.assertIn("reset-session", out)
-        self.assertIn("--continue ||", out)
+        self.assertIn("&&", out)
+        # An id that no longer exists falls back to a fresh session, not to `--continue`.
+        self.assertNotIn("--continue", out)
         fallback = out.split("||", 1)[1]
-        self.assertIn("&&", fallback)
-        self.assertIn(f"{base} --continue || {base}; }}", fallback)
+        self.assertTrue(fallback.rstrip().endswith(f"{base}; }}"), fallback)
         self.assertNotIn("--session ", fallback)
 
     def test_legacy_two_argument_command_keeps_continue(self):
@@ -193,6 +199,27 @@ class SessionCommandTest(unittest.TestCase):
         self.claude()
         self.assertEqual(self.run_lib("opening-command", str(self.repo)),
                          self.run_lib("session-command", "claude", str(self.repo)))
+
+    # --- the lifecycle contract drives the session line (item 124) ----------------------------
+    def test_prepare_profile_regenerates_the_opencode_plugin(self):
+        self.opencode()
+        out = self.run_lib("prepare-profile", "oc")
+        self.assertEqual(out, self.generated_config())
+        plugin = self.state / "settings" / "opencode-plugin-oc.js"
+        self.assertTrue(plugin.is_file())
+        self.assertEqual(json.loads(Path(out).read_text(encoding="utf-8"))["plugin"],
+                         [plugin.as_uri()])
+
+    def test_session_command_asks_the_adapter_instead_of_branching_by_harness(self):
+        source = (ROOT / "src" / "lib.py").read_text(encoding="utf-8")
+        for name in ("session_command", "agent_launch_command"):
+            body = source.split(f"def {name}(", 1)[1].split("\ndef ", 1)[0]
+            with self.subTest(function=name):
+                self.assertNotIn("is_claude_harness", body)
+                self.assertIn("profile_adapter", body)
+        session = source.split("def session_command(", 1)[1].split("\ndef ", 1)[0]
+        for name in ("fresh_args", "resume_args", "continue_args", "session_id_source"):
+            self.assertIn(name, session)
 
     # --- recorded identity -------------------------------------------------------------------
     def test_recorded_identity_is_the_base_line_without_the_session_box(self):

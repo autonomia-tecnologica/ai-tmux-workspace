@@ -484,13 +484,11 @@ def agent_path(path=None):
 def agent_launch_command(mode="", repo=None, profile=None, tab=None):
     """Command line that actually launches one profile's agent.
 
-    `profile` names the profile; without it the configured agent is used. Claude harness: a managed
-    profile (`manage: true`) runs with the workspace-generated settings (`--settings`) unless its
-    command already passes one; profiles other than `claude` run with tool search off; `mode` is added
-    as `--permission-mode` when given. With `manage: false` the Claude command runs exactly as the
-    profile declares it (no settings, mode or tool search). OpenCode harness: none of the Claude flags
-    apply; the profile's `config` is exported as `OPENCODE_CONFIG`, and `PATH` gains the existing
-    user binary folders that the tmux server's PATH may be missing (`agent_path`).
+    `profile` names the profile; without it the configured agent is used. The harness line is the
+    adapter's (`profile_adapter(...).launch`): Claude adds the generated settings, the tool-search
+    flag and `--permission-mode`; OpenCode exports `OPENCODE_CONFIG` (the generated config with the
+    workspace plugin) and adds the user binary folders to `PATH`. With `manage: false` the Claude
+    profile runs exactly as it declares. Nothing here branches by agent.
 
     With `repo`, the line is prefixed with the session box (`WS_SESSION_ROLE`/`WS_SESSION_ROOT`/
     `WS_SESSION_PROFILE` from `src/session.py`), so the hook and the OpenCode plugin enforce the same
@@ -504,25 +502,7 @@ def agent_launch_command(mode="", repo=None, profile=None, tab=None):
     if _KEY_LITERAL.search(cmd):
         # a key in the command would travel in argv; F08 forbids it
         raise SettingsError(t("settings.err.secret_value", path=f"profiles[{name}].command"))
-    if not is_claude_harness(name):
-        config = profile_config(name)
-        current = os.environ.get("PATH", "")
-        path = agent_path(current)
-        # Only export PATH when it actually grows: an already complete PATH keeps the old line.
-        exports = [f"PATH={shlex.quote(path)}"] if path != current else []
-        if config:
-            exports.append(f"OPENCODE_CONFIG={shlex.quote(config)}")
-        launch = f"env {' '.join(exports)} {cmd}" if exports else cmd
-    elif not manage_enabled():
-        launch = cmd
-    else:
-        if not _has_settings_flag(cmd):
-            settings_path = ensure_profile_settings(name)
-            if settings_path is not None:
-                cmd = f"{cmd} --settings {shlex.quote(str(settings_path))}"
-        launch = cmd if name == "claude" else f"env ENABLE_TOOL_SEARCH=false {cmd}"
-        if mode:
-            launch = f"{launch} --permission-mode {shlex.quote(mode)}"
+    launch = profile_adapter(name).launch(name, mode)
     box = session.prefix(repo, _main_path(), name, tab) if repo else ""
     return f"{box} {launch}" if box else launch
 
@@ -611,29 +591,44 @@ def _state_call(repo, tab, session=None):
     return " ".join(shlex.quote(argument) for argument in arguments)
 
 
-def session_command(profile, repo, tab=""):
-    """Session command line of one profile for a repo.
+def _session_args(launch, args):
+    """Launch line plus session arguments; an empty list leaves the line untouched."""
+    tokens = [str(arg) for arg in args or []]
+    if not tokens:
+        return launch
+    return " ".join([launch, *(shlex.quote(token) for token in tokens)])
 
-    Without `tab` (the legacy two-argument call), the line is `launch --continue || launch`: it
+
+def _fresh_id(adapter):
+    """Session id the workspace must choose before launch, or "" when the agent reports it."""
+    from agents import SESSION_ID_WORKSPACE
+
+    return session_state.new_id() if adapter.session_id_source == SESSION_ID_WORKSPACE else ""
+
+
+def session_command(profile, repo, tab=""):
+    """Session command line of one profile for a repo, built from the adapter's lifecycle contract.
+
+    Without `tab` (the legacy two-argument call), the line is `launch + continue_args || launch`: it
     resumes the last session of the repo and falls back to a new one. With `tab`, the tab's own
     session id is used instead, so two tabs never resume each other's session:
 
-    - Claude: a new tab gets `--session-id <id>`; a tab with a recorded id gets
-      `--resume <id> || <new id>`, because an id that no longer exists must fall back to a fresh
-      session.
-    - OpenCode: a new tab continues the last session of the repo
-      (`--continue || <new session>`); a tab with a recorded id gets
-      `--session <id> || <continue || new session>`, so an id that no longer exists falls back
-      to the repo's last session before starting a fresh one.
+    - the adapter says where the id comes from (`session_id_source`). When the workspace chooses it
+      (Claude), a new tab gets `fresh_args(<id>)` and a recorded id gets `resume_args(<id>)`; an id
+      that no longer exists falls back to a fresh session with a new id.
+    - when the agent reports it (OpenCode), a new tab starts a fresh session with no session
+      argument and never adopts the repo's last session in silence; the plugin records the real id
+      for the next restore.
 
-    The permission mode is read and recorded per repo+profile, so two profiles can run in the same
-    repo without overwriting each other's mode. OpenCode records the identity in `agent.json` (no
-    Claude flags). A SettingsError from `agent_launch_command` propagates: nothing is recorded
-    before the line is built."""
+    The permission mode is read and recorded only for an adapter that declares
+    `records_permission_mode`, per repo+profile, so two profiles can run in the same repo without
+    overwriting each other's mode. A SettingsError from `agent_launch_command` propagates: nothing is
+    recorded before the line is built."""
     repo = expand_path(repo)
     if not repo_enabled(repo):   # before anything is recorded for the repo
         raise RepoDisabledError(t("repo.disabled", repo=os.path.basename(repo)))
-    if is_claude_harness(profile):
+    adapter = profile_adapter(profile)
+    if adapter.records_permission_mode:
         identity = agent_identity(profile)
         mode = permission_state.mode_for(repo, identity, True, profile)
         launch = agent_launch_command(mode, repo, profile, tab or None)
@@ -644,26 +639,19 @@ def session_command(profile, repo, tab=""):
         state[repo] = {"command": agent_identity(profile)}
         _write_agent_state(state)
     if not tab:
-        return f"{launch} --continue || {launch}"
+        continued = _session_args(launch, adapter.continue_args())
+        return f"{continued} || {launch}" if continued != launch else launch
     session = session_state.session_for(repo, tab)
-    if is_claude_harness(profile):
-        if session:
-            session_state.add(repo, tab, profile, session)
-            fresh = session_state.new_id()
-            reset = _state_call(repo, tab, fresh)
-            return (f"{launch} --resume {shlex.quote(session)} || "
-                    f"{{ {reset} && {launch} --session-id {shlex.quote(fresh)}; }}")
-        fresh = session_state.new_id()
-        session_state.reset_session(repo, tab)
-        session_state.add(repo, tab, profile, fresh)
-        return f"{launch} --session-id {shlex.quote(fresh)}"
     if session:
         session_state.add(repo, tab, profile, session)
-        reset = _state_call(repo, tab)
-        return (f"{launch} --session {shlex.quote(session)} || "
-                f"{{ {reset} && {launch} --continue || {launch}; }}")
-    session_state.add(repo, tab, profile)
-    return f"{launch} --continue || {launch}"
+        resumed = _session_args(launch, adapter.resume_args(session))
+        fresh = _fresh_id(adapter)
+        reset = _state_call(repo, tab, fresh or None)
+        return f"{resumed} || {{ {reset} && {_session_args(launch, adapter.fresh_args(fresh))}; }}"
+    fresh = _fresh_id(adapter)
+    session_state.reset_session(repo, tab, fresh)
+    session_state.add(repo, tab, profile, fresh or None)
+    return _session_args(launch, adapter.fresh_args(fresh))
 
 
 def opening_command(repo, profile=None):
@@ -1298,7 +1286,7 @@ if __name__ == "__main__":
         repo = expand_path(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else ""
         try:
             name = profile or agent_name()
-            if repo and is_claude_harness(name):
+            if repo and profile_adapter(name).records_permission_mode:
                 cmd = agent_identity(name)
                 mode = permission_state.mode_for(repo, cmd, True, name)
                 launch = agent_launch_command(mode, repo, name)
@@ -1319,9 +1307,18 @@ if __name__ == "__main__":
         print("\n".join(profile_names()))
     elif command == "default-profile":  # bash: the configured agent name
         print(agent_name())
-    elif command == "ensure-settings":   # bash reload: generate a profile's settings without launching
+    elif command == "ensure-settings":   # bash: generate a profile's Claude settings without launching
         try:
             path = ensure_profile_settings(profile or agent_name())
+        except SettingsError as error:
+            print(error, file=sys.stderr)
+            sys.exit(2)
+        if path:
+            print(path)
+    elif command == "prepare-profile":   # bash restart/reload: regenerate the harness wiring of a profile
+        name = profile or agent_name()
+        try:
+            path = profile_adapter(name).prepare(name)
         except SettingsError as error:
             print(error, file=sys.stderr)
             sys.exit(2)

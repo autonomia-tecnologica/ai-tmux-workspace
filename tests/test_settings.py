@@ -319,7 +319,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         self.assertEqual(out, "env OPENCODE_CONFIG=" +
-                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode-deepseek.json") +
+                         str(self.state / "settings" / "opencode-opencode-deepseek.json") +
                          " opencode")
         for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
@@ -341,7 +341,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         self.assertEqual(out, "env OPENCODE_CONFIG=" +
-                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode.json") + " opencode")
+                         str(self.state / "settings" / "opencode-opencode.json") + " opencode")
         for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
 
@@ -349,7 +349,9 @@ class SettingsTest(unittest.TestCase):
         self.configure({"agent": "opencode", "profiles": {"opencode": {"harness": "opencode"}}})
         proc = self.run_lib("profile-cmd", "opencode")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "opencode")
+        self.assertEqual(proc.stdout.strip(),
+                         "env OPENCODE_CONFIG=" +
+                         str(self.state / "settings" / "opencode-opencode.json") + " opencode")
 
     def test_opencode_profile_generates_no_settings(self):
         self.opencode_profile()

@@ -11,10 +11,11 @@ import sys
 from pathlib import Path
 
 import conference
-from .base import Adapter, Update, _t, clip, short_path
+from .base import SESSION_ID_WORKSPACE, Adapter, Update, _t, clip, short_path
 
 ALLOWED_TOOLS = "Read,Edit"
 DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,Write,WebFetch,WebSearch,Grep,Glob"
+SETTINGS_FLAG = re.compile(r"(?:^|\s)--settings(?:=|\s|$)")
 
 WORKER = Path(conference.__file__).resolve().parent / "conference_worker.py"
 
@@ -78,6 +79,49 @@ class ClaudeAdapter(Adapter):
 
     harness = "claude"
     stream_format = "stream-json"
+    session_id_source = SESSION_ID_WORKSPACE
+    records_permission_mode = True
+
+    def prepare(self, profile=None):
+        """Generated settings of the profile (harness hooks, deny rules, profile settings).
+
+        "" when the profile has no generated settings: `manage: false`, a legacy command that already
+        owns `--settings`, or an OpenCode profile (`ensure_profile_settings` returns None)."""
+        import lib
+
+        path = lib.ensure_profile_settings(self.profile_name(profile))
+        self._settings = str(path) if path else ""
+        return self._settings
+
+    def launch(self, profile=None, mode=""):
+        """Interactive Claude command: profile command, generated settings when managed, tool search
+        off for profiles other than `claude`, and the recorded permission mode."""
+        import lib
+
+        profile = self.profile_name(profile)
+        command = self.command_line(profile)
+        if not lib.manage_enabled():
+            return command
+        if not SETTINGS_FLAG.search(command):
+            settings = self.prepare(profile)
+            if settings:
+                command = f"{command} --settings {shlex.quote(settings)}"
+        launch = command if profile == "claude" else f"env ENABLE_TOOL_SEARCH=false {command}"
+        if mode:
+            launch = f"{launch} --permission-mode {shlex.quote(mode)}"
+        return launch
+
+    def fresh_args(self, session=""):
+        """A new session with the id the workspace chose: Claude needs it on the launch line."""
+        return ["--session-id", str(session)] if session else []
+
+    def resume_args(self, session):
+        """Resume exactly the recorded session id."""
+        return ["--resume", str(session)]
+
+    def continue_args(self):
+        """Continue the last session of the repo, the legacy two-argument opening."""
+        return ["--continue"]
 
     def command(self, profile=None):
         """Headless Claude run with the profile's settings, the conference hook and only two tools."""

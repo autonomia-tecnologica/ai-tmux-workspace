@@ -9,6 +9,11 @@ An adapter owns only the harness side of the conversation: building the headless
 its stream and turning one event into an update. It owns no capability rule: `permission` asks the
 central engine in `src/policy.py`, the same engine the Claude hook (`src/hook.py`) and the OpenCode
 plugin (`harness/opencode-policy.js`) call.
+
+It also declares the harness side of the session lifecycle, so no caller branches by agent:
+`prepare` builds the harness files a restart needs, `launch` is the command that starts the agent,
+`fresh_args`/`resume_args`/`continue_args` are the session arguments, and `session_id_source` says
+where the id comes from (the workspace chooses it, or the hook/plugin records it).
 """
 import contextlib
 import json
@@ -20,7 +25,15 @@ PROTOCOL = "acp-shaped/1"
 HARNESS_CLAUDE = "claude"
 HARNESS_OPENCODE = "opencode"
 
+# Where the id of a session comes from, declared by the adapter and read by `lib.session_command`:
+# the workspace chooses it and passes it on launch (`--session-id`), or the agent reports it and the
+# hook/plugin records it in `tabs/session-<tab>`.
+SESSION_ID_WORKSPACE = "workspace"
+SESSION_ID_AGENT = "agent"
+SESSION_ID_SOURCES = (SESSION_ID_WORKSPACE, SESSION_ID_AGENT)
+
 METHODS = ("initialize", "session", "prompt", "permission", "update")
+LIFECYCLE = ("prepare", "launch", "fresh_args", "resume_args", "continue_args")
 
 
 @dataclass(frozen=True)
@@ -67,6 +80,10 @@ class Adapter:
 
     harness = ""
     stream_format = ""
+    # Declared facts `lib` reads instead of branching by agent: where the session id comes from and
+    # whether the workspace records/passes a permission mode on the launch line.
+    session_id_source = SESSION_ID_AGENT
+    records_permission_mode = False
 
     def __init__(self, profile=None):
         self.profile = profile or ""
@@ -78,12 +95,42 @@ class Adapter:
             "harness": self.harness,
             "stream": self.stream_format,
             "methods": list(METHODS),
+            "lifecycle": list(LIFECYCLE),
+            "session_id_source": self.session_id_source,
             "permission": "central",
         }
 
     def command(self, profile=None):
         """Headless command line of `profile`; the context comes from stdin, not from argv."""
         raise NotImplementedError
+
+    def prepare(self, profile=None):
+        """Build or refresh the harness files a launch reads, and return their path ("" when none).
+
+        Idempotent and safe without launching: `workspace restart` calls it for each server so the
+        restarted agent reads the current wiring (Claude settings, the OpenCode plugin)."""
+        return ""
+
+    def launch(self, profile=None, mode=""):
+        """Command line that starts the agent of `profile`; the session box is the caller's.
+
+        Subclasses add their own harness flags (settings, config, permission mode)."""
+        return self.command_line(profile)
+
+    def fresh_args(self, session=""):
+        """Arguments that start a new session.
+
+        `session` is the id the workspace chose, used only when `session_id_source` is
+        `SESSION_ID_WORKSPACE`; the default ([]) means the harness starts a new session by itself."""
+        return []
+
+    def resume_args(self, session):
+        """Arguments that resume exactly `session`; every adapter declares the flag of its harness."""
+        raise NotImplementedError
+
+    def continue_args(self):
+        """Arguments that continue the last session of the repo, or [] when the harness has none."""
+        return []
 
     def profile_name(self, profile=None):
         """Profile to use: the explicit one, the one this adapter was created for, or one that

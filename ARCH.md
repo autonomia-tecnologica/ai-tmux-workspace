@@ -145,16 +145,25 @@ levam a caixa até o hook e o plugin, que aplicam a política.
    `session_run` roda o processo do agente.
 2. Id real: o hook (Claude) ou o plugin (OpenCode) grava o id em `tabs/session-<aba>`, e
    `session_state.session_for` lê o valor.
-3. Retomada: `resume` e `session_restore` reabrem a sessão pelo id gravado. Sem id gravado,
-   `open_sessions` abre o perfil padrão.
+3. Retomada: `session_restore` reabre as abas na ordem, cada uma pelo id gravado; o adaptador
+   declara os argumentos (`resume_args`/`fresh_args`/`continue_args`) e de onde vem o id. Sem id
+   gravado, o adaptador decide: Claude recebe um id novo (`--session-id`), OpenCode abre uma sessão
+   nova declarada (sem `--continue`).
 4. Reinício de contexto: `session_state.reset_session` limpa o arquivo vivo e grava o id novo, ou nenhum.
 5. Fim: `session_exit` e `tab_exit` tiram a aba do estado (`remove`) e devolvem o foco ao principal.
+6. Reinício do servidor: `restart_one` (`bin/workspace`) salva as abas, derruba o servidor com
+   `server_down`, regenera o wiring do perfil (`lib prepare-profile` → `Adapter.prepare`) e sobe de
+   novo, então o OpenCode volta com o plugin atual.
 
 ## Adaptadores de agente
 
 Toda diferença de agente passa por `src/agents/`: `base.py` (contrato `Adapter`, `Update`, `short_path`
-e a escolha do adaptador pelo harness), `claude.py` e `opencode.py`. Fora de `src/agents/`, o código não
-ramifica por agente. Quando precisa de um fato do agente, pede ao adaptador. Hoje `lib` ramifica por
+e a escolha do adaptador pelo harness), `claude.py` e `opencode.py`. O contrato de ciclo de vida é
+`prepare` (arquivos gerados que o servidor lê), `launch` (linha que sobe o agente), `fresh_args`,
+`resume_args` e `continue_args` (argumentos de sessão) e `session_id_source` (de onde vem o id: o
+workspace escolhe, ou o hook/plugin grava). Fora de `src/agents/`, o código não ramifica por agente
+nesse caminho: `lib.session_command` monta a linha com esses métodos, e `bin/workspace restart`
+regenera o wiring por `lib prepare-profile`. A geração de settings do Claude ainda ramifica por
 harness fora da pasta (dívida abaixo).
 
 ## Config e estado
@@ -171,6 +180,8 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 | `$WS_STATE/sessions/<id>` (ficha de sessão) | `src/hook.py` | `hook` |
 | `$WS_STATE/sessions/<id>.status.json` e `$WS_STATE/limits.json` | `src/statusline.py` | `statusline` |
 | `$WS_STATE/settings/<perfil>` (settings gerados por perfil) | `src/lib.py` (`ensure-settings`) | `lib`; o instalador lê o caminho |
+| `$WS_STATE/settings/opencode-<perfil>.json` (config gerado do OpenCode) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
+| `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin da política) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
 | `$WS_STATE/requests/` (pedidos de conferência) | `src/conference.py` | `conference` (dívida: camada de desenho) |
 | cache de uso extra | `src/extra_usage.py` | `extra_usage` |
 
@@ -194,7 +205,7 @@ módulos, cada um com o próprio default (dívida abaixo). O dono do default dev
 | `src/session_placeholder.py` desenha sozinho (clear + `SIGWINCH`) | dívida legítima: precisa sobreviver ao reload sem `lib`/`tmux` | manter até o reload deixar de exigir tela própria; a exceção está documentada no docstring e fixada no teste |
 | `src/mic.py` mantém laço de ditado em tela cheia e alt-screen fora do `viewer` | o ditado controla o tempo do laço e o estado do microfone | migrar o laço para o `viewer`, restando ao `mic` só a captura e a transcrição |
 | `src/conference.py` lê uma tecla em modo cru no popup de pedido | a tela desenha pelo `viewer`; a leitura de tecla ficou no módulo | usar a leitura de tecla do `viewer`, como os demais popups |
-| `bin/workspace` chama `tmux` (209 de 1132 linhas) e é dono de abas, sessão e geometria | o script de entrada virou o motor: abas (`tab_*`, `state_*`), sessão (`session_*`) e geometria (`layout_apply`) | abas e sessão vão para `src/` (sessão e estado), e a chamada a `tmux` vai para `src/tmux.py`; `layout_apply` continua dono da geometria (item 108). Prova: `grep -c tmux bin/workspace` (209) e `grep -n "^tab_\|^session_\|^layout_apply" bin/workspace`. Freio que falta: nenhum; hoje só o grep prova |
+| `bin/workspace` chama `tmux` (209 de 1136 linhas) e é dono de abas, sessão e geometria | o script de entrada virou o motor: abas (`tab_*`, `state_*`), sessão (`session_*`) e geometria (`layout_apply`) | abas e sessão vão para `src/` (sessão e estado), e a chamada a `tmux` vai para `src/tmux.py`; `layout_apply` continua dono da geometria (item 108). Prova: `grep -c tmux bin/workspace` (209) e `grep -n "^tab_\|^session_\|^layout_apply" bin/workspace`. Freio que falta: nenhum; hoje só o grep prova |
 | painéis chamam `bin/workspace` por subprocesso (`lib.WS`) | o script é a única porta para ação de aba e sessão, e o painel não tem função de `src/` para chamar | ações viram funções de `src/` que o painel e o script chamam; o painel deixa de usar `lib.WS`. Prova: `grep -n "lib.WS" src/panel_*.py` (repos, sessions, tabs e tasks) |
 | `conference*` escreve estado na camada de desenho (pedidos, log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
 | `lib` carrega `harness/harness.py` por caminho | a renderização do settings do harness mora no motor instalado, então `src/` depende de `harness/` | `lib` chama o motor instalado (`AT_HARNESS_DIR`) por processo, ou a renderização vai para `src/`; `harness/` fica só com regra e motor. Prova: `grep -n spec_from_file_location src/lib.py` e `grep -n HARNESS_PY src/lib.py` |
@@ -202,7 +213,7 @@ módulos, cada um com o próprio default (dívida abaixo). O dono do default dev
 | default de `WS_STATE` e da config repetido em vários módulos | cada módulo reimplementa `Path.home() / ".cache" / "workspace"`, porque a fundação não importa `lib` | um default só, em `src/session.py` (camada de sessão, abaixo de `lib`); os módulos importam dele. Prova: `grep -n WS_STATE src/*.py` (lib, permission_state, hook, session_state, statusline, conference) e `grep -n AT_WS_CONFIG src/lib.py` |
 | `agents/claude.py` e `agents/opencode.py` importam `conference` no nível do módulo (estado → desenho) | o adaptador lê as constantes da conferência; import de módulo quebra a direção permitida | import local dentro da função que usa a constante, com motivo (como `lib`), ou levar as constantes para a camada de estado. Prova: `grep -n "^import conference" src/agents/claude.py src/agents/opencode.py` (linhas 13 e 15) |
 | `conference_worker` importa `agents` no nível do módulo (desenho → estado) | o worker usa o adaptador para rodar o agente, e o texto anterior dizia que o ciclo era só local | import local dentro da função que chama o adaptador, com motivo no código. Prova: `grep -n "^import agents" src/conference_worker.py` (linha 39) |
-| `lib` ramifica por harness fora de `src/agents/` (`is_claude_harness`) | a diferença entre Claude e OpenCode decide comportamento de sessão em `lib`, fora do adaptador | a diferença vai para o adaptador em `src/agents/`, e `lib` pede a ele. Prova: `grep -n is_claude_harness src/lib.py` |
+| `lib` ramifica por harness fora de `src/agents/` (`is_claude_harness`) | a geração de settings do Claude decide em `lib`, fora do adaptador (sessão e launch já pedem ao adaptador) | a geração de settings vai para o adaptador do Claude, e `lib` pede a ele. Prova: `grep -n is_claude_harness src/lib.py` |
 
 ## Manutenção
 

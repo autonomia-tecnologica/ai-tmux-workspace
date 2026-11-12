@@ -7,8 +7,12 @@ surface for Claude Code or OpenCode. The package does not depend on ACP; it only
 from .base import (
     HARNESS_CLAUDE,
     HARNESS_OPENCODE,
+    LIFECYCLE,
     METHODS,
     PROTOCOL,
+    SESSION_ID_AGENT,
+    SESSION_ID_SOURCES,
+    SESSION_ID_WORKSPACE,
     Adapter,
     Prompt,
     Session,
@@ -51,8 +55,8 @@ def read_stream(stream, repo="", on_status=None, profile=None, selected=None):
 
 
 __all__ = [
-    "ADAPTERS", "CLAUDE", "HARNESS_CLAUDE", "HARNESS_OPENCODE", "METHODS", "OPENCODE",
-    "PROTOCOL", "Adapter", "ClaudeAdapter", "OpenCodeAdapter", "Prompt", "Session", "Update",
-    "adapter", "adapter_for", "central_decision", "normalize_event", "read_stream",
-    "ALLOWED_TOOLS", "DISALLOWED_TOOLS",
+    "ADAPTERS", "CLAUDE", "HARNESS_CLAUDE", "HARNESS_OPENCODE", "LIFECYCLE", "METHODS", "OPENCODE",
+    "PROTOCOL", "SESSION_ID_AGENT", "SESSION_ID_SOURCES", "SESSION_ID_WORKSPACE", "Adapter",
+    "ClaudeAdapter", "OpenCodeAdapter", "Prompt", "Session", "Update", "adapter", "adapter_for",
+    "central_decision", "normalize_event", "read_stream", "ALLOWED_TOOLS", "DISALLOWED_TOOLS",
 ]
