@@ -53,7 +53,12 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Categorias fixas: `Segurança` (freio em código), `HARNESS.md` (regra escrita) e `Arquitetura`
   (camadas, dono único, eventos, UI, ciclo de vida e dívida de desenho; freio em `tests/test_architecture.py`).
 - Refinada = despachável, não concluída; item ambíguo fica em `A refinar`.
-- Não refinar sem pedido; não perguntar antes de salvar tarefa nova.
+- Tarefa que a pessoa pede entra já refinada (`Caminhos`, `Depende de`, `Aceite`, `Validação`); o leve
+  se decide sozinho.
+- Refinamento que exige decisão pesada: uma enquete só — salvar já refinada (e então perguntar uma por
+  vez) ou sem refinar em `A refinar`; "salva sem refinar" vale a qualquer momento, sem enquete.
+- A pergunta não interrompe o processo em curso: o item é salvo na hora com o que se sabe; o
+  refinamento pesado vem depois.
 - Decisão da pessoa vai para o `Decidido` do item na hora em que ela responde, antes da próxima pergunta; nunca em lote no fim.
 - Item com `Decidido` não é perguntado de novo; pergunta só o que está em `Falta decidir`.
 - Trabalho entregue por subagente vai para o `Estado` do item (branch, validação, o que falta) antes de encerrar a sessão.
