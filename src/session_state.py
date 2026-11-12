@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import sys
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,23 @@ try:
     import fcntl
 except ImportError:     # no fcntl (Windows): updates are not serialized
     fcntl = None
+
+
+def _is_darwin():
+    """True on macOS. Kept as a function so tests can patch it and run the Darwin paths on Linux."""
+    return sys.platform == "darwin"
+
+
+def path_key(path):
+    """Comparison key for a path: byte-exact on Linux, NFC and casefolded on macOS.
+
+    APFS is case-insensitive and normalization-insensitive, so `~/Repo` and `~/repo` (or the NFC
+    and NFD spellings of the same name) name one directory and must share one state file. The key
+    is only for comparing and hashing; the real path stays as the user wrote it."""
+    text = str(path)
+    if not _is_darwin():
+        return text
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
 
 
 def _real(repo):
@@ -40,8 +58,11 @@ def state_dir():
 
 
 def repo_key(repo):
-    """sha1 hex digest of the normalized repo path, used as the state file name."""
-    return hashlib.sha1(_real(repo).encode("utf-8")).hexdigest()
+    """sha1 hex digest of the normalized repo path, used as the state file name.
+
+    The digest is taken over `path_key`, so on macOS two spellings of the same directory (case or
+    Unicode normalization) get the same file while Linux keeps byte-exact keys."""
+    return hashlib.sha1(path_key(_real(repo)).encode("utf-8")).hexdigest()
 
 
 def state_path(repo):

@@ -8,6 +8,7 @@ the launcher sets it keep working. With a role, an engine failure is a denial (f
 import contextlib
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -174,8 +175,31 @@ def _notify(d, ev):
 
 # --- claude process lookup -------------------------------------------------------------------
 
+def _is_darwin():
+    """True on macOS. Kept as a function so tests can patch it and run the `ps` paths on Linux."""
+    return sys.platform == "darwin"
+
+
+def _ps_field(pid, field):
+    """One `ps` column for `pid` on macOS, or None when `ps` fails (missing or unreadable process)."""
+    try:
+        proc = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
+                              capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
 def _proc_stat(pid):
-    """(ppid, comm) from /proc/<pid>/stat. Raises OSError when /proc is missing (e.g. macOS)."""
+    """(ppid, comm) from /proc/<pid>/stat, or from `ps` on macOS. Raises OSError when the process
+    cannot be read, so callers fail safe instead of trusting a stale pid."""
+    if _is_darwin():
+        ppid, comm = _ps_field(pid, "ppid"), _ps_field(pid, "comm")
+        if ppid is None or comm is None:
+            raise OSError(f"ps could not read process {pid}")
+        return int(ppid), os.path.basename(comm)
     with open(f"/proc/{pid}/stat", "rb") as f:
         raw = f.read().decode("utf-8", "replace")
     comm = raw[raw.index("(") + 1: raw.rindex(")")]
@@ -186,6 +210,12 @@ def _proc_stat(pid):
 def _is_claude(pid, comm):
     if comm == "claude":
         return True
+    if _is_darwin():
+        command = _ps_field(pid, "command") or ""
+        argv = command.split()[:2]
+        # The npm install runs as `node .../claude-code/cli.js`, so look at the first two tokens.
+        return (any(os.path.basename(a) in CLAUDE_NAMES for a in argv)
+                or "claude-code" in command)
     # The npm install runs as `node .../claude-code/cli.js`, so look at the first two argv entries.
     with open(f"/proc/{pid}/cmdline", "rb") as f:
         argv = [a.decode("utf-8", "replace") for a in f.read().split(b"\0")[:2]]

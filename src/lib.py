@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -461,17 +462,25 @@ def ensure_profile_settings(name=None):
 # Usual per-user binary folders that a tmux server started without the interactive shell may lack:
 # the rc that appends `~/.opencode/bin` never runs, so `env opencode` exits with "No such file or
 # directory". They are added to the launch line's PATH when they exist and are missing from it.
-AGENT_BIN_DIRS = ("~/.opencode/bin", "~/.local/bin", "~/bin", "~/.bun/bin")
+# The system folders are the Homebrew locations a GUI-launched agent on macOS does not inherit;
+# they are only added there (on Linux they are already in PATH, and adding them would surprise a
+# launch that builds a minimal PATH on purpose).
+HOMEBREW_BIN_DIRS = ("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
+AGENT_BIN_DIRS = ("~/.opencode/bin", "~/.local/bin", "~/bin", "~/.bun/bin") + HOMEBREW_BIN_DIRS
 
 
 def agent_path(path=None):
     """PATH (the current one by default) plus the existing AGENT_BIN_DIRS missing from it.
 
     Entries are compared after `normpath`, so a folder already present is never added twice. The
-    user and the cwd stay untouched: only the launch line's environment changes."""
+    Homebrew folders are macOS-only. The user and the cwd stay untouched: only the launch line's
+    environment changes."""
     entries = (os.environ.get("PATH", "") if path is None else path).split(os.pathsep)
     seen = {os.path.normpath(entry) for entry in entries if entry}
+    darwin = _is_darwin()
     for folder in AGENT_BIN_DIRS:
+        if folder in HOMEBREW_BIN_DIRS and not darwin:
+            continue
         full = os.path.expanduser(folder)
         key = os.path.normpath(full)
         if key in seen or not os.path.isdir(full):
@@ -893,10 +902,15 @@ def session_color(d, now):
 
 
 def repo_of(cwd, paths):
-    """Longest path in `paths` that contains `cwd`, or None."""
+    """Longest path in `paths` that contains `cwd`, or None.
+
+    The comparison uses `session_state.path_key`, so on macOS a repo written with another case or
+    Unicode normalization still matches; the entry returned is always the original one."""
+    key = session_state.path_key(cwd)
     best = None
     for p in paths:
-        if (cwd == p or cwd.startswith(p + "/")) and (best is None or len(p) > len(best)):
+        parent = session_state.path_key(p)
+        if (key == parent or key.startswith(parent + "/")) and (best is None or len(p) > len(best)):
             best = p
     return best
 
@@ -908,9 +922,37 @@ def _pid_of(d):
         return 0
 
 
+def _is_darwin():
+    """True on macOS. Kept as a function so tests can patch it and run the Darwin paths on Linux."""
+    return sys.platform == "darwin"
+
+
+def _ps_field(pid, field):
+    """One `ps` column for `pid` on macOS, or None when `ps` fails (missing or unreadable process)."""
+    try:
+        proc = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
+                              capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _darwin_pid_alive(pid):
+    """`ps`-based liveness on macOS: a zombie is dead, and a reused pid is not claude."""
+    state = _ps_field(pid, "stat")
+    if not state or state.startswith("Z"):
+        return False
+    command = _ps_field(pid, "command")
+    if command is None:
+        return False
+    return "claude" in command.lower()
+
+
 def _pid_alive(pid):
     """True when `pid` is a live claude process; False when it died, became a zombie or was reused by
-    another program; None when it cannot be told. Without /proc (macOS) kill(pid, 0) is enough."""
+    another program; None when it cannot be told. Linux reads /proc; macOS uses `ps`."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -919,6 +961,8 @@ def _pid_alive(pid):
         pass
     except OSError:
         return None
+    if _is_darwin():
+        return _darwin_pid_alive(pid)
     if not os.path.isdir("/proc/self"):
         return True
     try:
