@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tasks panel: open BACKLOG.md items of the repo of this tmux window only.
 
-  ● green ready   ◆ yellow to validate (Enter asks "what do I need to validate in item <id>?")   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
+  ● green ready   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
 A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
@@ -35,10 +35,9 @@ def buckets(eff):
     """Counter buckets for the header; paused items get their own bucket (not "refine")."""
     ready = eff.count("ready")
     blocked = sum(e in ("blocked", "cycle") for e in eff)
-    validate = eff.count("validate")
     paused = eff.count("paused")
-    refine = len(eff) - ready - blocked - validate - paused
-    return {"ready": ready, "refine": refine, "validate": validate, "blocked": blocked, "paused": paused}
+    refine = len(eff) - ready - blocked - paused
+    return {"ready": ready, "refine": refine, "blocked": blocked, "paused": paused}
 
 
 CURRENT = lib.current_repo()
@@ -60,10 +59,10 @@ def collect(v):
         c = buckets(eff)
         cols = shutil.get_terminal_size((80, 24))[0]
         parts = [(GREEN, c["ready"], "ready"), (GRAY, c["paused"], "paused"), (GRAY, c["refine"], "refine"),
-                 (YELLOW, c["validate"], "validate"), (YELLOW, c["blocked"], "blocked")]
+                 (YELLOW, c["blocked"], "blocked")]
         row, used = "", 0                                   # pack the counters, wrapping when they don't fit
         for color, n, key in parts:
-            if key in ("paused", "validate", "blocked") and not n:
+            if key in ("paused", "blocked") and not n:
                 continue
             plain = f"{n} {t(key)}"
             if used and used + 2 + len(plain) + 1 > cols:
@@ -168,9 +167,9 @@ def enter(v, key, k):
         return
     if key[3] == "cycle":      # invalid until the cycle is undone
         return
-    # ready -> implement; blocked -> implement its open dependencies first; to validate -> ask what to
-    # check; anything else (to refine, paused) -> refine
-    kinds = {"ready": "ready", "blocked": "blocked", "validate": "validate"}
+    # ready -> implement; blocked -> implement its open dependencies first; anything else (to refine,
+    # paused) -> refine
+    kinds = {"ready": "ready", "blocked": "blocked"}
     msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
     tmux.confirm_then(t("confirm", msg=msg), [lib.WS, "send", path, msg])
 
