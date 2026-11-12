@@ -14,7 +14,7 @@
 #   workspace stop [profile]   kill the profile's tmux server
 #   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
 #                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
-# Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions> · resume
+# Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions>
 #   session-menu|session-new|session-run|session-exit  (profile sessions) · tab-new|tab-show|tab-step|tab-exit  (temporary terminal tabs) · plugins-sync <profile>
 set -u
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -402,43 +402,11 @@ type_prompt() { # $1=window id $2=text
   tmux select-pane -t "$pane"
 }
 
-resume() { # $1=session id $2=window: reopens the window's main pane resuming that session
-  local W="$2" pane cmd path prof
-  path="$(tmux display -p -t "$W" '#{@ws_repo}')"
-  prof="$(profile_for_window "$W")"
-  cmd="$(profile_cmd "$prof" "$path")" || return 1
-  pane="$(pane_with_role "$W" claude)"
-  [ -n "$pane" ] || return 1
-  if [ -n "$(tmux show -pqv -t "$pane" @ws_placeholder)" ]; then
-    # the slot shows the placeholder: turn it into a session pane (like session_new), with a plain
-    # shell that receives the --resume line.
-    tmux set -pu -t "$pane" @ws_placeholder
-    tmux set -p -t "$pane" @role claude
-    tmux set -p -t "$pane" @ws_tab_profile "$prof"
-    tmux set -w -t "$W" @ws_tabs "$pane"
-    tmux set -w -t "$W" @ws_active "$pane"
-    tmux set -w -t "$W" @ws_session_profile "$prof"
-    tmux respawn-pane -k -t "$pane" -c "$path"
-  fi
-  tab_show "$W" "$pane"
-  tmux send-keys -t "$pane" "$cmd --resume $1" Enter
-  tmux select-pane -t "$pane"
-}
-
 # --- Sessions (one per profile, tabs above the main pane) ----------------------------------------
 # The main pane (role claude) is the slot; the first session runs there, the others live in hidden
 # windows "tab:<repo>" and swap into the slot. @ws_tabs lists the live session panes, @ws_active the
 # active one, @ws_next the next tab number, each pane carries its profile in @ws_tab_profile and the
 # window keeps the active profile in @ws_session_profile.
-
-profile_for_window() { # $1=window: the active session's profile, falling back to the window/server profile
-  local p
-  p="$(tmux show -wqv -t "$1" @ws_session_profile)"
-  [ -n "$p" ] || p="$(tmux show -wqv -t "$1" @ws_profile)"
-  [ -n "$p" ] || p="$(env_global WS_PROFILE)"
-  [ -n "$p" ] || p="$(python3 "$SRC/lib.py" default-profile)"
-  echo "$p"
-}
 
 # Persistent session tabs ($WS_STATE/tabs): one file per repo with the ordered tabs, each with its
 # stable id and profile, plus `session-<tab>` where the hook/plugin write the real session id. The id
@@ -686,32 +654,46 @@ prune() { # $1=session
   return 0
 }
 
-# Kills the server and starts it again (the recorded session tabs come back with their ids).
-# New hooks/config only take effect this way: detach is not enough, Claude reads the hooks on open.
-restart() {
-  local profile="${1:-claude}" sock="ws-${1:-claude}" old_tmux="${TMUX-}"
-  if env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
-    # Save the live tabs (id, profile, order and active one) before losing the panes.
-    export TMUX="$(env -u TMUX tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
+# Lifecycle (src/lifecycle.py names the servers and their profiles; this file starts and kills them).
+# Every command acts on one profile's server at a time: the argument (a profile or its ws-* server),
+# or every live server when there is none.
+
+profile_up() { env -u TMUX tmux -L "ws-$1" has-session -t "$1" 2>/dev/null; }
+
+# Saves the live session tabs of a profile's server (id, profile, order, active one), then kills the
+# server. Used by restart and stop: opening the server again brings the saved tabs back.
+server_down() { # $1=profile
+  local profile="$1" old_tmux="${TMUX-}"
+  if profile_up "$profile"; then
+    export TMUX="$(env -u TMUX tmux -L "ws-$profile" display -p '#{socket_path},#{pid},0')"
     export WS_PROFILE="$profile"
     state_sync_profile "$profile"
-    env -u TMUX tmux -L "$sock" kill-server
-    sleep 1
   fi
+  env -u TMUX tmux -L "ws-$profile" kill-server 2>/dev/null
   if [ -n "$old_tmux" ]; then export TMUX="$old_tmux"; else unset TMUX; fi
+}
+
+# Kills the server and starts it again. New hooks/config only take effect this way: detach is not
+# enough, Claude reads the hooks on open.
+restart_one() { # $1=profile
+  local profile="$1"
+  if profile_up "$profile"; then server_down "$profile"; sleep 1; fi
   start_workspace "$profile"
 }
 
-# Kills the profile's server, saving the live session tabs first so opening it again restores them.
-stop_workspace() {
-  local profile="${1:-claude}" sock="ws-${1:-claude}" old_tmux="${TMUX-}"
-  if env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null; then
-    export TMUX="$(env -u TMUX tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
-    export WS_PROFILE="$profile"
-    state_sync_profile "$profile"
+# Runs `fn <profile>` for each profile the argument names (lifecycle.py resolves a profile or a ws-*
+# server). Without an argument: every live server; none alive: the default claude (so `restart` still
+# starts it and `reload` keeps its "no workspace" message). Several servers stay detached.
+lifecycle_each() { # $1=function $2=optional argument
+  local fn="$1" arg="${2:-}" p
+  local -a targets=()
+  while IFS= read -r p; do [ -n "$p" ] && targets+=("$p"); done < <(python3 "$SRC/lifecycle.py" profiles "$arg")
+  if [ "${#targets[@]}" -eq 0 ]; then
+    [ -n "$arg" ] && { msg cli.unknown_profile profile="$arg" >&2; return 2; }
+    targets=(claude)
   fi
-  env -u TMUX tmux -L "$sock" kill-server 2>/dev/null
-  if [ -n "$old_tmux" ]; then export TMUX="$old_tmux"; else unset TMUX; fi
+  [ "${#targets[@]}" -gt 1 ] && export WS_NO_ATTACH=1
+  for p in "${targets[@]}"; do "$fn" "$p"; done
 }
 
 # Restarts the panels (repos, side column, tab strip), re-reading the code: kills each python
@@ -1089,7 +1071,6 @@ case "${1:-}" in
   request) shift; python3 "$SRC/conference.py" request "$@" ;;
   type) type_prompt "$2" "$3" ;;
   options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "python3 $SRC/options.py $3" ;;
-  resume) shift; resume "$@" ;;
   session-menu) session_menu "$2" ;;
   session-new) session_new "$2" "${3:-}" ;;
   session-run) session_run "$2" "$3" "$4" "${5:-}" ;;
@@ -1104,9 +1085,9 @@ case "${1:-}" in
   privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
   config) shift; python3 "$SRC/config_cmd.py" "$@" ;;
-  stop) stop_workspace "${2:-claude}" ;;
-  restart) shift; restart "$@" ;;
-  reload) shift; reload "$@" ;;
+  stop) shift; lifecycle_each server_down "${1:-}" ;;
+  restart) shift; lifecycle_each restart_one "${1:-}" ;;
+  reload) shift; lifecycle_each reload "${1:-}" ;;
   fit) shift; fit "$@" ;;
   mview) shift; mview "$@" ;;
   view) shift; python3 "$SRC/opener.py" "$@" ;;
