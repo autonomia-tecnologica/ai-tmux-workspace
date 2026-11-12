@@ -40,4 +40,10 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/src/installer.py" ] || [ ! -f "$ROOT/bin/work
   ROOT="$INSTALL_DIR"
 fi
 
+# Under `curl ... | sh` stdin is the script itself, already consumed: the assistant asks questions, so it
+# reads the terminal instead when there is one. AT_WS_NO_TTY=1 keeps the inherited stdin (tests, automation).
+if [ ! -t 0 ] && [ -z "${AT_WS_NO_TTY:-}" ] && (exec </dev/tty) 2>/dev/null; then
+  exec </dev/tty
+fi
+
 exec python3 "$ROOT/src/installer.py" "$@"
