@@ -262,6 +262,10 @@ gatilho de quando ler; o `HARNESS.md` resume a regra e aponta o arquivo. O `sour
 registrando o sha256 da fonte descritiva e o da cópia instalada, e o `workspace doctor` compara os
 dois.
 
+Os tópicos de [`harness/HARNESS.md`](harness/HARNESS.md) trazem a filosofia que sustenta as regras;
+o racional e os dois vocabulários (harness de inferência e harness determinístico) ficam em
+[`harness/regras/glossario.md`](harness/regras/glossario.md), lido só quando a tarefa pede.
+
 ## Persistência
 Sem plugins de tmux. As abas de sessão de cada repo ficam em `$WS_STATE/tabs/`: uma lista ordenada com o perfil e o id de cada aba, mais `session-<aba>` com o id real gravado pelo hook do Claude e pelo plugin do OpenCode. `reload`, `restart` e fechar/abrir o workspace restauram as abas na ordem, cada uma no próprio id; sem abas persistidas, abre a padrão. O resto vem do `config.yaml` e dos arquivos do repo.
 O estado de runtime fica em `~/.cache/workspace` (`WS_STATE`). Os nomes de contrato interno agora são em inglês
@@ -288,6 +292,9 @@ O Claude executa comandos com as permissões da sua conta; o ai-tmux-workspace o
 - **Desfazer:** `remove.sh` restaura o que o instalador mudou, pelo manifesto de backup.
 - **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`.
 - **Falha aberta:** a LLM pode alterar a lista de repos do `config.yaml`.
+- **Código gerado por IA:** SAST/DAST/SCA não substituem a leitura humana do PR; o que o ambiente
+  exige no lugar — harness determinístico, choke points e revisão — está em
+  [`docs/threat-model.md`](docs/threat-model.md).
 - **Seu `settings.json`:** o workspace só acrescenta hooks e statusLine, com backup; hooks de terceiros não são tocados.
 
 Detalhes, o que é garantia e o que é só atrito: [`SECURITY.md`](SECURITY.md).

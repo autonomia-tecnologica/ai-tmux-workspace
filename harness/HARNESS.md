@@ -11,11 +11,26 @@ no harness do workspace.
 - Este arquivo vence harness de home ou repo; `CLAUDE.md` e config do OpenCode só apontam para cá.
 - A cópia instalada é somente leitura.
 
+## Filosofia
+
+- O desenvolvedor está abaixo do ambiente de trabalho: quem não pede para alterá-lo, respeita-o.
+- A autonomia é com risco assumido: leia o código; se não for ler, saiba os riscos que está assumindo.
+- A LLM muda rápido: o ambiente limita o espalhamento com choke points (dono único por efeito) e
+  `ARCH.md`.
+- Falha é aceita; a resposta é corrigir, não tirar a liberdade da pessoa.
+- Dois vocabulários: harness de inferência é texto, que a LLM pode ignorar; harness determinístico é
+  hook, política, allowlist, `forcado.yaml`, sandbox, e é o que força.
+- O glossário canônico mora em `ambiente-de-trabalho`; o glossário daqui é harness adicional, lido
+  só sob demanda. Harness pessoal de repo é permitido, nos limites deste arquivo.
+- SAST/DAST/SCA não bastam para código gerado por IA quando ninguém lê o PR: o ambiente exige harness
+  determinístico, choke points e revisão.
+
 ## Harness
 
-- Harness é texto; freio real é código (allowlist, hook, política, sandbox, usuário de SO).
+- Harness de inferência é texto; harness determinístico é código (allowlist, hook, política, sandbox,
+  usuário de SO).
 - Guardar só regra estável; não guardar log, medição, diário nem estado da máquina.
-- Mecanismo não mora no harness; `forcado.yaml` declara o bloqueio.
+- Mecanismo não mora no harness de inferência; `forcado.yaml` declara o bloqueio.
 - Regra geral sobe para cá; repo que contrariar diz o motivo.
 
 ## Ambiente
