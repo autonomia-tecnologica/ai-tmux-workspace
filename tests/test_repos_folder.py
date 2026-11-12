@@ -73,8 +73,18 @@ class ReposFolderTest(unittest.TestCase):
             "groups": {"Old": [str(self.root / "elsewhere")]},   # outside the folder: not supported
         })
         groups = lib.read_repos()
-        self.assertEqual([name for name, _ in groups], ["Codes"])
+        self.assertEqual([name for name, _ in groups], [t("repos.group.uncategorized")])
         self.assertEqual(self.names(groups[0][1]), ["alpha", "beta", "gamma"])
+
+    def test_declared_groups_classify_the_folder_repos_and_the_rest_is_uncategorized(self):
+        self.write_config({
+            "repos_folder": str(self.folder),
+            "groups": {"Work": [str(self.folder / "beta")]},
+        })
+        groups = lib.read_repos()
+        self.assertEqual([name for name, _ in groups], ["Work", t("repos.group.uncategorized")])
+        self.assertEqual(self.names(groups[0][1]), ["beta"])
+        self.assertEqual(self.names(groups[1][1]), ["alpha", "gamma"])
 
     def test_without_folder_groups_are_read_as_before(self):
         repo = self.root / "solo"

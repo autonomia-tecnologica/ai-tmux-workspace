@@ -9,15 +9,18 @@ Next to the name, two icons always present:
   GitHub  = remote:    dim not on the remote · normal up to date · yellow ahead/behind the upstream
                        (fetch every 5 min)
 
-With "repos_folder" the repos are the git repos of that folder. F cycles the filter (all, switched on,
-switched off); T switches the repo under the cursor on or off ("repos_disabled" in config.yaml). A
-switched-off repo shows no git state and opens no window and no agent.
+With "repos_folder" the repos are the git repos of that folder; a repo in no group appears under the
+implicit "Sem categoria". F cycles the filter (all, switched on, switched off); T switches the repo
+under the cursor on or off ("repos_disabled" in config.yaml). A switched-off repo shows no git state
+and opens no window and no agent. Space or a right click opens the repo context menu, built by
+src/context_menu.py (move to group, mark as a sibling).
 """
 import os
 import subprocess
 import sys
 import time
 
+import context_menu
 import glyphs
 import lib
 from i18n import t
@@ -63,6 +66,7 @@ def collect(v):
         header.append(f" {DIM}{t('repos.filter.line', filter=t('repos.filter.' + VIEW['filter']))}{R}")
     if time.time() < VIEW["note_until"]:
         header.append(f" {VIEW['note']}")
+    header += context_menu.header()   # the menu layer owns its prompt and notice
     body = []
     if main:   # main repo: outside the groups, always on top, bold in the default foreground (blue when it is this window's repo)
         repo_name, p = main
@@ -134,4 +138,4 @@ def focus_lost(v):
 
 if __name__ == "__main__":
     Viewer(collect, interval=1.0, cursor=True, on_enter=enter, on_key=on_key, initial_key=("r", CURRENT),
-           on_focus_lost=focus_lost).run()
+           on_focus_lost=focus_lost, actions=context_menu.actions, on_input=context_menu.on_input).run()

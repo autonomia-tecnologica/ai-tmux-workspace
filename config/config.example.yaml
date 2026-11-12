@@ -119,8 +119,9 @@ options:
 main: ~/Codes/main-repo
 
 # Pasta de repositórios (opcional, descomentar para usar): todo repo git que estiver direto nesta pasta
-# entra no painel, sem listar um por um. Com ela declarada, ela é a única fonte de repos: "groups" não
-# listam repos e repos fora dela não são suportados (o "main" continua à parte).
+# entra no painel, sem listar um por um. Com ela declarada, ela é a única fonte de repos: "groups"
+# classificam os repos da pasta e os que não estiverem em nenhum grupo aparecem no grupo implícito "Sem
+# categoria". Repos fora da pasta não são suportados (o "main" continua à parte).
 # repos_folder: ~/Codes
 
 # Repos desligados da pasta de repositórios (nome da pasta). Desligado: não abre janela nem processo de
@@ -151,6 +152,13 @@ groups:
     - path: ~/Codes/other-repo
       siblings:
         - ~/Codes/some-repo
+
+# Irmãos declarados pelo menu de contexto do painel de repos (Espaço ou clique direito num repo).
+# A relação é simétrica: declarada de um lado, vale dos dois. Esta chave serve também para repo sem
+# entrada em "groups" (o do grupo implícito "Sem categoria"): a chave é o repo e a lista são os irmãos.
+# siblings:
+#   ~/Codes/some-repo:
+#     - ~/Codes/other-repo
 
 # Pasta-mãe (opcional, descomentar para usar): todo repo listado (main ou groups) que estiver dentro dela
 # é irmão de todos os outros listados dentro dela, sem precisar de "siblings". Fora dela, valem só os "siblings".
