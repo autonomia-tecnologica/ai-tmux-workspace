@@ -170,7 +170,12 @@ class HookPermissionModeTest(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def run_hook(self, payload, **extra):
-        env = dict(os.environ, WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config), **extra)
+        # The defaults keep the test hermetic when it runs inside a workspace session: without
+        # them the real WS_SESSION_PROFILE/WS_SESSION_TAB leak in and the hook records another
+        # profile (or writes a tab) instead of the "claude" profile under test.
+        env = dict(os.environ, WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config),
+                   WS_SESSION_PROFILE="claude", WS_SESSION_TAB="")
+        env.update(extra)
         return subprocess.run([sys.executable, str(SRC / "hook.py")], input=json.dumps(payload),
                               text=True, capture_output=True, env=env, timeout=60)
 
