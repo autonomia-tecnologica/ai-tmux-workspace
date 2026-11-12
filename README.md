@@ -304,7 +304,7 @@ Detalhes, o que é garantia e o que é só atrito: [`SECURITY.md`](SECURITY.md).
 
 A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
 
-O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo; escrevê-lo só a sessão de dev, cujo `WS_SESSION_ROOT` está dentro dessa raiz. A home também é negada, e o caminho não entra na config nem em `siblings`.
+O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo. Escrevê-lo depende da raiz, não do papel: uma sessão cujo `WS_SESSION_ROOT` está dentro dessa raiz escreve, seja a sessão de dev (`workspace dev`) seja um repo ou a home com o código do workspace como raiz (como os worktrees deste repo); não é preciso papel `self`. Sessão com raiz fora dessa pasta é negada, a home inclusive. O caminho não entra na config nem em `siblings`.
 
 ### Caixa da sessão
 

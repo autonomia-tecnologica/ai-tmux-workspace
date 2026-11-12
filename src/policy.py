@@ -21,8 +21,10 @@ launcher sets the role keep working.
 
 The workspace's own code is a protected path checked before the role table: `WS_DIR` when the
 launcher exported it, else this file's code root. Every role may read it; only a session whose
-`WS_SESSION_ROOT` is inside that root may write it (the dev session that edits the workspace). The
-`home` role is denied too, with no exception.
+`WS_SESSION_ROOT` is inside that root may write it, whatever its role: the rule is the root, not the
+role, so no `self` role is required. The dev session of `workspace dev` qualifies, and so does a
+`repo` or `home` session whose root is inside the workspace code (such as the worktrees of this
+repo). A session whose root is outside that root is denied, `home` included.
 
 The control plane (`paths.config_dir()`, the folder with `config.yaml`, `state/` and `conference/`)
 is the other protected path checked before the role table: every role may read it (`config.read`)
