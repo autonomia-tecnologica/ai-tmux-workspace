@@ -294,7 +294,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(exports["PATH"], f"{path}{os.pathsep}{bindir}")
         self.assertEqual(shutil.which("opencode", path=exports["PATH"]), str(binary))
         self.assertEqual(exports["OPENCODE_CONFIG"],
-                         str(self.home / ".config" / "ai-tmux-workspace" / "opencode-free.json"))
+                         str(self.state / "settings" / "opencode-opencode-free.json"))
         self.assertTrue(out.endswith(" opencode"))
 
     def test_opencode_launch_does_not_repeat_bin_dirs_already_in_path(self):

@@ -9,6 +9,12 @@
  * OpenCode's `tool.execute.before` has no "ask" channel in the plugin API, so `ask` is surfaced as
  * a thrown error: the tool does not run unattended, which is the fail-closed reading of the same
  * decision. The engine still reports `ask`, and the decision comparison is on the engine result.
+ *
+ * Session id contract: this plugin is where a tab gets its id. `recordSession` writes whatever
+ * OpenCode reports into `tabs/session-<tab>` (`WS_STATE`/`WS_SESSION_TAB`), and the workspace reads
+ * it back for the next restore (`session_state.session_for`). A tab with no recorded id therefore
+ * opens a fresh session: the workspace never asks OpenCode to continue the repo's last session for
+ * a tab, and `workspace restart` regenerates this file so the restarted server loads this copy.
  */
 
 const fs = require("fs");

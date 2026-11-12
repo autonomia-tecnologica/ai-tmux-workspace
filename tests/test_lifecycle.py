@@ -4,6 +4,7 @@
 on each one. The bash tests run the real `bin/workspace` against a fake `tmux` on PATH that logs every
 call and keeps the live servers in a file, so the dispatch is proven without a tmux server.
 """
+import json
 import os
 import shutil
 import socket
@@ -115,6 +116,16 @@ class WorkspaceDispatchTests(unittest.TestCase):
             sock.bind(str(self.sockets / name))
             sock.close()
         self.addCleanup(shutil.rmtree, str(self.sockets.parent), True)
+        config = Path(self.home) / ".config" / "ai-tmux-workspace" / "config.yaml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            "agent: claude\n"
+            "profiles:\n"
+            "  claude: claude\n"
+            "  opencode-claude:\n"
+            "    harness: opencode\n"
+            "    command: opencode\n",
+            encoding="utf-8")
 
     def run_workspace(self, *args):
         env = {
@@ -173,6 +184,25 @@ class WorkspaceDispatchTests(unittest.TestCase):
         result = self.run_workspace("stop")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.killed(), ["ws-claude"])
+
+    def test_restart_regenerates_the_opencode_plugin_and_the_claude_settings(self):
+        result = self.run_workspace("restart")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = Path(self.home) / "state" / "settings"
+        # Claude: generated settings; OpenCode: the plugin copy plus the generated config.
+        self.assertTrue((settings / "claude.json").is_file())
+        plugin = settings / "opencode-plugin-opencode-claude.js"
+        self.assertEqual(plugin.read_text(encoding="utf-8"),
+                         (ROOT / "harness" / "opencode-policy.js").read_text(encoding="utf-8"))
+        config = json.loads((settings / "opencode-opencode-claude.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["plugin"], [plugin.as_uri()])
+
+    def test_restart_of_one_opencode_server_regenerates_only_its_plugin(self):
+        result = self.run_workspace("restart", "ws-opencode-claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = Path(self.home) / "state" / "settings"
+        self.assertTrue((settings / "opencode-plugin-opencode-claude.js").is_file())
+        self.assertFalse((settings / "claude.json").exists())
 
 
 class ResumeIsGoneTests(unittest.TestCase):

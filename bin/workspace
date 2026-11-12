@@ -5,7 +5,7 @@
 #   workspace update          git pull --ff-only do clone instalado (app/); clone sujo aborta; checkout de dev é recusado
 #   workspace --help          this list; does not open tmux
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
-#   workspace restart [profile] kill the tmux server and start again (Claude resumes with --continue)
+#   workspace restart [profile] kill the tmux server and start again (tabs return by their own ids)
 #   workspace fit [profile]    re-apply the layout once, only what changed (run by the tmux hooks on attach/resize)
 #   workspace reload [profile] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
@@ -29,9 +29,10 @@ SESSION_MIN_SECONDS=10   # shorter than this, a session that ended was a failed 
 
 msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
 profile_cmd() { python3 "$SRC/lib.py" profile-cmd "$1" "${2:-}"; }
-# Generates the settings of every profile without starting the agent (reload). A config error does not
-# fail the reload: the specific message goes to stderr and the other profiles continue.
-settings_refresh() { python3 "$SRC/lib.py" ensure-settings "${1:-}" >/dev/null || true; }
+# Regenerates the harness wiring of a profile without starting the agent: the Claude settings and the
+# OpenCode plugin plus generated config. A config error does not fail the caller (reload/restart): the
+# specific message goes to stderr and the other profiles continue.
+settings_refresh() { python3 "$SRC/lib.py" prepare-profile "${1:-}" >/dev/null || true; }
 settings_refresh_all() {
   local p
   while read -r p; do [ -n "$p" ] && settings_refresh "$p"; done < <(python3 "$SRC/lib.py" profile-names)
@@ -681,10 +682,12 @@ server_down() { # $1=profile
 }
 
 # Kills the server and starts it again. New hooks/config only take effect this way: detach is not
-# enough, Claude reads the hooks on open.
+# enough, Claude reads the hooks on open. The harness wiring is regenerated first, so an OpenCode
+# profile restarts with the current plugin (`lib prepare-profile`, one owner per harness).
 restart_one() { # $1=profile
   local profile="$1"
   if profile_up "$profile"; then server_down "$profile"; sleep 1; fi
+  settings_refresh "$profile"
   start_workspace "$profile"
 }
 

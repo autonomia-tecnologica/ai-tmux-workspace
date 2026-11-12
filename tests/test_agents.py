@@ -117,6 +117,101 @@ class AgentAdapterTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
 
+    # --- the lifecycle contract (item 124) ------------------------------------------------------
+    def test_both_adapters_declare_the_lifecycle_contract(self):
+        for name, source in (("claude", agents.SESSION_ID_WORKSPACE),
+                             ("oc", agents.SESSION_ID_AGENT)):
+            with self.subTest(profile=name):
+                adapter = lib.profile_adapter(name)
+                for method in agents.LIFECYCLE:
+                    self.assertTrue(callable(getattr(adapter, method)), method)
+                self.assertIn(adapter.session_id_source, agents.SESSION_ID_SOURCES)
+                self.assertEqual(adapter.session_id_source, source)
+                info = adapter.initialize()
+                self.assertEqual(info["lifecycle"], list(agents.LIFECYCLE))
+                self.assertEqual(info["session_id_source"], source)
+
+    def test_claude_declares_the_workspace_session_id_and_its_arguments(self):
+        adapter = agents.ClaudeAdapter("claude")
+        self.assertEqual(adapter.session_id_source, agents.SESSION_ID_WORKSPACE)
+        self.assertTrue(adapter.records_permission_mode)
+        self.assertEqual(adapter.fresh_args("abc"), ["--session-id", "abc"])
+        self.assertEqual(adapter.resume_args("abc"), ["--resume", "abc"])
+        self.assertEqual(adapter.continue_args(), ["--continue"])
+
+    def test_opencode_declares_the_agent_session_id_and_a_declared_fresh_tab(self):
+        adapter = agents.OpenCodeAdapter("oc")
+        self.assertEqual(adapter.session_id_source, agents.SESSION_ID_AGENT)
+        self.assertFalse(adapter.records_permission_mode)
+        # A tab with no recorded id: fresh session by default, never an implicit `--continue`.
+        self.assertEqual(adapter.fresh_args("abc"), [])
+        self.assertEqual(adapter.resume_args("abc"), ["--session", "abc"])
+        self.assertEqual(adapter.continue_args(), ["--continue"])
+
+    def test_claude_prepare_writes_the_generated_settings(self):
+        adapter = lib.profile_adapter("claude")
+        path = adapter.prepare("claude")
+        self.assertEqual(path, str(self.state / "settings" / "claude.json"))
+        self.assertTrue(Path(path).is_file())
+
+    def test_opencode_prepare_regenerates_the_plugin_and_the_generated_config(self):
+        adapter = lib.profile_adapter("oc")
+        path = adapter.prepare("oc")
+        plugin = self.state / "settings" / "opencode-plugin-oc.js"
+        self.assertEqual(plugin.read_text(encoding="utf-8"),
+                         (ROOT / "harness" / "opencode-policy.js").read_text(encoding="utf-8"))
+        self.assertEqual(path, str(self.state / "settings" / "opencode-oc.json"))
+        config = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(config["plugin"], [plugin.as_uri()])
+        # `workspace restart` runs prepare again: a deleted plugin comes back from the source.
+        plugin.unlink()
+        self.assertEqual(adapter.prepare("oc"), path)
+        self.assertTrue(plugin.is_file())
+
+    def test_opencode_prepare_merges_the_declared_config(self):
+        declared = self.root / "declared.json"
+        declared.write_text(json.dumps({
+            "model": "deepseek/deepseek-flash",
+            "plugin": ["some-declared-plugin"],
+        }), encoding="utf-8")
+        self.cfg.write_text(
+            "agent: oc\n"
+            "profiles:\n"
+            "  claude: claude\n"
+            "  oc:\n"
+            "    harness: opencode\n"
+            "    command: opencode\n"
+            f"    config: {declared}\n",
+            encoding="utf-8")
+        path = lib.profile_adapter("oc").prepare("oc")
+        config = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(config["model"], "deepseek/deepseek-flash")
+        plugin = self.state / "settings" / "opencode-plugin-oc.js"
+        self.assertEqual(config["plugin"], ["some-declared-plugin", plugin.as_uri()])
+        # The declared file is never rewritten.
+        self.assertEqual(json.loads(declared.read_text(encoding="utf-8")),
+                         {"model": "deepseek/deepseek-flash",
+                          "plugin": ["some-declared-plugin"]})
+
+    def test_opencode_prepare_keeps_a_declared_config_it_cannot_read(self):
+        declared = self.root / "declared.jsonc"
+        declared.write_text('{"model": "x"} // comment\n', encoding="utf-8")
+        self.cfg.write_text(
+            "agent: oc\n"
+            "profiles:\n"
+            "  claude: claude\n"
+            "  oc:\n"
+            "    harness: opencode\n"
+            "    command: opencode\n"
+            f"    config: {declared}\n",
+            encoding="utf-8")
+        adapter = lib.profile_adapter("oc")
+        self.assertEqual(adapter.prepare("oc"), str(declared))
+        self.assertEqual(adapter.launch("oc").endswith("opencode"), True)
+        self.assertIn(f"OPENCODE_CONFIG={declared}", adapter.launch("oc"))
+        # The plugin copy is still regenerated, so a restart never loses it.
+        self.assertTrue((self.state / "settings" / "opencode-plugin-oc.js").is_file())
+
     # --- one central policy ---------------------------------------------------------------------
     def _events(self):
         return [
