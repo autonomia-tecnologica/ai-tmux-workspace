@@ -11,7 +11,8 @@ its window (`workspace dev`) is the `self` session, the only one that edits that
 wins when the main checkout is the workspace itself.
 
 Stdlib only and no `lib`/`tmux` import: the launcher, the hook and the tests use this module without
-the rest of the workspace. The config path rule is duplicated from `lib.read_config` on purpose.
+the rest of the workspace. The config and state paths come from `paths` (foundation, stdlib only),
+the single owner of those defaults.
 """
 import json
 import os
@@ -20,6 +21,7 @@ import sys
 from pathlib import Path
 
 import policy   # the workspace code root has one owner: the policy (stdlib only, same layer)
+import paths    # the path defaults have one owner: foundation, stdlib only
 
 try:
     import yaml_min
@@ -39,15 +41,13 @@ USAGE = "usage: session.py env <repo> [profile] [tab]"
 
 
 def _config_path():
-    """Single config.yaml; AT_WS_CONFIG overrides the path (same rule as lib.config_path)."""
-    return Path(os.environ.get("AT_WS_CONFIG", Path.home() / ".config" / "ai-tmux-workspace" / "config.yaml"))
+    """Single config.yaml; AT_WS_CONFIG overrides the path (same owner as lib.config_path)."""
+    return paths.config_path()
 
 
 def _legacy_path():
-    """Old settings.json, read while config.yaml does not exist (same rule as lib.legacy_path)."""
-    if "AT_WS_CONFIG" in os.environ:
-        return _config_path().with_suffix(".json")
-    return Path.home() / ".config" / "ai-tmux-workspace" / "settings.json"
+    """Old settings.json, read while config.yaml does not exist (same owner as lib.legacy_path)."""
+    return paths.legacy_config_path()
 
 
 def _read_config():
@@ -135,8 +135,7 @@ def prefix(repo, main=None, profile=None, tab=None):
     if tab:
         values = dict(values)
         values[TAB] = str(tab)
-        values[STATE] = os.environ.get(
-            STATE) or str(Path.home() / ".cache" / "workspace")
+        values[STATE] = str(paths.state_dir())
     return "env " + " ".join(f"{name}={shlex.quote(value)}" for name, value in values.items())
 
 

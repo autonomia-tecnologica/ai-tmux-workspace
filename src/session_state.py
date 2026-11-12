@@ -24,6 +24,8 @@ import unicodedata
 import uuid
 from pathlib import Path
 
+import paths
+
 try:
     import fcntl
 except ImportError:     # no fcntl (Windows): updates are not serialized
@@ -54,7 +56,7 @@ def _real(repo):
 
 def state_dir():
     """Directory that holds the per-repo tab files (overridable with WS_STATE)."""
-    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "tabs"
+    return paths.state_dir() / "tabs"
 
 
 def repo_key(repo):

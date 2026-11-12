@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code hook: records the session state for the repo panel's dot.
 
-Reads the hook JSON from stdin and writes ~/.cache/workspace/sessions/<session>.json. On PreToolUse
+Reads the hook JSON from stdin and writes $WS_STATE/sessions/<session>.json. On PreToolUse
 it also asks the central capability policy (`src/policy.py`, installed in `security/`) for a decision
 when the session has a declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so
 sessions opened before the launcher sets it keep working. With a role, an engine failure is a denial
@@ -22,13 +22,14 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import yaml_min  # noqa: E402  (stdlib-only, no lib import)
+import paths  # noqa: E402  (stdlib-only, same reason)
 
 try:
     import permission_state  # noqa: E402  (stdlib-only, same reason)
 except Exception:
     permission_state = None
 
-SESSIONS = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "sessions"
+SESSIONS = paths.state_dir() / "sessions"
 
 # Deliberately does not import `lib`: this hook runs on every Claude Code event, so it must stay
 # light and never fail on import. That is why the settings read in _notifications_enabled
@@ -53,12 +54,8 @@ def _one_line(text, n=100):
 # Same path rules as lib.read_config: config.yaml, or the old settings.json while it does not exist.
 def _notifications_enabled():
     try:
-        if "AT_WS_CONFIG" in os.environ:
-            cfg = Path(os.environ["AT_WS_CONFIG"])
-            legacy = cfg.with_suffix(".json")
-        else:
-            folder = Path.home() / ".config" / "ai-tmux-workspace"
-            cfg, legacy = folder / "config.yaml", folder / "settings.json"
+        cfg = paths.config_path()
+        legacy = paths.legacy_config_path()
         file = cfg if cfg.exists() else legacy
         if file.suffix == ".json":
             data = json.loads(file.read_text(encoding="utf-8"))
@@ -130,7 +127,7 @@ def _record_tab_session(d):
     sid = d.get("session_id")
     if not sid:
         return
-    base = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "tabs"
+    base = paths.state_dir() / "tabs"
     path = base / f"session-{tab}"
     text = str(sid)
     try:

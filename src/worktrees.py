@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import lib
+import paths
 import yaml_min
 from i18n import t
 
@@ -38,7 +39,7 @@ def root():
     env = os.environ.get("WS_WORKTREES")
     if env:
         return Path(os.path.expanduser(env))
-    return Path.home() / ".local" / "share" / "ai-tmux-workspace" / "worktrees"
+    return paths.install_dir() / "worktrees"
 
 
 def _expand(value):

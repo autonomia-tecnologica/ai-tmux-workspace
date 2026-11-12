@@ -30,6 +30,7 @@ from pathlib import Path
 import colors
 import tmux
 import yaml_min
+import paths
 from i18n import t
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -113,10 +114,7 @@ BASH = find_bash()
 # AT_WS_HARNESS_URL replaces the harness repo URL. Only for tests and offline checks: it is never set by
 # the install scripts, so a person installing gets the public repo.
 CLONE_URL = os.environ.get("AT_WS_HARNESS_URL") or "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
-HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
-SECURITY_DIR = Path(".local", "share", "ai-tmux-workspace", "security")
 SOURCE_FILE = "source.json"
-COMPLETION_DIR = Path(".local", "share", "ai-tmux-workspace", "completions")
 # Installed next to the harness text: the gate, the policy/config pair and the two adapters' shared
 # engine. The source tree (ambiente-de-trabalho) is copied first; these come from this repository.
 POLICY_SOURCES = (
@@ -124,6 +122,7 @@ POLICY_SOURCES = (
     ("security", "policy.yaml", "policy.yaml"),
     ("security", "opencode-policy.js", "opencode-policy.js"),
     ("src", "policy.py", "policy.py"),
+    ("src", "paths.py", "paths.py"),
     ("src", "yaml_min.py", "yaml_min.py"),
     ("i18n", "pt-BR.json", "i18n/pt-BR.json"),
 )
@@ -253,14 +252,11 @@ class ManifestError(Exception):
 # --- paths -------------------------------------------------------------------------------------
 
 def config_path():
-    value = os.environ.get("AT_WS_CONFIG")
-    return Path(value).expanduser() if value else HOME / ".config" / "ai-tmux-workspace" / "config.yaml"
+    return paths.config_path()
 
 
 def legacy_config_path():
-    if "AT_WS_CONFIG" in os.environ:
-        return config_path().with_suffix(".json")
-    return HOME / ".config" / "ai-tmux-workspace" / "settings.json"
+    return paths.legacy_config_path()
 
 
 def read_config_file(path):
@@ -320,16 +316,26 @@ def state_dir():
     override = os.environ.get("AT_WS_INSTALL_STATE")
     if override:
         return Path(override).expanduser()
-    base = os.environ.get("WS_STATE")
-    root = Path(base).expanduser() if base else HOME / ".cache" / "workspace"
-    return root / "installer"
+    return paths.state_dir() / "installer"
 
 
 def generated_settings_dir():
     """The workspace-generated per-profile settings: WS_STATE/settings, exactly as lib.py uses."""
-    base = os.environ.get("WS_STATE")
-    root = Path(base).expanduser() if base else HOME / ".cache" / "workspace"
-    return root / "settings"
+    return paths.settings_dir()
+
+
+def completion_dir():
+    return layout_root() / "completions"
+
+
+def layout_root():
+    """Root of the installed layout (`app/`, `harness/`, `security/`).
+
+    `install.sh` historically points AT_WS_INSTALL_DIR at the clone (`.../app`), while the layout
+    root is its parent: the harness and the mechanism are siblings of the clone, never inside it.
+    """
+    root = paths.install_dir()
+    return root.parent if root.name == "app" else root
 
 
 def harness_candidates():
@@ -765,9 +771,10 @@ class Assistant:
             return 1
         self.ui.section(t("installer.title"))
         self.ui.line(t("installer.install.intro", bin=display(HOME / CLI_DIR / "workspace"),
-                       harness=display(HOME / HARNESS_DIR)))
+                       harness=display(layout_root() / "harness")))
         try:
             self.ui.confirm("installer.install.confirm")
+            self.prepare_layout()
             self.dependencies()
             self.install_cli()
             self.install_completion()
@@ -783,6 +790,39 @@ class Assistant:
             return 1
         self.finish()
         return 0
+
+    def prepare_layout(self):
+        """Create the control plane, state and conference folders and migrate the old state.
+
+        The folders are not manifest entries: `remove` only removes them when they end up empty, so
+        migrated state (the person's data) is never deleted by the killswitch. The installed copy
+        (`app/`, `harness/`, `security/`) is not touched here; `install_harness` owns it.
+        """
+        planned = (paths.conference_dir(), paths.state_dir(), paths.config_dir())
+        created = set()
+        for directory in planned:
+            probe = directory
+            while not probe.exists() and not probe.is_symlink():
+                created.add(str(probe))
+                if probe.parent == probe:
+                    break
+                probe = probe.parent
+        try:
+            paths.ensure_layout(migrate=False)
+            moved = paths.migrate_state()
+        except OSError as error:
+            self.ui.warn(t("installer.migrate.failed", error=str(error)))
+            moved = []
+        manifest = self.manifest_for()
+        # Deepest first, so `remove` can rmdir from the leaves up. Directories that end up with the
+        # person's migrated state stay where they are (rmdir fails silently in cleanup).
+        for directory in sorted(created, key=lambda name: len(Path(name).parts), reverse=True):
+            if directory not in manifest.state_dirs_created:
+                manifest.state_dirs_created.append(directory)
+        manifest.save()
+        if moved:
+            self.ui.line(t("installer.migrate.moved", names=", ".join(moved),
+                           path=display(paths.state_dir())))
 
     def dependency_status(self):
         """(found labels, unmet (name, label) pairs) with the version probes the tests fake."""
@@ -858,25 +898,26 @@ class Assistant:
 
     def install_completion(self):
         self.ui.section(t("installer.completion.title"))
+        target_dir = completion_dir()
         files = {
-            "zsh": (COMPLETION_DIR / "workspace.zsh", ZSH_COMPLETION, ".zshrc", ZSH_BLOCK),
-            "bash": (COMPLETION_DIR / "workspace.bash", BASH_COMPLETION, ".bashrc", BASH_BLOCK),
+            "zsh": (target_dir / "workspace.zsh", ZSH_COMPLETION, ".zshrc", ZSH_BLOCK),
+            "bash": (target_dir / "workspace.bash", BASH_COMPLETION, ".bashrc", BASH_BLOCK),
         }
         shell = Path(os.environ.get("SHELL", "")).name
         if shell in files:
-            relative, _content, rc_name, _block = files[shell]
+            installed, _content, rc_name, _block = files[shell]
             self.ui.line(t("installer.completion.plan", shell=shell,
-                           file=display(HOME / relative), rc=display(HOME / rc_name)))
+                           file=display(installed), rc=display(HOME / rc_name)))
         else:
             self.ui.line(t("installer.completion.plan_unsupported", shell=shell or "?",
-                           dir=display(HOME / COMPLETION_DIR)))
+                           dir=display(target_dir)))
         self.ui.confirm("installer.completion.confirm")
-        for relative, content, _rc, _block in files.values():
+        for installed, content, _rc, _block in files.values():
             if content is ZSH_COMPLETION:
                 content = completion_text(content)
-            self.write(HOME / relative, content)
+            self.write(installed, content)
         if shell in files:
-            relative, _content, rc_name, block = files[shell]
+            installed, _content, rc_name, block = files[shell]
             rc = HOME / rc_name
             target = file_for_edit(rc)
             if target is None:
@@ -884,10 +925,10 @@ class Assistant:
             else:
                 self.append_block(target, block)
                 self.ui.ok(t("installer.completion.ok", shell=shell,
-                             file=display(HOME / relative), rc=display(rc)))
+                             file=display(installed), rc=display(rc)))
         else:
             self.ui.warn(t("installer.completion.unsupported", shell=shell or "?",
-                           dir=display(HOME / COMPLETION_DIR)))
+                           dir=display(target_dir)))
 
     def install_config(self):
         """Ask the item 93/107 questions and seed/update only what was chosen.
@@ -994,8 +1035,8 @@ class Assistant:
             self.ui.line(t("installer.harness.content", file=entry.name, text=text))
         self.ui.confirm("installer.harness.confirm_want")
         self.ui.confirm("installer.harness.confirm_agree")
-        target = HOME / HARNESS_DIR
-        security = HOME / SECURITY_DIR
+        target = layout_root() / "harness"
+        security = layout_root() / "security"
         self.ensure_dir(target.parent)
         self.manifest_for().record(target, tree=True)
         self.manifest_for().record(security, tree=True)

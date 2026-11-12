@@ -104,7 +104,11 @@ class InstallerTest(unittest.TestCase):
         env.update(HOME=str(self.home), WS_STATE=str(self.state),
                    AT_HARNESS_SOURCE=str(self.source), SHELL="/usr/bin/zsh", NO_COLOR="1",
                    PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
-        env.update(overrides)
+        for key, value in overrides.items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
         return env
 
     def run_script(self, script, stdin, **overrides):
@@ -140,7 +144,7 @@ class InstallerTest(unittest.TestCase):
             self.assertFalse((harness / name).exists(), f"mechanism must not live in harness/: {name}")
         security = self.home / ".local" / "share" / "ai-tmux-workspace" / "security"
         for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json", "policy.py",
-                     "yaml_min.py", "i18n/pt-BR.json"):
+                     "paths.py", "yaml_min.py", "i18n/pt-BR.json"):
             self.assertTrue((security / name).is_file(), f"missing security file: {name}")
         rendered = json.loads((security / "settings.json").read_text(encoding="utf-8"))
         for groups in rendered["hooks"].values():
@@ -175,6 +179,18 @@ class InstallerTest(unittest.TestCase):
         self.assertFalse((self.home / ".claude").exists())
 
     # 2 ---------------------------------------------------------------------------------------
+    def test_install_migrates_the_legacy_cache_into_the_control_plane(self):
+        legacy = self.home / ".cache" / "workspace" / "tabs"
+        legacy.mkdir(parents=True)
+        (legacy / "a.json").write_text("old\n", encoding="utf-8")
+        installed = self.install(WS_STATE=None)
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        state = self.home / ".config" / "ai-tmux-workspace" / "state"
+        self.assertEqual((state / "tabs" / "a.json").read_text(encoding="utf-8"), "old\n")
+        self.assertFalse((legacy / "a.json").exists())
+        self.assertTrue((self.home / ".config" / "ai-tmux-workspace" / "conference").is_dir())
+        self.assertTrue((self.home / ".local" / "share" / "ai-tmux-workspace" / "harness").is_dir())
+
     def test_aborts_without_confirmation(self):
         before = snapshot(self.home)
         for stdin in ("", "n\n"):
