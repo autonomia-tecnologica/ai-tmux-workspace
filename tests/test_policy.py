@@ -758,6 +758,189 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual((result["decision"], result["capability"]),
                                  (decision, capability))
 
+    # --- git -C, cd and godot --headless inside the box (item 116) -----------------------------
+    def test_git_dash_c_inside_the_box_classifies_the_subcommand(self):
+        worktree = self.repo / ".claude" / "worktrees" / "x"
+        cases = (
+            ("git -C .claude/worktrees/x status", "vcs.read"),
+            ("git -C .claude/worktrees/x diff", "vcs.read"),
+            ("git -C .claude/worktrees/x log", "vcs.read"),
+            ("git -C .claude/worktrees/x commit -m x", "vcs.write"),
+            (f"git -C {worktree} status", "vcs.read"),
+            ("git -C /tmp status", "vcs.read"),
+            # the second -C is resolved relative to the first, as git does
+            ("git -C sub -C .. status", "vcs.read"),
+        )
+        for command, capability in cases:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("allow", capability))
+
+    def test_git_dash_c_outside_the_box_or_ambiguous_stays_denied(self):
+        commands = (
+            "git -C /home/qualquer status",
+            "git -C ../outside status",
+            "git -C .claude/worktrees/x -C /home/qualquer status",
+            "git -C",
+            "git -C. status",
+            "git --git-dir=.git status",
+            "git --work-tree=. status",
+            "git -c core.pager=cat status",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+        result = self.decide(self.bash("git -C .env status"))
+        self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
+
+    def test_cd_reanchors_the_following_segments_inside_the_box(self):
+        worktree = self.repo / ".claude" / "worktrees" / "x"
+        cases = (
+            ("cd .claude/worktrees/x && git status", "vcs.read"),
+            ("cd .claude/worktrees/x; git diff", "vcs.read"),
+            ("cd -L .claude/worktrees/x && git log", "vcs.read"),
+            ("cd -P .claude/worktrees/x && git log", "vcs.read"),
+            ("cd .claude/worktrees/x && cat README.md", "repo.read"),
+            (f"cd {worktree} && python3 -I -m unittest discover -s testes/validador", "test.run"),
+            ("cd /tmp && git status", "vcs.read"),
+            # each cd reanchors from the previous one, still inside the box
+            ("cd .claude/worktrees/x && cd .. && git status", "vcs.read"),
+        )
+        for command, capability in cases:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("allow", capability))
+
+    def test_cd_outside_the_box_or_ambiguous_stays_denied(self):
+        commands = (
+            "cd && git status",
+            "cd - && git status",
+            "cd -- .claude/worktrees/x && git status",
+            "cd .. && git status",
+            "cd ../.. && git status",
+            "cd /home/qualquer && git status",
+            "cd ~ && git status",
+            "cd $HOME && git status",
+            "cd *.d && git status",
+            "cd -a .claude/worktrees/x && git status",
+            "cd .claude/worktrees/x extra && git status",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+
+    def test_cd_and_git_dash_c_do_not_enter_secret_directories(self):
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+            result = policy.check_event(self.bash("cd .ssh && git status"))
+            self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+            result = policy.check_event(self.bash("git -C .ssh status"))
+            self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
+
+    def test_cd_does_not_turn_tmp_paths_into_repo_paths(self):
+        # The anchor only changes where relative paths resolve; the capability still comes from
+        # the session box, so a tightened `tmp` is not reached as `repo.write`.
+        fixture = self.fixture_policy(repo={"tmp": "deny"})
+        with patched_env(WS_POLICY=str(fixture)):
+            result = self.decide(self.bash("cd /tmp && touch x"))
+            self.assertEqual((result["decision"], result["capability"]), ("deny", "tmp"))
+            result = self.decide(self.bash("touch x"))
+            self.assertEqual((result["decision"], result["capability"]), ("allow", "repo.write"))
+
+    def test_cd_reanchoring_does_not_persist_between_calls(self):
+        self.assertEqual(self.decide(self.bash("cd .claude/worktrees/x && git status"))["decision"],
+                         "allow")
+        # with the anchor leaked from the previous call, `cd ..` would still be inside the box
+        self.assertEqual(self.decide(self.bash("cd .. && git status"))["decision"], "deny")
+
+    def test_python_flags_before_dash_m_keep_the_module_classification(self):
+        commands = (
+            "python3 -I -m unittest discover -s tests",
+            "python3 -B -m pytest",
+            "python3 -u -E -s -S -O -OO -m unittest",
+            "python3 -X dev -m unittest",
+            "python3 -Xdev -m pytest",
+            "python3 -W ignore::DeprecationWarning -m unittest",
+            "python3 -Wignore -m tox",
+            "python3 -I -m nox",
+            "python3 -I -m pip list",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("allow", "test.run"))
+        result = self.decide(self.bash("python3 -I -m pip install requests"))
+        self.assertEqual((result["decision"], result["capability"]), ("deny", "install"))
+        for command in ("python3 -c 'print(1)'", "python3 -I -c 'print(1)'",
+                        "python3 -I -m unknown_module", "python3 -I -",
+                        "python3 -I tests/run.py", "python3 -v -m unittest",
+                        "python3 --help"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+
+    def test_godot_requires_headless_and_paths_inside_the_box(self):
+        commands = (
+            "godot --headless --quit",
+            "godot4 --headless --quit",
+            "godot --headless --path . --quit",
+            "godot --headless --path=. --quit",
+            "godot --headless --path /tmp/project --quit",
+            "godot --headless --main-pack game.pck",
+            "godot --headless --main-pack=game.pck",
+            "godot --headless --script teste.gd",
+            "godot --headless --script=teste.gd",
+            "godot --headless -s teste.gd",
+            "godot --headless project.godot",
+            "cd .claude/worktrees/y && godot --headless --quit",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("allow", "test.run"))
+        for command in ("godot --quit", "godot4 --quit",
+                        "godot --headless --export-release",
+                        "godot --headless --export-debug",
+                        "godot --headless --path /home/qualquer",
+                        "godot --headless --path=/home/qualquer",
+                        "godot --headless --main-pack /etc/game.pck",
+                        "godot --headless --script /etc/teste.gd",
+                        "godot --headless -s /etc/teste.gd",
+                        "godot --headless /etc/project.godot",
+                        "godot --headless --path"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+        result = self.decide(self.bash("godot --headless --script .env"))
+        self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
+
+    def test_cli_covers_the_item_116_acceptance_battery(self):
+        worktree = self.repo / ".claude" / "worktrees"
+        cases = (
+            (f"cd {worktree / 'x'} && python3 -I -m unittest discover -s testes/validador",
+             "allow", "test.run"),
+            (f"cd {worktree / 'y'} && godot --headless --quit", "allow", "test.run"),
+            ("cd .claude/worktrees/x && git status", "allow", "vcs.read"),
+            ("git -C .claude/worktrees/x status", "allow", "vcs.read"),
+            ("git -C .claude/worktrees/x diff", "allow", "vcs.read"),
+            ("git -C .claude/worktrees/x log", "allow", "vcs.read"),
+            ("git -C /home/qualquer status", "deny", None),
+            ("cd .. && git status", "deny", None),
+            ("python3 -c 'print(1)'", "deny", None),
+            ("godot --quit", "deny", None),
+            ("godot --headless --export-release", "deny", None),
+        )
+        for command, decision, capability in cases:
+            with self.subTest(command=command):
+                result = self.cli(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 (decision, capability))
+
     # --- audit log -----------------------------------------------------------------------------
     def test_log_is_0600_and_never_contains_a_secret(self):
         secret = "SUPERSECRET-token-value"

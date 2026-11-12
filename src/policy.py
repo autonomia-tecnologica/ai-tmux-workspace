@@ -129,6 +129,9 @@ INSTALL_PROGRAMS = {
     "pip", "pip3", "gem", "composer", "snap", "flatpak",
 }
 TEST_PROGRAMS = {"pytest", "tox", "nox", "unittest"}
+GODOT_PROGRAMS = {"godot", "godot4"}
+# `python` flags that only shape the interpreter before `-m`; every other flag is ambiguous.
+PYTHON_SAFE_FLAGS = re.compile(r"^-[IBuEsSO]+$")
 READ_PROGRAMS = {
     "cat", "head", "tail", "ls", "stat", "wc", "cut", "sort", "uniq", "diff",
     "file", "tree", "pwd", "date", "which", "whereis", "type", "basename", "dirname", "realpath",
@@ -431,6 +434,19 @@ def _inside_box(path, root):
     return _inside(path, root) or any(_inside(path, temporary) for temporary in _tmp_roots())
 
 
+def _box_contains(path, root):
+    """Whether a resolved path is inside the box: the declared root or the global /tmp.
+
+    Unlike `_inside_box` this still accepts /tmp when there is no declared root, so `git -C` and
+    `cd` can be checked against the same box the rest of the policy uses.
+    """
+    if not path:
+        return False
+    if any(_inside(path, temporary) for temporary in _tmp_roots()):
+        return True
+    return bool(root) and _inside(path, root)
+
+
 def _protected_decision(capability, root, declared):
     """Decision for a protected workspace path, before the role table.
 
@@ -633,18 +649,21 @@ def _path_args(arguments, skip_first=False):
     return values
 
 
-def _classify_paths(arguments, root, write, skip_first=False, target=None):
+def _classify_paths(arguments, root, write, skip_first=False, target=None, anchor=None):
     """Findings for the positional arguments. `target` keeps option values out of the audit log.
 
-    No path argument means None (the caller may use its fallback). A path argument that cannot be
-    resolved raises `_Ambiguous`, which the caller turns into a denial: `*`/`$HOME` are not paths.
+    `anchor` is the directory relative paths are resolved against (a `cd` in the same command);
+    the capability is still decided against the session box `root`. No path argument means None
+    (the caller may use its fallback). A path argument that cannot be resolved raises
+    `_Ambiguous`, which the caller turns into a denial: `*`/`$HOME` are not paths.
     """
     paths = _path_args(arguments, skip_first)
     if not paths:
         return None
+    base = anchor or root
     findings = []
     for value in paths:
-        path = _resolve(value, root)
+        path = _resolve(value, base)
         if path is None:
             raise _Ambiguous(value)
         findings.append(Finding(_path_capability(path, root, write),
@@ -652,11 +671,12 @@ def _classify_paths(arguments, root, write, skip_first=False, target=None):
     return findings
 
 
-def _write_option_paths(program, arguments, root):
+def _write_option_paths(program, arguments, root, anchor=None):
     """Paths written through an option of an otherwise read program (`sort -o`, `tree -o`)."""
     options = WRITE_OPTION_PROGRAMS.get(program)
     if not options:
         return None
+    base = anchor or root
     findings, index = [], 0
     while index < len(arguments):
         argument = arguments[index]
@@ -677,17 +697,18 @@ def _write_option_paths(program, arguments, root):
                     break
             index += 1
         if value is not None:
-            path = _resolve(value, root)
+            path = _resolve(value, base)
             if path is None:
                 raise _Ambiguous(value)
             findings.append(Finding(_path_capability(path, root, True), path, path))
     return findings or None
 
 
-def _target_directory_paths(program, arguments, root):
+def _target_directory_paths(program, arguments, root, anchor=None):
     """Write findings for cp/mv/ln/install -t/--target-directory, including glued values."""
     if program not in TARGET_DIRECTORY_PROGRAMS:
         return None
+    base = anchor or root
     findings, index = [], 0
     while index < len(arguments):
         argument = arguments[index]
@@ -717,7 +738,7 @@ def _target_directory_paths(program, arguments, root):
                     break          # the rest of the group is this option's value
         index += consumed
         if value is not None:
-            path = _resolve(value, root)
+            path = _resolve(value, base)
             if path is None:
                 raise _Ambiguous(value)
             findings.append(Finding(_path_capability(path, root, True), path, path))
@@ -893,16 +914,32 @@ def _git_expanded_argument(arguments):
     return any(_EXPANSION.search(argument) for argument in _git_path_arguments(arguments))
 
 
-def _classify_git(arguments, root):
+def _classify_git(arguments, root, anchor=None):
     if not arguments:
         return None
+    # `-C <dir>` reanchors the repository, but only inside the box. The subcommand is classified
+    # normally: a worktree under `.claude/worktrees/` is vcs.read/vcs.write like any other repo.
+    base = anchor or root
     index = 0
     while index < len(arguments):
         token = arguments[index]
         if token in ("--no-pager", "-P", "--paginate"):
             index += 1
             continue
-        if token in ("-c", "--git-dir", "--work-tree", "-C"):
+        if token == "-C":
+            if index + 1 >= len(arguments):
+                return None                     # -C without a value
+            resolved = _resolve(arguments[index + 1], base)
+            if resolved is None or not _box_contains(resolved, root):
+                return None                     # outside the box: would enlarge it
+            if _is_secret(resolved):
+                return [Finding("secrets", "git -C", None)]
+            base = resolved
+            index += 2
+            continue
+        if token.startswith("-C"):
+            return None                         # `-C<dir>` glued: no unambiguous parse
+        if token in ("-c", "--git-dir", "--work-tree"):
             return None                     # changes the repository/config: ambiguous
         break
     if index >= len(arguments):
@@ -954,21 +991,81 @@ def _classify_git(arguments, root):
 
 
 def _classify_python(arguments):
-    if not arguments:
+    """Classify `python -m <module>` after the harmless interpreter flags that precede `-m`.
+
+    `-I`, `-B`, `-u`, `-E`, `-s`, `-S`, `-O`, `-OO`, `-X <value>` and `-W <value>` (separate or
+    glued) only shape the interpreter, so the module decides the capability. `-c`, stdin, a
+    positional script or an unknown flag is arbitrary code and fails closed.
+    """
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token in ("-X", "-W"):
+            if index + 1 >= len(arguments):
+                return None
+            index += 2
+            continue
+        if token.startswith(("-X", "-W")) and len(token) > 2:
+            index += 1
+            continue
+        if PYTHON_SAFE_FLAGS.match(token):
+            index += 1
+            continue
+        break
+    if index >= len(arguments) or arguments[index] != "-m" or index + 1 >= len(arguments):
         return None
-    if arguments[0] == "-m" and len(arguments) > 1:
-        module = arguments[1]
-        if module in ("unittest", "pytest", "tox", "nox"):
-            return [Finding("test.run", "python3 -m " + module, None)]
-        if module == "pip":
-            rest = arguments[2:]
-            action = rest[0] if rest else ""
-            if action in ("install", "uninstall", "download"):
-                return [Finding("install", "python3 -m pip " + action, None)]
-            if action in ("list", "show", "freeze", "check"):
-                return [Finding("test.run", "python3 -m pip " + action, None)]
-        return None                         # arbitrary module: fail closed
-    return None                             # scripts and -c are arbitrary code
+    module = arguments[index + 1]
+    rest = arguments[index + 2:]
+    if module in ("unittest", "pytest", "tox", "nox"):
+        return [Finding("test.run", "python3 -m " + module, None)]
+    if module == "pip":
+        action = rest[0] if rest else ""
+        if action in ("install", "uninstall", "download"):
+            return [Finding("install", "python3 -m pip " + action, None)]
+        if action in ("list", "show", "freeze", "check"):
+            return [Finding("test.run", "python3 -m pip " + action, None)]
+    return None                         # arbitrary module, script or -c: fail closed
+
+
+def _classify_godot(arguments, root, anchor=None):
+    """`godot`/`godot4` run tests only with `--headless`, and every path stays inside the box.
+
+    Paths are the values of `--path`, `--main-pack`, `--script`/`-s` (separate or glued) and every
+    positional argument. `--export*` writes an artifact with its own flags, so it is denied.
+    """
+    if "--headless" not in arguments:
+        return None
+    base = anchor or root
+    paths, index = [], 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--headless":
+            index += 1
+            continue
+        if argument.startswith("--export"):
+            return None
+        value, consumed = None, 1
+        if argument in ("--path", "--main-pack", "--script", "-s"):
+            if index + 1 >= len(arguments):
+                return None
+            value, consumed = arguments[index + 1], 2
+            if value.startswith("-"):
+                return None                 # missing value, another flag follows
+        elif argument.startswith(("--path=", "--main-pack=", "--script=")):
+            value = argument.split("=", 1)[1]
+        elif argument.startswith("-s") and len(argument) > 2:
+            value = argument[2:]
+        elif argument.startswith("--") and "=" in argument:
+            value = argument.split("=", 1)[1]
+        elif not argument.startswith("-"):
+            value = argument
+        index += consumed
+        if value is not None:
+            path = _resolve(value, base)
+            if path is None or not _box_contains(path, root):
+                return None
+            paths.append(Finding(_path_capability(path, root, False), path, path))
+    return [Finding("test.run", "godot --headless", None)] + paths
 
 
 def _classify_pip(arguments):
@@ -1035,8 +1132,13 @@ def _classify_make(arguments):
     return None
 
 
-def _classify_tokens_impl(tokens, root):
-    """Findings for one shell segment, or None when the segment is unknown/ambiguous."""
+def _classify_tokens_impl(tokens, root, anchor=None):
+    """Findings for one shell segment, or None when the segment is unknown/ambiguous.
+
+    `anchor` is the directory a `cd` left the shell in; relative paths resolve against it while
+    capabilities keep using the session box `root`.
+    """
+    anchor = anchor or root
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
     if not tokens:
@@ -1061,9 +1163,11 @@ def _classify_tokens_impl(tokens, root):
     if program in TEST_PROGRAMS:
         return [Finding("test.run", program, None)]
     if program == "git":
-        return _classify_git(arguments, root)
+        return _classify_git(arguments, root, anchor)
     if program.startswith("python"):
         return _classify_python(arguments)
+    if program in GODOT_PROGRAMS:
+        return _classify_godot(arguments, root, anchor)
     if program in ("npm", "yarn", "pnpm", "bun"):
         return _classify_node(arguments, program)
     if program == "cargo":
@@ -1079,7 +1183,7 @@ def _classify_tokens_impl(tokens, root):
     if program in ("grep", "rg"):
         if _grep_or_rg_denied(program, arguments):
             return None
-        return _classify_paths(_grep_paths(arguments), root, False) or (
+        return _classify_paths(_grep_paths(arguments), root, False, anchor=anchor) or (
             [Finding("repo.read", root, root)] if root else None)
     if program == "find":
         if any(argument in FIND_DENIED_OPTIONS for argument in arguments):
@@ -1087,17 +1191,17 @@ def _classify_tokens_impl(tokens, root):
         paths = _path_args(arguments)
         if not paths:
             return [Finding("repo.read", root, root)] if root else None
-        return _classify_paths([paths[0]], root, False)
+        return _classify_paths([paths[0]], root, False, anchor=anchor)
     if program == "dd":
         findings = []
         for argument in arguments:
             if argument.startswith("of="):
-                path = _resolve(argument[3:], root)
+                path = _resolve(argument[3:], anchor)
                 if path is None:
                     return None
                 findings.append(Finding(_path_capability(path, root, True), path, path))
             elif argument.startswith("if="):
-                path = _resolve(argument[3:], root)
+                path = _resolve(argument[3:], anchor)
                 if path is None:
                     return None
                 findings.append(Finding(_path_capability(path, root, False), path, path))
@@ -1105,8 +1209,8 @@ def _classify_tokens_impl(tokens, root):
     if program in ("echo", "printf"):
         return [Finding("repo.read", program, None)]
     if program in WRITE_PROGRAMS:
-        findings = _classify_paths(arguments, root, True)
-        targets = _target_directory_paths(program, arguments, root)
+        findings = _classify_paths(arguments, root, True, anchor=anchor)
+        targets = _target_directory_paths(program, arguments, root, anchor)
         if findings is None and targets is None:
             return None
         return (findings or []) + (targets or [])
@@ -1114,20 +1218,51 @@ def _classify_tokens_impl(tokens, root):
         if _denied_read_options(program, arguments):
             return None
         target = None if program in PATH_TARGET_READ_PROGRAMS else program
-        findings = _classify_paths(arguments, root, False, target=target)
-        writes = _write_option_paths(program, arguments, root)
+        findings = _classify_paths(arguments, root, False, target=target, anchor=anchor)
+        writes = _write_option_paths(program, arguments, root, anchor)
         if findings is None and writes is None:
             return [Finding("repo.read", root, root)] if root else None
         return (findings or []) + (writes or [])
     return None
 
 
-def _classify_tokens(tokens, root):
+def _classify_tokens(tokens, root, anchor=None):
     """Findings for one shell segment; an unresolvable path makes the whole segment fail closed."""
     try:
-        return _classify_tokens_impl(tokens, root)
+        return _classify_tokens_impl(tokens, root, anchor)
     except _Ambiguous:
         return None
+
+
+_CD_NOT = object()
+
+
+def _cd_anchor(tokens, root, anchor):
+    """`(findings, new_anchor)` after a `cd`, `_CD_NOT` for a non-cd segment, None to deny.
+
+    Only `cd <dir>`, with an optional `-L`/`-P`, reanchors the following segments of the same
+    command. The target must resolve inside the box, so `cd ../..` from the root cannot enlarge
+    it; `cd` without a directory, `cd -`, extra arguments, any other flag and an expansion or
+    glob are denied. The new anchor is local to this command. The `cd` itself adds no finding:
+    the capability reported for `cd <dir> && <sub>` is the one of `<sub>`.
+    """
+    stripped = tokens
+    while stripped and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", stripped[0]):
+        stripped = stripped[1:]
+    if not stripped or os.path.basename(stripped[0]) != "cd":
+        return _CD_NOT
+    arguments = stripped[1:]
+    while arguments and arguments[0] in ("-L", "-P"):
+        arguments = arguments[1:]
+    if len(arguments) != 1:
+        return None
+    value = arguments[0]
+    if value.startswith("-"):
+        return None                         # `cd -`, `cd --`, any other flag
+    path = _resolve(value, anchor)
+    if path is None or _is_secret(path) or not _box_contains(path, root):
+        return None                         # expansion/glob, secret or outside the box
+    return ([], path)
 
 
 def _classify_command(command, root):
@@ -1141,6 +1276,7 @@ def _classify_command(command, root):
     except ValueError:
         return None
     findings = []
+    anchor = root
     for segment in segments:
         try:
             tokens = _tokens(segment)
@@ -1150,11 +1286,17 @@ def _classify_command(command, root):
         if redirects is None:
             return None
         for write, value in redirects:
-            path = _resolve(value, root)
+            path = _resolve(value, anchor)
             if path is None:
                 return None
             findings.append(Finding(_path_capability(path, root, write), path, path))
-        part = _classify_tokens(clean, root)
+        reanchored = _cd_anchor(clean, root, anchor)
+        if reanchored is _CD_NOT:
+            part = _classify_tokens(clean, root, anchor)
+        elif reanchored is None:
+            return None
+        else:
+            part, anchor = reanchored
         if part is None:
             return None
         findings.extend(part)
