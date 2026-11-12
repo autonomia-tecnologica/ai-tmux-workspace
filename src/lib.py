@@ -798,14 +798,563 @@ def set_repo_enabled(name, enabled):
     tmp.replace(path)
 
 
+# ---- minimal textual edits of config.yaml -------------------------------------------------------
+# The context menu writes a group or a sibling relation without rewriting the file: only the lines
+# of the affected block are inserted or removed, so comments and the rest of the person's config
+# survive. The writes go through write_config_text (backup + atomic replace).
+# -------------------------------------------------------------------------------------------------
+
+GROUP_KEY = "groups"
+SIBLINGS_KEY = "siblings"
+
+
+def _content_line(line):
+    text = line.strip()
+    return bool(text) and not text.startswith("#")
+
+
+def _indent_of(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def _line_data(line):
+    """(key, value) of a mapping line, or None. A block key with children reads as value None."""
+    text = line.strip()
+    if not text or text.startswith("#") or text.startswith("-"):
+        return None
+    try:
+        data = yaml_min.loads(text)
+    except ValueError:
+        return None
+    if isinstance(data, dict) and len(data) == 1:
+        return next(iter(data.items()))
+    return None
+
+
+def _section(lines, name):
+    """{"begin", "end", "last"} of a top-level key block in `lines`, or None.
+
+    `end` is the next top-level key; `last` is the last content line of the block, so an insertion
+    there leaves trailing comments with the next key."""
+    start = None
+    for i, line in enumerate(lines):
+        if _indent_of(line) == 0 and _content_line(line):
+            pair = _line_data(line)
+            if pair and pair[0] == name:
+                start = i
+                break
+    if start is None:
+        return None
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if _content_line(lines[j]) and _indent_of(lines[j]) == 0:
+            end = j
+            break
+    last = start
+    for j in range(start, end):
+        if _content_line(lines[j]):
+            last = j
+    return {"begin": start, "end": end, "last": last}
+
+
+def _children(lines, section):
+    """([{"key", "value", "begin", "end", "indent"}], child_indent) of the mappings in `section`."""
+    first = next((j for j in range(section["begin"] + 1, section["end"])
+                  if _content_line(lines[j])), None)
+    if first is None:
+        return [], section["begin"] + 2
+    child_indent = _indent_of(lines[first])
+    if child_indent == 0:
+        return [], 2
+    children = []
+    j = first
+    while j < section["end"]:
+        if _content_line(lines[j]) and _indent_of(lines[j]) == child_indent:
+            pair = _line_data(lines[j])
+            if pair is None:
+                j += 1
+                continue
+            end = j + 1
+            while end < section["end"] and not (_content_line(lines[end])
+                                                and _indent_of(lines[end]) <= child_indent):
+                end += 1
+            children.append({"key": pair[0], "value": pair[1], "begin": j, "end": end,
+                             "indent": child_indent})
+            j = end
+        else:
+            j += 1
+    return children, child_indent
+
+
+def _list_entries(lines, group):
+    """([{"begin", "end", "indent"}], list_indent) of the block sequence under `group`."""
+    first = next((j for j in range(group["begin"] + 1, group["end"])
+                  if _content_line(lines[j])), None)
+    if first is None:
+        return [], group["indent"] + 2
+    list_indent = _indent_of(lines[first])
+    if not lines[first].strip().startswith("-"):
+        return [], list_indent
+    entries = []
+    j = first
+    while j < group["end"]:
+        if (_content_line(lines[j]) and _indent_of(lines[j]) == list_indent
+                and lines[j].strip().startswith("-")):
+            end = j + 1
+            while end < group["end"] and not (_content_line(lines[end])
+                                              and _indent_of(lines[end]) <= list_indent):
+                end += 1
+            entries.append({"begin": j, "end": end, "indent": list_indent})
+            j = end
+        else:
+            j += 1
+    return entries, list_indent
+
+
+def _entry_item(lines, entry):
+    """The sequence item (string or mapping) of one list entry, or None when it cannot be read."""
+    chunk = [line[entry["indent"]:] for line in lines[entry["begin"]:entry["end"]]
+             if _content_line(line)]
+    if not chunk:
+        return None
+    try:
+        data = yaml_min.loads("\n".join(chunk))
+    except ValueError:
+        return None
+    return data[0] if isinstance(data, list) and len(data) == 1 else None
+
+
+def _item_path(item):
+    value = item.get("path") if isinstance(item, dict) else item
+    return expand_path(value) if isinstance(value, str) and value else None
+
+
+def _config_path_value(path):
+    """Path as written in config.yaml: `~`-relative inside the home, absolute otherwise."""
+    path = expand_path(path)
+    home = str(HOME)
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+def _entry_lines(item, indent):
+    """Canonical YAML lines of a sequence item at `indent` (a string or {path, siblings})."""
+    block = yaml_min.dumps({"e": [item]}).splitlines()[1:]
+    return [" " * indent + line[2:] for line in block]
+
+
+def _key_text(key):
+    first = yaml_min.dumps({key: []}).splitlines()[0]
+    return first[:-len(": []")]
+
+
+def _trailing_comment(line):
+    """The `# ...` comment of a line when it is outside quotes, else ""."""
+    quote = None
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if quote == '"':
+            if char == "\\":
+                i += 2
+                continue
+            if char == '"':
+                quote = None
+        elif quote == "'":
+            if char == "'":
+                quote = None
+        elif char in "\"'" and (i == 0 or line[i - 1] in " [,:-"):
+            quote = char
+        elif char == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[i:]
+        i += 1
+    return ""
+
+
+def _groups_model(lines):
+    section = _section(lines, GROUP_KEY)
+    if section is None:
+        return None, []
+    groups, _indent = _children(lines, section)
+    return section, groups
+
+
+def _normalize_inline_groups(lines, target):
+    """Rewrites a `Group: [repo]` line that holds `target` as a block list, keeping its comment."""
+    _section_value, groups = _groups_model(lines)
+    for group in reversed(groups):
+        if not isinstance(group["value"], list):
+            continue
+        if not any(_item_path(item) == target for item in group["value"]):
+            continue
+        comment = _trailing_comment(lines[group["begin"]])
+        header = " " * group["indent"] + _key_text(group["key"]) + ":"
+        if comment:
+            header += "  " + comment
+        block = [header]
+        for item in group["value"]:
+            block += _entry_lines(item, group["indent"] + 2)
+        lines[group["begin"]:group["begin"] + 1] = block
+    return lines
+
+
+def _find_group_entries(lines, target):
+    """[(group, entry, item)] for every group entry pointing at `target`."""
+    _section_value, groups = _groups_model(lines)
+    found = []
+    for group in groups:
+        if isinstance(group["value"], list):
+            for item in group["value"]:
+                if _item_path(item) == target:
+                    found.append((group, None, item))
+            continue
+        entries, _list_indent = _list_entries(lines, group)
+        for entry in entries:
+            item = _entry_item(lines, entry)
+            if _item_path(item) == target:
+                found.append((group, entry, item))
+    return found
+
+
+def _merged_entry(matches, target):
+    """One item for the moved repo: keeps the first mapping and the union of the declared siblings."""
+    if not matches:
+        return _config_path_value(target)
+    items = [item for _group, _entry, item in matches]
+    mappings = [item for item in items if isinstance(item, dict)]
+    if not mappings:
+        return items[0]
+    merged = dict(mappings[0])
+    merged["path"] = mappings[0].get("path") or items[0]
+    siblings = []
+    for mapping in mappings:
+        for sibling in mapping.get("siblings") if isinstance(mapping.get("siblings"), list) else []:
+            if isinstance(sibling, str) and sibling and sibling not in siblings:
+                siblings.append(sibling)
+    if siblings:
+        merged["siblings"] = siblings
+    else:
+        merged.pop("siblings", None)
+    return merged
+
+
+def _append_to_group(lines, name, item, comment=""):
+    section, groups = _groups_model(lines)
+    if section is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"{GROUP_KEY}:")
+        section = _section(lines, GROUP_KEY)
+        groups = []
+    else:
+        pair = _line_data(lines[section["begin"]])
+        if pair and pair[1] not in (None, {}, []):
+            raise ConfigError(t("repos.err.write", path=str(config_path())))
+        if pair and pair[1] is not None:      # "groups: {}": make it a block
+            comment = _trailing_comment(lines[section["begin"]])
+            header = " " * _indent_of(lines[section["begin"]]) + _key_text(GROUP_KEY) + ":"
+            if comment:
+                header += "  " + comment
+            lines[section["begin"]] = header
+            section = _section(lines, GROUP_KEY)
+            groups = []
+    target = next((group for group in groups if group["key"] == name), None)
+    if target is None:
+        indent = groups[0]["indent"] if groups else 2
+        block = yaml_min.dumps({name: [item]}).splitlines()
+        if comment and len(block) > 1:
+            block[1] += "  " + comment
+        at = section["last"] + 1
+        lines[at:at] = [" " * indent + line for line in block]
+        return lines
+    if isinstance(target["value"], list):
+        comment = _trailing_comment(lines[target["begin"]])
+        header = " " * target["indent"] + _key_text(target["key"]) + ":"
+        if comment:
+            header += "  " + comment
+        block = [header]
+        for existing in target["value"]:
+            block += _entry_lines(existing, target["indent"] + 2)
+        new_lines = _entry_lines(item, target["indent"] + 2)
+        if comment:
+            new_lines[0] += "  " + comment
+        lines[target["begin"]:target["begin"] + 1] = block + new_lines
+        return lines
+    entries, list_indent = _list_entries(lines, target)
+    if entries:
+        at = max(j for j in range(target["begin"], target["end"]) if _content_line(lines[j])) + 1
+    else:
+        at = target["begin"] + 1
+        list_indent = target["indent"] + 2
+    new_lines = _entry_lines(item, list_indent)
+    if comment:
+        new_lines[0] += "  " + comment
+    lines[at:at] = new_lines
+    return lines
+
+
+def _text_lines(text):
+    return text.splitlines()
+
+
+def _text_join(lines, original):
+    joined = "\n".join(lines)
+    return joined + "\n" if original.endswith("\n") else joined
+
+
+def _check_repo_path(path):
+    """A repo the menu may write: a folder repo, or the main repo (which stays outside the groups)."""
+    main = read_main()
+    if main and path == main[1]:
+        return
+    folder = repos_folder()
+    if folder and path not in {p for _, p in folder_repos(folder)}:
+        raise ValueError(t("repo.not_in_folder", repo=os.path.basename(path)))
+
+
+def _check_group_written(data, group, target):
+    groups = data.get(GROUP_KEY)
+    items = groups.get(group) if isinstance(groups, dict) else None
+    if not isinstance(items, list) or not any(_item_path(item) == target for item in items):
+        raise ConfigError(t("repos.err.write", path=str(config_path())))
+
+
+def _write_config_data(cfg):
+    text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
+    write_config_text(text)
+
+
+def _edit_config_text(edit, check):
+    """Applies `edit(text) -> text` to config.yaml, validates it, then writes with a backup."""
+    path = config_path()
+    read_config()      # refreshes CONFIG_ERROR
+    if CONFIG_ERROR:
+        raise ConfigError(t("repo.config_error", path=str(path)))
+    if not path.exists():
+        raise ConfigError(t("repo.config_error", path=str(path)))
+    text = path.read_text(encoding="utf-8")
+    new_text = edit(text)
+    if new_text == text:          # nothing changed: no backup, no write
+        return
+    try:
+        data = yaml_min.loads(new_text)
+    except ValueError as error:
+        raise ConfigError(t("repos.err.write", path=str(path))) from error
+    if not isinstance(data, dict):
+        raise ConfigError(t("repos.err.write", path=str(path)))
+    check(data)
+    write_config_text(new_text)
+
+
+def _move_in_data(cfg, target, group):
+    groups = cfg.get(GROUP_KEY)
+    if not isinstance(groups, dict):
+        groups = {}
+        cfg[GROUP_KEY] = groups
+    found = []
+    for name, items in list(groups.items()):
+        if not isinstance(items, list):
+            continue
+        keep = []
+        for item in items:
+            if _item_path(item) == target:
+                found.append(item)
+            else:
+                keep.append(item)
+        groups[name] = keep
+    groups.setdefault(group, []).append(_merged_entry(found, target))
+    return cfg
+
+
+def _sibling_in_data(cfg, target, other):
+    siblings = cfg.get(SIBLINGS_KEY)
+    if not isinstance(siblings, dict):
+        siblings = {}
+        cfg[SIBLINGS_KEY] = siblings
+    key = next((name for name in siblings if expand_path(name) == target), _config_path_value(target))
+    declared = siblings.get(key)
+    if not isinstance(declared, list):
+        declared = []
+        siblings[key] = declared
+    if not any(isinstance(item, str) and expand_path(item) == other for item in declared):
+        declared.append(_config_path_value(other))
+    return cfg
+
+
+def move_repo_to_group(path, group):
+    """Moves one repo to `group` in config.yaml, creating the group when needed.
+
+    Other keys, comments and the rest of the file are preserved, and the previous file is kept as a
+    backup. Raises ConfigError when the config cannot be read or written safely, and ValueError when
+    the repo is not a folder repo or the group name is empty."""
+    group = (group or "").strip()
+    if not group or "\n" in group or "\r" in group:
+        raise ValueError(t("repos.err.group_name", group=group))
+    target = expand_path(path)
+    _check_repo_path(target)
+
+    if config_path().suffix == ".json":
+        cfg = read_config()
+        if CONFIG_ERROR:
+            raise ConfigError(t("repo.config_error", path=str(config_path())))
+        _move_in_data(cfg, target, group)
+        _write_config_data(cfg)
+        return
+
+    def edit(text):
+        lines = _normalize_inline_groups(_text_lines(text), target)
+        matches = _find_group_entries(lines, target)
+        if len(matches) == 1 and matches[0][0]["key"] == group:
+            return text
+        item = _merged_entry(matches, target)
+        comments = []
+        remove = set()
+        for _group, entry, _item in matches:
+            comment = _trailing_comment(lines[entry["begin"]])
+            if comment and comment not in comments:
+                comments.append(comment)
+            for j in range(entry["begin"], entry["end"]):
+                if _content_line(lines[j]) and _indent_of(lines[j]) >= entry["indent"]:
+                    remove.add(j)
+        lines = [line for j, line in enumerate(lines) if j not in remove]
+        lines = _append_to_group(lines, group, item, " ".join(comments))
+        return _text_join(lines, text)
+
+    _edit_config_text(edit, lambda data: _check_group_written(data, group, target))
+
+
+def mark_repo_sibling(path, other):
+    """Declares `other` as a sibling of `path` in config.yaml; the relation reads in both directions.
+
+    The relation goes to the root "siblings" map, so it also works for a repo with no "groups" entry
+    (the implicit "Sem categoria"). Comments and the rest of the file are preserved, with a backup."""
+    target, sibling = expand_path(path), expand_path(other)
+    if target == sibling:
+        raise ValueError(t("repos.err.same_repo"))
+    _check_repo_path(target)
+    _check_repo_path(sibling)
+    cfg = read_config()
+    if CONFIG_ERROR:
+        raise ConfigError(t("repo.config_error", path=str(config_path())))
+    if sibling in _sibling_pairs(cfg).get(target, set()):
+        return                        # already a sibling, declared on either side
+
+    if config_path().suffix == ".json":
+        _sibling_in_data(cfg, target, sibling)
+        _write_config_data(cfg)
+        return
+
+    def edit(text):
+        return _text_join(_add_sibling(_text_lines(text), target, sibling), text)
+
+    def check(data):
+        if sibling not in _sibling_pairs(data).get(target, set()):
+            raise ConfigError(t("repos.err.write", path=str(config_path())))
+
+    _edit_config_text(edit, check)
+
+
+def _flow_add(line, value):
+    start, end = line.find("["), line.rfind("]")
+    if start < 0 or end < start:
+        raise ConfigError(t("repos.err.write", path=str(config_path())))
+    inside = line[start + 1:end].strip()
+    merged = f"{inside}, {value}" if inside else value
+    return line[:start + 1] + merged + line[end:]
+
+
+def _add_sibling(lines, target, other):
+    section = _section(lines, SIBLINGS_KEY)
+    if section is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"{SIBLINGS_KEY}:")
+        section = _section(lines, SIBLINGS_KEY)
+        children, indent = [], 2
+    else:
+        pair = _line_data(lines[section["begin"]])
+        if pair and pair[1] not in (None, {}, []):
+            raise ConfigError(t("repos.err.write", path=str(config_path())))
+        if pair and pair[1] is not None:      # "siblings: {}" / "siblings: []": make it a block
+            comment = _trailing_comment(lines[section["begin"]])
+            header = " " * _indent_of(lines[section["begin"]]) + _key_text(SIBLINGS_KEY) + ":"
+            if comment:
+                header += "  " + comment
+            lines[section["begin"]] = header
+            section = _section(lines, SIBLINGS_KEY)
+        children, indent = _children(lines, section)
+    key, value = _config_path_value(target), _config_path_value(other)
+    for child in children:
+        if expand_path(child["key"]) != target:
+            continue
+        declared = child["value"]
+        if isinstance(declared, list):
+            if any(isinstance(item, str) and expand_path(item) == other for item in declared):
+                return lines
+            lines[child["begin"]] = _flow_add(
+                lines[child["begin"]], yaml_min.dumps({"e": value}).split("e: ", 1)[1])
+            return lines
+        if declared is None:
+            entries, list_indent = _list_entries(lines, child)
+            for entry in entries:
+                if _item_path(_entry_item(lines, entry)) == other:
+                    return lines
+            if entries:
+                at = max(j for j in range(child["begin"], child["end"])
+                         if _content_line(lines[j])) + 1
+            else:
+                at = child["begin"] + 1
+                list_indent = child["indent"] + 2
+            lines[at:at] = [" " * list_indent + "- " + value]
+            return lines
+        raise ConfigError(t("repos.err.write", path=str(config_path())))
+    block = yaml_min.dumps({key: [value]}).splitlines()
+    at = section["last"] + 1
+    lines[at:at] = [" " * indent + line for line in block]
+    return lines
+
+
+def group_names():
+    """Group names declared in config.yaml, in file order. The implicit group of the folder is not here."""
+    groups = read_config().get("groups")
+    return [name for name in groups if isinstance(name, str) and name] if isinstance(groups, dict) else []
+
+
+def _folder_repos_groups(folder):
+    """Groups of the repos folder: the declared "groups" first, then the implicit uncategorized group.
+
+    A "groups" entry only counts when it points to a repo directly inside the folder; the folder is the
+    only source of repos. A repo in no declared group is shown under the implicit "Sem categoria"."""
+    repos = folder_repos(folder)
+    if not repos:
+        return []
+    by_path = {path: name for name, path in repos}
+    declared = read_config().get("groups")
+    groups = []
+    used = set()
+    for group_name, paths in declared.items() if isinstance(declared, dict) else []:
+        if not isinstance(group_name, str) or not group_name:
+            continue
+        members = [(by_path[path], path) for path in _entries(paths) if path in by_path]
+        if members:
+            groups.append((group_name, members))
+            used |= {path for _, path in members}
+    rest = [(name, path) for name, path in repos if path not in used]
+    if rest:
+        groups.append((t("repos.group.uncategorized"), rest))
+    return groups
+
+
 def read_repos():
-    """[(group, [(name, path), ...]), ...]. With "repos_folder" the folder is the only source: one group named
-    after the folder holds its git repos, and "groups" entries are not read (repos outside the folder are not
+    """[(group, [(name, path), ...]), ...]. With "repos_folder" the folder is the only source: "groups" classify
+    its git repos and a repo in no group goes to the implicit "Sem categoria" (repos outside the folder are not
     supported). Without it: "groups" (category; each entry is a path or {path, siblings})."""
     folder = repos_folder()
     if folder:
-        repos = folder_repos(folder)
-        return [(os.path.basename(folder) or folder, repos)] if repos else []
+        return _folder_repos_groups(folder)
     groups = []
     for group_name, paths in read_config().get("groups", {}).items():
         repos = [(os.path.basename(p) or p, p) for p in _entries(paths)]
@@ -822,7 +1371,10 @@ def read_relations():
 
 
 def _sibling_pairs(cfg):
-    """{path: {siblings}}: "siblings" written on a "groups" entry holds in both directions."""
+    """{path: {siblings}}: "siblings" holds in both directions, on a "groups" entry or at the root.
+
+    The root map (repo path -> siblings) is written by the repos context menu for repos that have no
+    "groups" entry, including the ones in the implicit "Sem categoria"."""
     pairs = {}
     for paths in cfg.get("groups", {}).values():
         for entry in paths if isinstance(paths, list) else []:
@@ -835,6 +1387,16 @@ def _sibling_pairs(cfg):
                     other = expand_path(path)
                     pairs.setdefault(repo, set()).add(other)
                     pairs.setdefault(other, set()).add(repo)
+    root = cfg.get("siblings")
+    for key, declared in root.items() if isinstance(root, dict) else []:
+        if not isinstance(key, str) or not key:
+            continue
+        repo = expand_path(key)
+        for path in declared if isinstance(declared, list) else []:
+            if isinstance(path, str) and path and expand_path(path) != repo:
+                other = expand_path(path)
+                pairs.setdefault(repo, set()).add(other)
+                pairs.setdefault(other, set()).add(repo)
     return pairs
 
 

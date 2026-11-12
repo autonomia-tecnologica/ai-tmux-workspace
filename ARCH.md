@@ -18,7 +18,7 @@ divergência entra em `## Dívidas conhecidas`, com o motivo.
 | Fundação | `src/tmux.py`, `src/i18n.py`, `src/colors.py`, `src/yaml_min.py`, `i18n/` | único dono do comando `tmux`, do texto por locale, das cores ANSI e do leitor YAML mínimo | importar qualquer camada acima; pintar tela; escrever estado |
 | Sessão e permissões | `src/session.py`, `src/session_state.py`, `src/permission_state.py`, `src/policy.py` | caixa e papel da sessão, abas persistidas, último modo de permissão, decisão da política | importar `lib`, `viewer`, `panel_*`, `agents` ou `hook`; chamar `tmux` fora de `tmux.py`; decidir permissão fora de `policy.py` |
 | Estado e serviços | `src/lib.py`, `src/worktrees.py`, `src/tree_state.py`, `src/backlog.py`, `src/drift.py`, `src/extra_usage.py`, `src/session_risk.py`, `src/notify.py`, `src/opener.py`, `src/clipboard.py`, `src/statusbar.py`, `src/agents/` | config e estado do workspace, obra de worktree, estado de árvore, leitura do backlog, doctor do harness, uso extra, risco, notificação, abrir arquivo, clipboard, texto da barra de status, adaptadores de agente que normalizam o estado para os painéis | importar `viewer`, `panel_*`, `help`, `options` ou `hook`; pintar tela |
-| Desenho e telas | `src/viewer.py`, `src/panel_diff.py`, `src/panel_folders.py`, `src/panel_github.py`, `src/panel_repos.py`, `src/panel_sessions.py`, `src/panel_tabs.py`, `src/panel_tasks.py`, `src/panel_tree.py`, `src/help.py`, `src/options.py`, `src/session_placeholder.py`, `src/conference.py`, `src/conference_budget.py`, `src/conference_worker.py`, `src/mic.py`, `src/stt.py`, `src/glyphs.py`, `src/icons.py` | pintar linhas, telas e popups; painéis só devolvem `collect(viewer)`; símbolos e ícones desenhados; conferência e ditado | rodar o comando `tmux` (só `tmux.py`); escrever arquivo de estado; importar `hook`, `installer` ou `bin/workspace` |
+| Desenho e telas | `src/viewer.py`, `src/context_menu.py`, `src/panel_diff.py`, `src/panel_folders.py`, `src/panel_github.py`, `src/panel_repos.py`, `src/panel_sessions.py`, `src/panel_tabs.py`, `src/panel_tasks.py`, `src/panel_tree.py`, `src/help.py`, `src/options.py`, `src/session_placeholder.py`, `src/conference.py`, `src/conference_budget.py`, `src/conference_worker.py`, `src/mic.py`, `src/stt.py`, `src/glyphs.py`, `src/icons.py` | pintar linhas, telas e popups; painéis só devolvem `collect(viewer)`; menu de contexto declarado por tipo de item; símbolos e ícones desenhados; conferência e ditado | rodar o comando `tmux` (só `tmux.py`); escrever arquivo de estado; importar `hook`, `installer` ou `bin/workspace` |
 | Entrada e adaptadores | `bin/workspace`, `src/lifecycle.py`, `src/installer.py`, `src/config_cmd.py`, `src/hook.py`, `src/statusline.py`, `src/session_menu.py` | launcher e comandos, dono do ciclo de vida dos servidores `ws-*` (perfil ↔ servidor, quais estão vivos; `restart`, `stop` e `reload` agem por servidor), instalação/remoção, `workspace config update` (compara e acrescenta config, harness, settings e hooks), hook do Claude, statusLine, menu de sessão | decidir permissão (só encaminha para `policy.py`); pintar tela por conta própria; ser importado por camada abaixo |
 | Regra e motor | `harness/` | texto de regra (`HARNESS.md`, `arch-format.md`, `choke-point.md`, `README.md`, `regras/`) e motor instalado (`harness.py`, `opencode-policy.js`, `policy.yaml`, `settings.json`) | importar `src/` ou `tests/`; virar dependência de runtime do produto |
 | Freios | `tests/` | provas executáveis: desenho, idioma, política, config, painéis e este arquivo | ser importado por `src/` ou `bin/` |
@@ -59,6 +59,7 @@ Todo efeito tem um dono; o resto pede a ele. A pergunta é "quem pode produzir e
 | efeito | dono | como pedir |
 |---|---|---|
 | desenho de tela (linhas, clear, alt-screen, cursor, mouse, tecla crua) | `src/viewer.py` | painel devolve `collect(viewer) -> (header, body)`; exceções em `tests/test_architecture.py` |
+| menu de contexto (entradas por tipo de item) | `src/context_menu.py` | painel passa `actions=context_menu.actions` e `on_input`; o `viewer` desenha o popup e a caixa |
 | chamada ao `tmux` | `src/tmux.py` | `tmux.run(...)` e as funções nomeadas do módulo; nada de `subprocess` com `tmux` |
 | geometria de janela e layout | `layout_apply` em `bin/workspace` | `workspace fit`; item 108 |
 | escrita de arquivo | dono do formato: `src/lib.py` (config e estado do workspace), `src/session_state.py` (abas), `src/permission_state.py` (modo), `src/hook.py` (ficha de sessão), `src/installer.py` (manifesto e backup), `src/extra_usage.py` (cache de uso), `src/config_cmd.py` (registro `state/config-offered.json`); o `config.yaml` é gravado só por `lib.write_config_text` (com backup) | chame a função do dono; não abra o mesmo arquivo em outro lugar |
@@ -123,6 +124,13 @@ Regra-alvo: o estilo é função pura do estado, `estilo = f(estado)`. Dentro da
 `tmux` nem de arquivo. Quem monta o estado é o painel (`collect(viewer)`); quem pinta é o `viewer`.
 A conformidade se verifica painel a painel, na migração para `collect(viewer)`.
 
+Menu de contexto: `src/context_menu.py` é a única camada que declara as entradas por tipo de item
+(hoje repo; outro tipo entra ali, não no painel). O painel pede `actions=context_menu.actions` e o
+`viewer` desenha o popup, navega e devolve a tecla; um submenu é pedido por `viewer.open_menu(items)`.
+O menu de repo tem só duas ações: mover para grupo e marcar como irmão de outro repo. As duas gravam
+o `config.yaml` pela `lib` (edição textual mínima, backup e comentários preservados) e valem no
+próximo redesenho, sem estado no servidor tmux e sem `restart`.
+
 `REPO_TREE` (em `bin/workspace`) é a tabela única de papéis dos painéis: uma linha por painel, com papel,
 pai, divisão, tamanho e comando. `build_tree`, `layout_apply` e `plugin_open` leem essa tabela. Papel
 novo de painel entra em `REPO_TREE`, não em código solto. Os papéis `tmp N` e `ttmp N` das abas são a
@@ -172,7 +180,7 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 
 | arquivo | dono do formato | escritores |
 |---|---|---|
-| `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/lib.py` (`config_path`) | a pessoa, editando; `lib` lê |
+| `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/lib.py` (`config_path`) | a pessoa, editando; `lib` lê e grava (edição textual mínima, com backup) |
 | `$WS_STATE/tabs/<sha1>.json` (abas por repo) | `src/session_state.py` | `session_state`; `bin/workspace` pede por `state_sync_window` |
 | `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `harness/opencode-policy.js` e `session_state` (dívida) |
 | `$WS_STATE/permission.json` (último modo de permissão) | `src/permission_state.py` (`path`, `record_mode`) | `permission_state` |

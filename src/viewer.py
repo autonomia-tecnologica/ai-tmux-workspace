@@ -23,6 +23,8 @@ one, in tests/test_architecture.py; that list only shrinks as every panel migrat
 Context menu: with `actions(viewer, key) -> [(label, active, action)]`, Space or a right click on an
 item opens an overlay; arrows/j/k navigate, Enter runs `action(viewer, key)`, Esc closes.
 An empty list does not open the menu. An inactive item is dimmed and Enter on it just closes.
+An action may call `viewer.open_menu(items)` to open a submenu in the same place; the menu layer
+builds the items and this module owns the drawing.
 
 Text input: `on_input(viewer, key)` runs before navigation and returns True when it consumed the key;
 `footer(viewer)` draws the footer where the screen shows the text being typed. The footer wraps its
@@ -151,6 +153,7 @@ class Viewer:
         self._footer_rows = 0    # rows taken by the footer (separator + text) in the last frame
         self.menu = None         # {"key", "items", "sel", "row", "column"} while the context menu is open
         self._box = None         # (x, y, width, height) of the menu box as last drawn
+        self._menu_at = None     # (row, column) of the last menu: where a submenu opens
 
     # ---- collection (thread) ----------------------------------------------------------
     def _collector(self):
@@ -329,10 +332,26 @@ class Viewer:
         key = self.body[self.idx].key
         items = self.actions(self, key)
         if items:
+            self._menu_at = (row, column)
             self.menu = {"key": key, "items": items, "sel": 0, "row": row, "column": column}
+
+    def open_menu(self, items, key=None):
+        """Open a menu built by the menu layer (a submenu) where the previous one was drawn.
+
+        The panel asks the menu layer for the entries; this module keeps owning the overlay, the
+        navigation and the mouse. Returns False when `items` is empty (nothing to open)."""
+        items = list(items or [])
+        if not items:
+            return False
+        row, column = self._menu_at if self._menu_at is not None else (len(self.header), 2)
+        self.menu = {"key": self.key if key is None else key, "items": items, "sel": 0,
+                     "row": row, "column": column}
+        self.redraw.set()
+        return True
 
     def _run_menu(self, j):
         m = self.menu
+        self._menu_at = (m["row"], m["column"])
         self.menu = None
         _, active, action = m["items"][j]
         if active:
