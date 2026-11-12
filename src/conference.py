@@ -11,10 +11,11 @@ old log never comes back in a prompt.
 (`conference_worker.py`) in that repo with the window's profile (Claude or OpenCode). The whole log
 goes in every prompt with a hard cap and a visible truncation note; the log is the context, not the
 window's agent session. A participant answers only about its own repo and only from its own
-`README.md` and `BACKLOG.md`: it reads those two files only when Rafael asks, and the only write it
-may propose is to them, also only when asked. Siblings, the installed harness, `Grep`/`Glob`,
-`Bash`, subagents and extra turns are out of scope; the worker hook enforces the two-file scope.
-A secret in either file blocks that participant's run before anything reaches the provider.
+`STRUCTURAL_FILES` (`SECURITY.md`, `DESIGN.md`, `ARCH.md`, `README.md`, `BACKLOG.md`): it reads
+those files only when Rafael asks, and the only write it may propose is to `EDITABLE_FILES`
+(`README.md` and `BACKLOG.md`), also only when asked. Siblings, the installed harness, `Grep`/`Glob`,
+`Bash`, subagents and extra turns are out of scope; the worker hook enforces the read and write scope.
+A secret in any readable file blocks that participant's run before anything reaches the provider.
 
 A write to `README.md` is a proposal: the hook captures the diff, denies the direct edit, and the
 screen shows the diff until Rafael confirms (`y`) or discards (`n`). `BACKLOG.md` keeps the direct
@@ -56,13 +57,18 @@ except ImportError:     # no fcntl (Windows): updates are not serialized
 BASE = Path(__file__).resolve().parent.parent
 NO_ANSWER = "<<NO_ANSWER>>"      # worker stdout sentinel: the message is not about that repo
 MAX_TOOL_STEPS = 4                  # tool steps one participant may take before it must answer
-MAX_FILES_READ = 2                  # the two files a participant may read: README and BACKLOG
+# The single list of structural files: what a participant may read (and what its secret scan covers).
+# Growing the list means editing this constant only. HARNESS.md stays out on purpose.
+STRUCTURAL_FILES = ("SECURITY.md", "DESIGN.md", "ARCH.md", "README.md", "BACKLOG.md")
+STRUCTURAL_FILES_TEXT = ", ".join(STRUCTURAL_FILES)
+# The subset a participant may edit: README.md (as a proposal) and BACKLOG.md (direct, when asked).
+EDITABLE_FILES = ("README.md", "BACKLOG.md")
+MAX_FILES_READ = len(STRUCTURAL_FILES)  # distinct files one participant may read in a run
 MAX_PROMPT_CHARS = 24000            # hard cap of the log context sent in one prompt
 MAX_LINE_CHARS = 2000               # a single log line never grows without bound
 ARCHIVE_RETENTION_S = 30 * 24 * 3600    # keep archived logs for 30 days, newest always kept
 COUNTED_TOOLS = ("Read",)           # read tools the budget counts as a step
-WRITE_TOOLS = ("Edit",)             # only the two permitted files may be edited
-PERMITTED_FILES = ("README.md", "BACKLOG.md")
+WRITE_TOOLS = ("Edit",)             # only EDITABLE_FILES may be edited
 SYSTEM_SENDER = "conference"
 
 # C0/C1 control characters except newline and tab, and ANSI/OSC escape sequences.
@@ -399,9 +405,9 @@ def _launch_answer(repo, prompt, message_id, created, others=None, profile=None)
 
 
 def scan_secrets(repo):
-    """(file, pattern) of the first secret found in the repo's README.md/BACKLOG.md, or None.
-    Only the two permitted files are scanned; the value never enters the log or the prompt."""
-    for name in PERMITTED_FILES:
+    """(file, pattern) of the first secret found in the repo's structural files, or None.
+    Every readable file is scanned; the value never enters the log or the prompt."""
+    for name in STRUCTURAL_FILES:
         path = Path(repo) / name
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -467,7 +473,7 @@ def _prompt(text, history, repo, profile):
     log_text, _ = prompt_log(history)
     return _t("conference.prompt", text=text, log=log_text, no_answer=NO_ANSWER,
               you=_sender(repo), profile=profile or "", max_files=MAX_FILES_READ,
-              max_steps=MAX_TOOL_STEPS)
+              max_steps=MAX_TOOL_STEPS, files=STRUCTURAL_FILES_TEXT)
 
 
 def say(text, launch=None):

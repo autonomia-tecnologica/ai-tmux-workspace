@@ -35,7 +35,8 @@ def conference_settings(profile, command):
     """Generated settings of the run: the profile/harness settings plus the conference hook.
 
     The hook is what makes the two-file scope a mechanism: it denies every tool except `Read`/`Edit`
-    on the repo's own `README.md`/`BACKLOG.md`, and turns a README edit into a pending diff.
+    on the repo's own structural files (reads) and `EDITABLE_FILES` (edits), and turns a README edit
+    into a pending diff.
     """
     import lib
 
@@ -87,7 +88,8 @@ class ClaudeAdapter(Adapter):
         command = replace_settings(command, settings)
         launch = command if profile == "claude" else f"env ENABLE_TOOL_SEARCH=false {command}"
         system = _t("conference.system_prompt", no_answer=conference.NO_ANSWER,
-                    max_files=conference.MAX_FILES_READ, max_steps=conference.MAX_TOOL_STEPS)
+                    max_files=conference.MAX_FILES_READ, max_steps=conference.MAX_TOOL_STEPS,
+                    files=conference.STRUCTURAL_FILES_TEXT)
         return (f"{launch} -p --output-format stream-json --verbose --no-session-persistence "
                 f"--permission-mode default "
                 f"--append-system-prompt {shlex.quote(system)} "
