@@ -228,8 +228,10 @@ já existe, porque um repo listado duas vezes aparece duas vezes no painel de re
 O texto que o agente recebe em toda sessão é o `harness/HARNESS.md` deste repo, com só tópicos
 operacionais: ele é enxuto de propósito, para gastar menos token por sessão. A descrição aberta e o
 histórico das regras ficam no repositório `ambiente-de-trabalho`; o instalador copia a versão enxuta
-por cima da cópia da fonte. O `source.json` continua registrando o sha256 da fonte descritiva e o da
-cópia instalada, e o `workspace doctor` compara os dois.
+por cima da cópia da fonte. O detalhe que não cabe nessa versão fica em `harness/regras/`, com o
+gatilho de quando ler; o `HARNESS.md` resume a regra e aponta o arquivo. O `source.json` continua
+registrando o sha256 da fonte descritiva e o da cópia instalada, e o `workspace doctor` compara os
+dois.
 
 ## Persistência
 Sem plugins de tmux. As abas de sessão de cada repo ficam em `$WS_STATE/tabs/`: uma lista ordenada com o perfil e o id de cada aba, mais `session-<aba>` com o id real gravado pelo hook do Claude e pelo plugin do OpenCode. `reload`, `restart` e fechar/abrir o workspace restauram as abas na ordem, cada uma no próprio id; sem abas persistidas, abre a padrão. O resto vem do `config.yaml` e dos arquivos do repo.

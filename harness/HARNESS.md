@@ -1,7 +1,9 @@
 # HARNESS.md
 
 Regras operacionais para a LLM, só com tópicos: o texto é enxuto de propósito para gastar menos token
-em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `forcado.yaml`.
+em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `forcado.yaml`. Termo ou
+motivo: `harness/regras/glossario.md`, quando não estiver claro; os demais arquivos de `regras/` ficam
+no harness do workspace.
 
 ## Contexto
 
@@ -63,6 +65,7 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Item com `Decidido` não é perguntado de novo; pergunta só o que está em `Falta decidir`.
 - Trabalho entregue por subagente vai para o `Estado` do item (branch, validação, o que falta) antes de encerrar a sessão.
 - Fatia de até 65k de contexto; item em torno de 15 linhas; `(PAUSADA)` tira do despacho.
+- Mecânica (ciclo, `Depende de`, bloqueio, fio da meada): `harness/regras/backlog.md`; leia antes de criar, refinar ou despachar item.
 
 ## Agentes
 
@@ -77,6 +80,7 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
 - Worktree não é sandbox; só remover o que o próprio agente criou.
 - Registrar tokens e retrabalho no commit quando disponível.
+- Modo e worktree: `harness/regras/despacho.md`; leia antes de despachar subagente, abrir worktree ou paralelizar fatias.
 
 ## Permissões e isolamento
 
@@ -87,6 +91,7 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - `bypassPermissions` só por escolha da pessoa; `deny` vale em todo modo.
 - Comunicação entre sessões só com autorização de quem recebe; repo não edita repo irmão: pede por `workspace request send` e quem edita é a sessão do irmão; execução externa do pedido exige aprovação da pessoa.
 - Toda ação deixa rastro; pendência de freio em código vai para `Segurança`.
+- Caso novo: `harness/regras/permissoes.md`; leia antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
 
 ## Commits
 
@@ -99,6 +104,7 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Segredo em claro fora da pasta de trabalho: cifrado no repo ou em config do usuário.
 - Nunca no chat, em argv, em variável de ambiente ou em arquivo claro.
 - Chave nunca nas settings geradas; a settings só aponta para o cofre.
+- Varredura e canal: `harness/regras/segredos.md`; leia antes de commit, de criar chave ou de decidir onde um segredo mora.
 
 ## Operação
 
@@ -114,5 +120,4 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
   `harness/` na raiz do projeto).
 - Leia só o arquivo que a tarefa pede, e só quando ela pedir. O que estiver no harness do projeto vale
   como regra daquele projeto.
-- Este `HARNESS.md` vence em segurança, isolamento e no que ele já declara. Harness é texto; freio é
-  código, e mecanismo não mora no harness.
+- Este `HARNESS.md` vence em segurança, isolamento e no que ele já declara.
