@@ -187,8 +187,9 @@ class ConferenceTest(unittest.TestCase):
                 "conference.prompt", text="my message", log=i18n.t("conference.log_empty"),
                 no_answer=conference.NO_ANSWER, you=conference._sender(repo),
                 profile="claude", max_files=conference.MAX_FILES_READ,
-                max_steps=conference.MAX_TOOL_STEPS))
+                max_steps=conference.MAX_TOOL_STEPS, files=conference.STRUCTURAL_FILES_TEXT))
             self.assertIn("README.md", call[1])
+            self.assertIn("ARCH.md", call[1])
             self.assertIn("BACKLOG.md", call[1])
             self.assertIn("só quando Rafael pedir", call[1])       # reads only when asked
             self.assertIn(conference_worker.NO_ANSWER, call[1])
@@ -475,6 +476,21 @@ class WorkerTest(unittest.TestCase):
         self.assertNotIn("sk-ant-abcdefghijklmnop", conference.read_log()[-1]["text"])
         self.assertEqual(conference.read_active()["awaiting"], {self.repos[1]: message_id})
 
+    def test_the_structural_list_is_one_constant_without_the_harness(self):
+        self.assertEqual(conference.STRUCTURAL_FILES,
+                         ("SECURITY.md", "DESIGN.md", "ARCH.md", "README.md", "BACKLOG.md"))
+        self.assertNotIn("HARNESS.md", conference.STRUCTURAL_FILES)
+        self.assertEqual(conference.EDITABLE_FILES, ("README.md", "BACKLOG.md"))
+        self.assertEqual(conference.MAX_FILES_READ, len(conference.STRUCTURAL_FILES))
+
+    def test_a_secret_in_any_structural_file_blocks_and_missing_files_are_not_errors(self):
+        # Repo a has none of the optional files; repo b has ARCH.md with a secret.
+        self.assertIsNone(conference.scan_secrets(str(self.a)))
+        (self.b / "ARCH.md").write_text("token sk-ant-abcdefghijklmnop\n", encoding="utf-8")
+        found = conference.scan_secrets(str(self.b))
+        self.assertEqual(found[0], "ARCH.md")
+        self.assertNotIn("sk-ant-abcdefghijklmnop", str(found))
+
     def test_an_answer_from_a_previous_generation_is_dropped(self):
         conference.start([self.repos[0]])
         _, message_id, created = self.say()
@@ -661,11 +677,30 @@ class WorkerTest(unittest.TestCase):
     def test_the_hook_denies_code_siblings_and_the_harness(self):
         harness = self.tmp / "no-harness"
         harness.mkdir()
-        for target in (self.a / "src" / "x.py", self.b / "README.md", harness / "HARNESS.md"):
+        for target in (self.a / "src" / "x.py", self.b / "README.md", self.b / "ARCH.md",
+                       harness / "HARNESS.md", self.a / "HARNESS.md"):
             with self.subTest(target=str(target)):
                 reason = conference_worker.check_tool(
                     reading(self.a, target), repo=str(self.a))
-                self.assertEqual(reason, i18n.t("conference.read_denied"))
+                self.assertEqual(reason, i18n.t(
+                    "conference.read_denied", files=conference.STRUCTURAL_FILES_TEXT))
+
+    def test_the_hook_allows_reading_every_structural_file_and_tolerates_missing_ones(self):
+        # Only README.md exists here: the others are absent, which is not an error for the hook.
+        (self.a / "README.md").write_text("readme", encoding="utf-8")
+        for name in conference.STRUCTURAL_FILES:
+            with self.subTest(file=name):
+                self.assertIsNone(conference_worker.check_tool(
+                    reading(self.a, self.a / name), repo=str(self.a)))
+
+    def test_the_hook_denies_writes_to_the_read_only_structural_files(self):
+        for name in ("SECURITY.md", "DESIGN.md", "ARCH.md"):
+            with self.subTest(file=name):
+                reason = conference_worker.check_tool(
+                    editing(self.a, self.a / name, "a", "b"), repo=str(self.a))
+                self.assertEqual(reason, i18n.t("conference.write_denied"))
+        self.assertIsNone(conference_worker.check_tool(   # BACKLOG.md stays editable (direct edit)
+            editing(self.a, self.a / "BACKLOG.md", "a", "b"), repo=str(self.a)))
 
     def test_the_hook_denies_grep_glob_bash_and_every_other_tool(self):
         for tool in ("Grep", "Glob", "Bash", "Task", "WebFetch", "WebSearch"):
@@ -673,7 +708,8 @@ class WorkerTest(unittest.TestCase):
                 reason = conference_worker.check_tool(
                     {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {}},
                     repo=str(self.a))
-                self.assertEqual(reason, i18n.t("conference.tool_denied"))
+                self.assertEqual(reason, i18n.t(
+                    "conference.tool_denied", files=conference.STRUCTURAL_FILES_TEXT))
 
     def test_the_hook_denies_a_write_outside_the_two_files(self):
         reason = conference_worker.check_tool(
@@ -795,7 +831,8 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)["hookSpecificOutput"]
         self.assertEqual(out["permissionDecision"], "deny")
-        self.assertEqual(out["permissionDecisionReason"], i18n.t("conference.read_denied"))
+        self.assertEqual(out["permissionDecisionReason"], i18n.t(
+            "conference.read_denied", files=conference.STRUCTURAL_FILES_TEXT))
 
 
 class FakeViewer:

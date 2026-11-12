@@ -7,18 +7,19 @@ of that profile (`src/agents/`), with the repo as cwd, so the window's interacti
 neither used nor disturbed, captures the first paragraph of the answer and appends it to the
 persistent log. This module never builds a harness command line itself: the adapter owns it.
 
-The run speaks only about its own repo and only from its own `README.md` and `BACKLOG.md`, and reads
-them only when Rafael asks. The prompt carries the whole conference log (capped by
-`conference.MAX_PROMPT_CHARS`) as untrusted data, never as instructions. The run has no siblings,
-no installed harness, no `Grep`/`Glob`, no `Bash`, no subagent and no extra turns: `Read` and
-`Edit` are the only tools, and a worker hook denies any path other than the two permitted files.
-The file budget is two distinct files and a few tool steps; when it runs out the hook tells the
-agent to answer with what it already knows.
+The run speaks only about its own repo and only from its own structural files
+(`conference.STRUCTURAL_FILES`), and reads them only when Rafael asks. The prompt carries the whole
+conference log (capped by `conference.MAX_PROMPT_CHARS`) as untrusted data, never as instructions.
+The run has no siblings, no installed harness, no `Grep`/`Glob`, no `Bash`, no subagent and no extra
+turns: `Read` and `Edit` are the only tools, and a worker hook denies any path outside the structural
+files. The file budget is one distinct file per structural file and a few tool steps; when it runs
+out the hook tells the agent to answer with what it already knows.
 
 `BACKLOG.md` is edited directly, only when Rafael asks. A `README.md` edit becomes a proposal: the
 hook captures the diff and denies the direct write, and the conference screen shows the diff until
-Rafael confirms it (`conference.confirm_pending`). A secret in either permitted file blocks the run
-before the prompt reaches the provider; the finding names the file and the pattern, never the value.
+Rafael confirms it (`conference.confirm_pending`). Other structural files are read-only. A secret in
+any readable file blocks the run before the prompt reaches the provider; the finding names the file
+and the pattern, never the value.
 
 Never raises: a failed run still clears the waiting mark and leaves a visible note in the log.
 """
@@ -229,26 +230,28 @@ def _budget_reason(data):
 def check_tool(data, repo=None):
     """Denial reason for one conference tool call, or None when the call is allowed.
 
-    Read/Edit only, on the repo's own README.md/BACKLOG.md. A README Edit is captured as a pending
-    diff and denied; BACKLOG.md is edited directly. Every other tool and path is denied."""
+    Read on the repo's own STRUCTURAL_FILES; Edit only on EDITABLE_FILES. A README Edit is captured
+    as a pending diff and denied; BACKLOG.md is edited directly. Every other tool and path is denied."""
+    files = conference.STRUCTURAL_FILES_TEXT
     if not isinstance(data, dict):
-        return _t("conference.tool_denied")
+        return _t("conference.tool_denied", files=files)
     tool = str(data.get("tool_name") or "").strip().lower()
     root = repo or os.environ.get("WS_CONFERENCE_ROOT") or ""
     if not root:
-        return _t("conference.tool_denied")
+        return _t("conference.tool_denied", files=files)
     try:
         base = Path(root).expanduser().resolve()
-        allowed = {(base / name).resolve() for name in conference.PERMITTED_FILES}
+        readable = {(base / name).resolve() for name in conference.STRUCTURAL_FILES}
+        editable = {(base / name).resolve() for name in conference.EDITABLE_FILES}
     except OSError:
-        return _t("conference.tool_denied")
+        return _t("conference.tool_denied", files=files)
     path = _tool_path(base, data.get("tool_input"))
     if tool == "read":
-        if path not in allowed:
-            return _t("conference.read_denied")
+        if path not in readable:
+            return _t("conference.read_denied", files=files)
         return _budget_reason(data)
     if tool == "edit":
-        if path not in allowed:
+        if path not in editable:
             return _t("conference.write_denied")
         budget = _budget_reason(data)
         if budget:
@@ -272,7 +275,7 @@ def check_tool(data, repo=None):
         return None
     if tool in ("write", "multiedit", "notebookedit", "patch"):
         return _t("conference.write_denied")
-    return _t("conference.tool_denied")
+    return _t("conference.tool_denied", files=conference.STRUCTURAL_FILES_TEXT)
 
 
 def hook_main():
@@ -281,7 +284,7 @@ def hook_main():
         data = json.load(sys.stdin)
         reason = check_tool(data)
     except Exception:
-        reason = _t("conference.tool_denied")
+        reason = _t("conference.tool_denied", files=conference.STRUCTURAL_FILES_TEXT)
     if reason:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
