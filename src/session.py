@@ -6,6 +6,9 @@ The box is the harness policy, not an OS sandbox: the launcher prefixes the agen
 The role comes from the config's main repo: the main repo is the `home` session (it may change the
 other repos) and every other path is a `repo` session whose box is the path itself. A worktree is
 just a path, so its box is the worktree, wherever it lives; there is no fixed worktree folder here.
+The one exception is the workspace's own code (`policy.workspace_root()`, the clone or installed copy):
+its window (`workspace dev`) is the `self` session, the only one that edits that code. `home` still
+wins when the main checkout is the workspace itself.
 
 Stdlib only and no `lib`/`tmux` import: the launcher, the hook and the tests use this module without
 the rest of the workspace. The config path rule is duplicated from `lib.read_config` on purpose.
@@ -15,6 +18,8 @@ import os
 import shlex
 import sys
 from pathlib import Path
+
+import policy   # the workspace code root has one owner: the policy (stdlib only, same layer)
 
 try:
     import yaml_min
@@ -28,6 +33,7 @@ TAB = "WS_SESSION_TAB"
 STATE = "WS_STATE"
 HOME_ROLE = "home"
 REPO_ROLE = "repo"
+SELF_ROLE = "self"
 
 USAGE = "usage: session.py env <repo> [profile] [tab]"
 
@@ -82,7 +88,8 @@ def environment(repo, main=None):
     """`{WS_SESSION_ROLE, WS_SESSION_ROOT}` for a session at `repo`, or {} without a repo.
 
     `main` is the path from `lib.read_main()`; without it the config is read here. The main repo is
-    the `home` role and every other path is `repo`. The root is always the real path of `repo`.
+    the `home` role, the workspace's own code is `self` (the dev window) and every other path is
+    `repo`; `home` wins over `self`. The root is always the real path of `repo`.
     """
     if not isinstance(repo, str) or not repo.strip():
         return {}
@@ -99,7 +106,14 @@ def environment(repo, main=None):
             main = None
     else:
         main = None
-    return {ROLE: HOME_ROLE if main and root == main else REPO_ROLE, ROOT: root}
+    code = policy.workspace_root()
+    if main and root == main:
+        role = HOME_ROLE
+    elif code and root == code:
+        role = SELF_ROLE
+    else:
+        role = REPO_ROLE
+    return {ROLE: role, ROOT: root}
 
 
 def prefix(repo, main=None, profile=None, tab=None):

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from i18n import t
 import permission_state
+import policy
 import session
 import session_state
 import tmux
@@ -1194,6 +1195,9 @@ if __name__ == "__main__":
         names = [read_main()[0]] if read_main() else []
         names += [n for g, r in read_repos() for n, p in r]
         names += all_window_names()              # worktree windows: window_name is the path's basename
+        code = policy.workspace_root()           # `workspace dev` window: not in config, kept by prune
+        if code:
+            names.append(os.path.basename(code))
         names += ["plugin:" + e["id"] for e in listed_plugins(profile)
                   if isinstance(e, dict) and isinstance(e.get("id"), str)]
         print("\n".join(names))
