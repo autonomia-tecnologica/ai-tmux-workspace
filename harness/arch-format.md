@@ -20,9 +20,24 @@ Os títulos são exatos e nesta ordem:
 - `## Camadas`
 - `## Direção de dependência`
 - `## Dono único por efeito`
+- `## Eventos`
+- `## Estado vivo no tmux`
+- `## UI`
+- `## Ciclo de vida de sessão`
+- `## Adaptadores de agente`
+- `## Config e estado`
 - `## Idioma e contratos`
 - `## Dívidas conhecidas`
 - `## Manutenção`
+
+Seções que o projeto não tem (por exemplo, `## Adaptadores de agente` num repo sem agentes) entram com
+uma linha dizendo que não se aplicam, para o teste ver o título.
+
+Os títulos novos são mínimos: `## Eventos` (evento → emissor → transporte → consumidor → dono; sinal só
+acorda, estado vem por releitura), `## Estado vivo no tmux` (opções e quem escreve/lê), `## UI` (foco,
+cursor e ativo separados; estilo como função do estado), `## Ciclo de vida de sessão`, `## Adaptadores de
+agente` (toda diferença de agente passa pelo adaptador) e `## Config e estado` (arquivo → dono do formato
+→ escritores).
 
 ## Camadas
 

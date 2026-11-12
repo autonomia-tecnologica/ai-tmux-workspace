@@ -32,10 +32,10 @@ Permitido:
 - import local para quebrar ciclo dentro da mesma camada, com o motivo no código: `lib` importa
   `worktrees` dentro da função porque `worktrees` importa `lib`; `i18n` importa `tmux` só em
   `_apply_tmux`, para instalar os textos no tmux.
-- exceção declarada de ciclo entre camadas: `agents` (estado) importa `conference` (desenho) para ler
-  as constantes da conferência, e `conference` usa `lib` e `viewer`; o ciclo `lib`/`agents` ↔
-  `conference` fica confinado aos imports locais de `lib.profile_adapter` e `conference_worker` e
-  não vale como atalho para efeito novo.
+- exceção declarada, hoje violada (ver `## Dívidas conhecidas`): `agents` (estado) importa `conference`
+  (desenho) no nível do módulo, em `agents/claude.py` e `agents/opencode.py`, para ler as constantes da
+  conferência. A regra é import local com motivo. Até a dívida fechar, essa exceção não vale como
+  atalho para efeito novo. `conference_worker` (desenho) também importa `agents` no nível do módulo.
 
 Proibido:
 
@@ -65,6 +65,109 @@ Todo efeito tem um dono; o resto pede a ele. A pergunta é "quem pode produzir e
 A barra de status do tmux é texto montado por `src/statusbar.py`; quem pinta a barra é o tmux. Menu de
 sessão e popups pedidos ao tmux são texto entregue a ele, não desenho de tela em Python.
 
+## Eventos
+
+Um evento é uma mudança que outra parte precisa notar: evento → emissor → transporte → consumidor → dono.
+O sinal só acorda. O estado não viaja no sinal: o consumidor relê o estado do dono ao acordar
+(`session_state`, opções `@ws_*`, arquivo de aba). Consumidor não guarda cópia que o dono não conhece.
+
+| evento | emissor | transporte | consumidor | dono |
+|---|---|---|---|---|
+| terminal redimensionado | tmux, pelo kernel | `SIGWINCH` | `Viewer.run` (`_wake`) | `src/viewer.py` |
+| estado de abas mudou | `bin/workspace` (`panel_signal`) | `SIGUSR1` a `panel_tabs.py` | `src/panel_tabs.py` relê `session_state` e redesenha | `src/session_state.py` |
+| sessão do Claude mudou | hook do Claude (hooks do `settings.json` gerado) | comando do hook | `src/hook.py` | `src/hook.py` (ficha) e `src/session_state.py` (aba) |
+| sessão do OpenCode mudou | `harness/opencode-policy.js` | arquivo `tabs/session-<aba>` | `session_state.session_for` | `src/session_state.py` (dívida: três escritores) |
+| pedido de conferência | `src/conference.py` | arquivo em `$WS_STATE/requests` | `conference_worker` e tela da conferência | `src/conference.py` (dívida: estado na camada de desenho) |
+| barra de status | `bin/workspace`, pelas opções `@ws_*` | `#(...)` em `config/tmux.conf` | tmux pinta a barra | `src/statusbar.py` (texto) |
+
+Provas: `grep -n SIGWINCH src/viewer.py`; `grep -n USR1 bin/workspace`; `grep -n session- src/hook.py`;
+`grep -n session- harness/opencode-policy.js`; `grep -n requests src/conference.py`;
+`grep -n statusbar config/tmux.conf`.
+
+## Estado vivo no tmux
+
+O workspace guarda parte do estado nas opções do próprio tmux: `@ws_*` por janela e `@role` por painel.
+Só `bin/workspace` escreve nelas. Quem lê usa `tmux show`/`tmux display` ou `pane_with_role`. Estado
+do workspace não vai para `set-environment -g`.
+
+| opção | escopo | escritor | leitores | sentido |
+|---|---|---|---|---|
+| `@ws_repo` | janela | `bin/workspace` (`build_window`) | `src/lib.py` (repo da janela), `bin/workspace`, `config/tmux.conf` | identidade da janela: caminho do repo |
+| `@ws_tabs`, `@ws_active`, `@ws_next` | janela | `bin/workspace` (`tab_*`, `session_new`, `tab_exit`) | `bin/workspace` (`tab_render`, `state_sync_window`) | abas vivas, na ordem; aba ativa |
+| `@ws_profile`, `@ws_session_profile` | janela | `bin/workspace` | `bin/workspace` (`profile_for_window`), `config/tmux.conf` | perfil da janela e perfil da sessão ativa |
+| `@ws_mview`, `@ws_mzoom`, `@ws_side`, `@ws_left` | janela | `bin/workspace` (`mview`, `side`, `left`) | `bin/workspace` (`mview_target`) | vista atual e painéis laterais |
+| `@role` | painel | `bin/workspace` (`build_tree`, `tab_*`) | `bin/workspace` (`pane_with_role`) | papel do painel, a chave de `REPO_TREE` |
+| `@ws_owner`, `@ws_tab_id`, `@ws_tab_profile`, `@ws_placeholder` | painel | `bin/workspace` (`tab_new`, `session_new`) | `bin/workspace` | dono e identidade da aba de sessão |
+
+Cache reconstruível de `session_state`: `$WS_STATE/tabs/<sha1>.json` é cópia da ordem e da ativa de
+`@ws_tabs`/`@ws_active`. `state_sync_window` (`bin/workspace`) grava a partir das janelas vivas, e
+`session_state.read` lê arquivo ausente como "sem abas". Pode ser refeito das janelas vivas. O id da
+sessão de cada aba (`tabs/session-<aba>`) não é refeito assim: volta pelo hook ou pelo plugin na próxima
+sessão.
+
+Prova: `grep -c "@ws_" bin/workspace` (opções escritas e lidas no script).
+
+## UI
+
+Foco, cursor e ativo são três estados separados e não se misturam:
+
+- foco: o painel que recebe a tecla (o pane ativo do tmux);
+- cursor: a linha escolhida dentro de um painel (estado do painel, desenhado pelo `viewer`);
+- ativo: o item que o workspace usa agora (aba ativa em `@ws_active`, repo da janela, perfil da sessão).
+
+Regra-alvo: o estilo é função pura do estado, `estilo = f(estado)`. Dentro da função não há leitura de
+`tmux` nem de arquivo. Quem monta o estado é o painel (`collect(viewer)`); quem pinta é o `viewer`.
+A conformidade se verifica painel a painel, na migração para `collect(viewer)`.
+
+`REPO_TREE` (em `bin/workspace`) é a tabela única de papéis dos painéis: uma linha por painel, com papel,
+pai, divisão, tamanho e comando. `build_tree`, `layout_apply` e `plugin_open` leem essa tabela. Papel
+novo de painel entra em `REPO_TREE`, não em código solto. Os papéis `tmp N` e `ttmp N` das abas são a
+exceção: nascem em tempo de execução, por `tab_new`.
+
+Prova: `grep -n REPO_TREE bin/workspace`.
+
+## Ciclo de vida de sessão
+
+Uma sessão é uma aba com um agente dentro de um repo. Papel e caixa vêm de `src/session.py`: o repo
+principal é `home`, os demais são `repo`. `WS_SESSION_ROLE`, `WS_SESSION_ROOT` e `WS_SESSION_PROFILE`
+levam a caixa até o hook e o plugin, que aplicam a política.
+
+1. Abertura: `session_new` (`bin/workspace`) cria a aba e a registra em `session_state` (`add`);
+   `session_run` roda o processo do agente.
+2. Id real: o hook (Claude) ou o plugin (OpenCode) grava o id em `tabs/session-<aba>`, e
+   `session_state.session_for` lê o valor.
+3. Retomada: `resume` e `session_restore` reabrem a sessão pelo id gravado. Sem id gravado,
+   `open_sessions` abre o perfil padrão.
+4. Reinício de contexto: `session_state.reset_session` limpa o arquivo vivo e grava o id novo, ou nenhum.
+5. Fim: `session_exit` e `tab_exit` tiram a aba do estado (`remove`) e devolvem o foco ao principal.
+
+## Adaptadores de agente
+
+Toda diferença de agente passa por `src/agents/`: `base.py` (contrato `Adapter`, `Update`, `short_path`
+e a escolha do adaptador pelo harness), `claude.py` e `opencode.py`. Fora de `src/agents/`, o código não
+ramifica por agente. Quando precisa de um fato do agente, pede ao adaptador. Hoje `lib` ramifica por
+harness fora da pasta (dívida abaixo).
+
+## Config e estado
+
+Cada arquivo tem um dono do formato. Os demais pedem a ele.
+
+| arquivo | dono do formato | escritores |
+|---|---|---|
+| `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/lib.py` (`config_path`) | a pessoa, editando; `lib` lê |
+| `$WS_STATE/tabs/<sha1>.json` (abas por repo) | `src/session_state.py` | `session_state`; `bin/workspace` pede por `state_sync_window` |
+| `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `harness/opencode-policy.js` e `session_state` (dívida) |
+| `$WS_STATE/permission.json` (último modo de permissão) | `src/permission_state.py` (`path`, `record_mode`) | `permission_state` |
+| `$WS_STATE/policy.jsonl` (decisões da política) | `src/policy.py` | `policy` (anexa) |
+| `$WS_STATE/sessions/<id>` (ficha de sessão) | `src/hook.py` | `hook` |
+| `$WS_STATE/sessions/<id>.status.json` e `$WS_STATE/limits.json` | `src/statusline.py` | `statusline` |
+| `$WS_STATE/settings/<perfil>` (settings gerados por perfil) | `src/lib.py` (`ensure-settings`) | `lib`; o instalador lê o caminho |
+| `$WS_STATE/requests/` (pedidos de conferência) | `src/conference.py` | `conference` (dívida: camada de desenho) |
+| cache de uso extra | `src/extra_usage.py` | `extra_usage` |
+
+Defaults: `WS_STATE` (`~/.cache/workspace`), o caminho da config e `WS_CONFERENCE` são lidos em vários
+módulos, cada um com o próprio default (dívida abaixo). O dono do default deveria ser um só.
+
 ## Idioma e contratos
 
 - Código em inglês — identificadores, comentários e docstrings; `tests/test_code_language.py` é o freio.
@@ -82,6 +185,15 @@ sessão e popups pedidos ao tmux são texto entregue a ele, não desenho de tela
 | `src/session_placeholder.py` desenha sozinho (clear + `SIGWINCH`) | dívida legítima: precisa sobreviver ao reload sem `lib`/`tmux` | manter até o reload deixar de exigir tela própria; a exceção está documentada no docstring e fixada no teste |
 | `src/mic.py` mantém laço de ditado em tela cheia e alt-screen fora do `viewer` | o ditado controla o tempo do laço e o estado do microfone | migrar o laço para o `viewer`, restando ao `mic` só a captura e a transcrição |
 | `src/conference.py` lê uma tecla em modo cru no popup de pedido | a tela desenha pelo `viewer`; a leitura de tecla ficou no módulo | usar a leitura de tecla do `viewer`, como os demais popups |
+| `bin/workspace` chama `tmux` (219 de 1093 linhas) e é dono de abas, sessão e geometria | o script de entrada virou o motor: abas (`tab_*`, `state_*`), sessão (`session_*`) e geometria (`layout_apply`) | abas e sessão vão para `src/` (sessão e estado), e a chamada a `tmux` vai para `src/tmux.py`; `layout_apply` continua dono da geometria (item 108). Prova: `grep -c tmux bin/workspace` (219) e `grep -n "^tab_\|^session_\|^layout_apply" bin/workspace`. Freio que falta: nenhum; hoje só o grep prova |
+| painéis chamam `bin/workspace` por subprocesso (`lib.WS`) | o script é a única porta para ação de aba e sessão, e o painel não tem função de `src/` para chamar | ações viram funções de `src/` que o painel e o script chamam; o painel deixa de usar `lib.WS`. Prova: `grep -n "lib.WS" src/panel_*.py` (repos, sessions, tabs e tasks) |
+| `conference*` escreve estado na camada de desenho (pedidos, log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
+| `lib` carrega `harness/harness.py` por caminho | a renderização do settings do harness mora no motor instalado, então `src/` depende de `harness/` | `lib` chama o motor instalado (`AT_HARNESS_DIR`) por processo, ou a renderização vai para `src/`; `harness/` fica só com regra e motor. Prova: `grep -n spec_from_file_location src/lib.py` e `grep -n HARNESS_PY src/lib.py` |
+| `tabs/session-<aba>` tem três escritores (`session_state`, `hook`, `opencode-policy.js`) | o id vivo da aba nasceu em três lugares, cada um com a própria escrita | um escritor de formato em `session_state`; o plugin OpenCode (JS) precisa de ponte documentada. Prova: `grep -n session- src/hook.py src/session_state.py harness/opencode-policy.js` |
+| default de `WS_STATE` e da config repetido em vários módulos | cada módulo reimplementa `Path.home() / ".cache" / "workspace"`, porque a fundação não importa `lib` | um default só, em `src/session.py` (camada de sessão, abaixo de `lib`); os módulos importam dele. Prova: `grep -n WS_STATE src/*.py` (lib, permission_state, hook, session_state, statusline, conference) e `grep -n AT_WS_CONFIG src/lib.py` |
+| `agents/claude.py` e `agents/opencode.py` importam `conference` no nível do módulo (estado → desenho) | o adaptador lê as constantes da conferência; import de módulo quebra a direção permitida | import local dentro da função que usa a constante, com motivo (como `lib`), ou levar as constantes para a camada de estado. Prova: `grep -n "^import conference" src/agents/claude.py src/agents/opencode.py` (linhas 13 e 14) |
+| `conference_worker` importa `agents` no nível do módulo (desenho → estado) | o worker usa o adaptador para rodar o agente, e o texto anterior dizia que o ciclo era só local | import local dentro da função que chama o adaptador, com motivo no código. Prova: `grep -n "^import agents" src/conference_worker.py` (linha 38) |
+| `lib` ramifica por harness fora de `src/agents/` (`is_claude_harness`) | a diferença entre Claude e OpenCode decide comportamento de sessão em `lib`, fora do adaptador | a diferença vai para o adaptador em `src/agents/`, e `lib` pede a ele. Prova: `grep -n is_claude_harness src/lib.py` |
 
 ## Manutenção
 
