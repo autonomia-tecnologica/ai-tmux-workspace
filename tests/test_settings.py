@@ -100,7 +100,7 @@ class SettingsTest(unittest.TestCase):
         # the installed harness is absent: the hook points at this repo's existing script, never a
         # missing path (a non-zero hook would block every prompt)
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-                         f'python3 "{ROOT / "harness" / "harness.py"}"')
+                         f'"${{WS_PYTHON:-python3}}" "{ROOT / "harness" / "harness.py"}"')
         self.assertIn("SessionStart", settings["hooks"])
         self.assertTrue(settings["hooks"]["SessionStart"])
 
@@ -126,7 +126,7 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("Bash(doas:*)", settings["permissions"]["deny"])
         self.assertNotIn("Bash(sudo:*)", settings["permissions"]["deny"])
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-                         f'python3 "{folder / "harness.py"}"')
+                         f'"${{WS_PYTHON:-python3}}" "{folder / "harness.py"}"')
 
     def test_missing_installed_harness_uses_the_committed_base(self):
         self.mapping_profile({})

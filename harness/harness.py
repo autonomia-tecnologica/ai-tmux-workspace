@@ -532,8 +532,12 @@ def hook_command():
     Homebrew on PATH. `shlex.quote` leaves a plain name untouched and quotes a path with spaces, so a
     standalone render (WS_PYTHON unset) still produces the historical `python3 "$HOME/..."` command.
     """
-    python = os.environ.get("WS_PYTHON") or "python3"
-    return f"{shlex.quote(python)} {HOOK_SCRIPT}"
+    python = os.environ.get("WS_PYTHON")
+    if python:
+        return f"{shlex.quote(python)} {HOOK_SCRIPT}"
+    # A standalone render (no launcher) still has to work on a Mac: the hook is a shell command,
+    # so resolve the launcher's interpreter at run time and fall back to `python3`.
+    return f'"${{WS_PYTHON:-python3}}" {HOOK_SCRIPT}'
 
 
 def build_settings(document):

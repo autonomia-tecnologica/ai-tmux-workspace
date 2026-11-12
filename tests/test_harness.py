@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HARNESS = ROOT / "harness" / "harness.py"
 REPO_SETTINGS = ROOT / "harness" / "settings.json"
-PRODUCTION_COMMAND = 'python3 "$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+PRODUCTION_COMMAND = '"${WS_PYTHON:-python3}" "$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
 
 CLAUDE_MD = "# Harness entry\n\nRead the rules before working.\n"
 AGENTS_MD = "# Agents\n\nOne slice at a time.\n"

@@ -298,7 +298,9 @@ def _harness_hook_command(installed):
     harness is absent until item 33; pointing at a missing script would make Claude Code block every
     prompt (a non-zero hook aborts UserPromptSubmit), so the repo copy is the explicit fallback."""
     script = Path(installed) / "harness.py"
-    return f'python3 "{script if script.is_file() else HARNESS_PY}"'
+    # The hook runs later, through the shell: use the launcher's interpreter when the agent has it
+    # (macOS may not have Homebrew's python3 in a GUI-launched PATH) and fall back to `python3`.
+    return f'"${{WS_PYTHON:-python3}}" "{script if script.is_file() else HARNESS_PY}"'
 
 
 def _set_hook_command(settings, command):
@@ -593,7 +595,7 @@ def previous_transcript(repo):
 
 def _state_call(repo, tab, session=None):
     """Shell call that resets a tab's session id through `session_state.py` (used in fallbacks)."""
-    arguments = ["python3", str(Path(session_state.__file__).resolve()), "reset-session",
+    arguments = [sys.executable, str(Path(session_state.__file__).resolve()), "reset-session",
                  str(repo), str(tab)]
     if session is not None:
         arguments.append(str(session))
