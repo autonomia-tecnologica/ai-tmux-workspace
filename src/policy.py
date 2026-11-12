@@ -75,15 +75,23 @@ NET_TOOLS = {"webfetch", "websearch", "fetch"}
 # A request coming from another session (item 65) is recognized by one of these tool names or by
 # an explicit `external_session`/`origin` field. The policy always answers `ask`.
 EXTERNAL_TOOLS = {
-    "sendmessage", "send_message", "session_message", "session_request", "sessionrequest",
+    "send_message", "session_message", "session_request", "sessionrequest",
     "cross_session", "session.external", "conference",
 }
 # Tools with no file or network effect of their own. The subagent's own tool calls are still
-# classified (agent_id), so allowing `Task` does not allow what the subagent does.
+# classified (agent_id), so allowing `Task` does not allow what the subagent does. `SendMessage`
+# and `SubagentHandback` are here because they only talk inside the session's own tree;
+# `external_session`/`origin` in the input still sends a `SendMessage` to the external branch.
 INERT_TOOLS = {
     "todowrite", "todo", "askuserquestion", "exitplanmode", "task", "skill", "slashcommand",
     "killshell", "bashoutput", "taskoutput", "taskstop", "question", "subagent", "agent",
+    "sendmessage", "subagenthandback",
 }
+# `ToolSearch` only loads tools: it has no effect of its own, and the loaded tool is classified
+# one by one when it is actually called (agent_id still marks the subagent). Only a `select:`
+# query naming inert tools is allowed; any other form, an empty list or an unknown name fails
+# closed. It never resolves a path nor uses the session root.
+TOOL_SEARCH_TOOLS = {"toolsearch"}
 
 SECRET_NAMES = {
     ".env", ".netrc", "credentials", ".credentials.json", "auth.json", "id_rsa", "id_ed25519",
@@ -453,6 +461,26 @@ def _input_path(tool_input):
     return None
 
 
+def _tool_search_finding(tool_input):
+    """Inert Finding for a `select:` query that names only inert tools, else None.
+
+    The accepted form is `select:<name>[,<name>...]`; names are canonicalized, so CamelCase and
+    lower-case spellings match, and spaces around them are ignored. An empty selection, another
+    query form, a non-object input or a name outside `INERT_TOOLS` returns None (fail closed).
+    """
+    query = tool_input.get("query") if isinstance(tool_input, dict) else None
+    if not isinstance(query, str):
+        return None
+    query = query.strip()
+    prefix = "select:"
+    if not query.startswith(prefix):
+        return None
+    names = [name.strip() for name in query[len(prefix):].split(",")]
+    if any(not name or _canonical(name) not in INERT_TOOLS for name in names):
+        return None
+    return [Finding(None, "toolsearch", None)]
+
+
 def classify(event, root):
     """List of Findings for the event, or None when the action cannot be classified."""
     if not isinstance(event, dict):
@@ -466,6 +494,8 @@ def classify(event, root):
         tool_input = {}
     if tool_input.get("external_session") is True or tool_input.get("origin") == "external_session":
         return [Finding("session.external", "external_session", None)]
+    if name in TOOL_SEARCH_TOOLS:
+        return _tool_search_finding(tool_input)
     if name in INERT_TOOLS:
         return [Finding(None, name, None)]
     if name in EXTERNAL_TOOLS:

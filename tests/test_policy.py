@@ -132,6 +132,13 @@ class PolicyTest(unittest.TestCase):
     def obash(self, command):
         return {"tool_name": "bash", "tool_input": {"command": command}, "session_id": "sess-1"}
 
+    def search(self, query, **extra):
+        return {"tool_name": "ToolSearch", "tool_input": {"query": query},
+                "session_id": "sess-1", **extra}
+
+    def osearch(self, query):
+        return {"tool_name": "toolsearch", "tool_input": {"query": query}, "session_id": "sess-1"}
+
     def fixture_policy(self, **overrides):
         document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
         for role, entries in overrides.items():
@@ -187,7 +194,7 @@ class PolicyTest(unittest.TestCase):
             (self.bash("curl https://example.com"), "net", "deny"),
             (self.bash("pip install requests"), "install", "deny"),
             (self.bash("sudo ls"), "admin", "deny"),
-            ({"tool_name": "SendMessage", "tool_input": {}, "session_id": "s"},
+            ({"tool_name": "send_message", "tool_input": {}, "session_id": "s"},
              "session.external", "ask"),
         ]
         for event, capability, decision in cases:
@@ -627,6 +634,130 @@ class PolicyTest(unittest.TestCase):
                              "deny")
             self.assertEqual(self.decide(self.write(self.repo / "a.py"))["decision"], "allow")
 
+    # --- tool search and the subagent's own messages (item 115) --------------------------------
+    def test_tool_search_select_of_inert_names_is_inert(self):
+        queries = (
+            "select:SendMessage,ExitPlanMode",
+            "select:sendmessage,exitplanmode",
+            "select: SendMessage, ExitPlanMode",
+            "select:SubagentHandback",
+            "select:subagenthandback",
+            "select:Task",
+            "select:TodoWrite,Question,Skill",
+        )
+        for query in queries:
+            with self.subTest(query=query):
+                result = self.decide(self.search(query))
+                self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+                self.assertEqual(result["reason"], "policy.reason.inert")
+
+        # Loading a tool is not the same as calling it: the loaded tool is classified one by one.
+        self.assertEqual(self.decide(self.bash("curl https://example.com"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("git push"))["decision"], "ask")
+
+    def test_tool_search_other_queries_and_names_outside_the_list_fail_closed(self):
+        queries = (
+            "sendmessage",
+            "select:",
+            "select: ",
+            "select:SendMessage,",
+            "select:,SendMessage",
+            "select:Bash",
+            "select:Write",
+            "select:WebFetch",
+            "select:SendMessage,UnknownTool",
+            "match:read",
+            "select",
+        )
+        for query in queries:
+            with self.subTest(query=query):
+                result = self.decide(self.search(query))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual(result["reason"], "policy.reason.unknown")
+
+    def test_tool_search_missing_or_non_dict_input_fails_closed(self):
+        events = (
+            {"tool_name": "ToolSearch", "tool_input": None, "session_id": "s"},
+            {"tool_name": "ToolSearch", "tool_input": {}, "session_id": "s"},
+            {"tool_name": "ToolSearch", "tool_input": ["select:Task"], "session_id": "s"},
+            {"tool_name": "ToolSearch", "tool_input": {"query": None}, "session_id": "s"},
+            {"tool_name": "ToolSearch", "tool_input": {"query": 3}, "session_id": "s"},
+            {"tool_name": "ToolSearch", "session_id": "s"},
+        )
+        for event in events:
+            with self.subTest(event=event):
+                result = self.decide(event)
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual(result["reason"], "policy.reason.unknown")
+
+    def test_send_message_is_inert_inside_the_session_tree(self):
+        for tool in ("SendMessage", "sendmessage"):
+            with self.subTest(tool=tool):
+                for extra in ({}, {"agent_id": "a1"}):
+                    result = self.decide({"tool_name": tool, "tool_input": {},
+                                          "session_id": "s", **extra})
+                    self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+                    self.assertEqual(result["reason"], "policy.reason.inert")
+        with patched_env(WS_SESSION_ROLE="subagent", WS_SESSION_PARENT_ROLE="repo"):
+            result = policy.check_event({"tool_name": "SendMessage", "tool_input": {},
+                                         "session_id": "s"})
+            self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+
+    def test_explicit_external_session_on_send_message_still_asks(self):
+        for tool_input in ({"external_session": True}, {"origin": "external_session"}):
+            with self.subTest(tool_input=tool_input):
+                result = self.decide({"tool_name": "SendMessage", "tool_input": tool_input,
+                                      "session_id": "s"})
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("ask", "session.external"))
+
+    def test_other_session_message_tools_remain_external(self):
+        for tool in ("send_message", "session_message", "session_request", "cross_session",
+                     "conference"):
+            with self.subTest(tool=tool):
+                result = self.decide({"tool_name": tool, "tool_input": {}, "session_id": "s"})
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("ask", "session.external"))
+
+    def test_subagent_handback_is_inert(self):
+        for tool in ("SubagentHandback", "subagenthandback"):
+            with self.subTest(tool=tool):
+                result = self.decide({"tool_name": tool, "tool_input": {}, "session_id": "s"})
+                self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+                self.assertEqual(result["reason"], "policy.reason.inert")
+
+    def test_tool_search_does_not_resolve_a_path_or_use_the_root(self):
+        event = self.search("select:SendMessage")
+        with patched_env(WS_SESSION_ROOT=None):
+            result = self.decide(event)
+            self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+            self.assertEqual(result["reason"], "policy.reason.inert")
+        self.cli(event)
+        entries = [json.loads(line) for line in
+                   (self.state / "policy.jsonl").read_text(encoding="utf-8").splitlines() if line]
+        self.assertTrue(entries)
+        for entry in entries:
+            self.assertEqual(entry["target"], "toolsearch")
+
+    def test_cli_covers_the_item_115_acceptance_list(self):
+        cases = (
+            ({"tool_name": "ToolSearch",
+              "tool_input": {"query": "select:SendMessage,ExitPlanMode"}}, "allow", None),
+            ({"tool_name": "ToolSearch", "tool_input": {"query": "select:Bash"}},
+             "deny", None),
+            ({"tool_name": "ToolSearch", "tool_input": {"query": "sendmessage"}},
+             "deny", None),
+            ({"tool_name": "SendMessage", "tool_input": {}}, "allow", None),
+            ({"tool_name": "SendMessage", "tool_input": {"external_session": True}},
+             "ask", "session.external"),
+            ({"tool_name": "SubagentHandback", "tool_input": {}}, "allow", None),
+        )
+        for event, decision, capability in cases:
+            with self.subTest(event=event):
+                result = self.cli(event)
+                self.assertEqual((result["decision"], result["capability"]),
+                                 (decision, capability))
+
     # --- audit log -----------------------------------------------------------------------------
     def test_log_is_0600_and_never_contains_a_secret(self):
         secret = "SUPERSECRET-token-value"
@@ -720,8 +851,9 @@ class PolicyTest(unittest.TestCase):
             (self.bash("git show HEAD:.env"), self.obash("git show HEAD:.env")),
             (self.bash("cat ~/.config/gh/hosts.yml"), self.obash("cat ~/.config/gh/hosts.yml")),
             (self.bash("sort -k SUPERSECRET file.txt"), self.obash("sort -k SUPERSECRET file.txt")),
-            ({"tool_name": "SendMessage", "tool_input": {}},
-             {"tool_name": "session_message", "tool_input": {}}),
+            (self.search("select:SendMessage,ExitPlanMode"),
+             self.osearch("select:SendMessage,ExitPlanMode")),
+            (self.search("select:Bash"), self.osearch("select:Bash")),
             ({"tool_name": "TodoWrite", "tool_input": {}}, {"tool_name": "todowrite", "tool_input": {}}),
         ]
 
