@@ -10,11 +10,13 @@ Input is one JSON object on stdin, either a Claude hook event or an OpenCode eve
     {"tool_name": "Bash", "tool_input": {"command": "git status"},
      "session_id": "...", "agent_id": "..."}          # agent_id marks a subagent
 
-The role comes from `WS_SESSION_ROLE` (`repo`, `home` or `subagent`) and the box from
-`WS_SESSION_ROOT`. When the role is `subagent`, the parent is `WS_SESSION_PARENT_ROLE` or
-`WS_PARENT_ROLE`; a subagent inside a repo/home session is also detected by `agent_id`. A missing
-role is a deny for this CLI (fail closed); the adapters deliberately skip the policy when no role
-was declared, so sessions opened before the launcher sets the role keep working.
+The role comes from `WS_SESSION_ROLE` (`repo`, `home`, `self` or `subagent`) and the box from
+`WS_SESSION_ROOT`. `self` is the dev session of the workspace's own code (`workspace dev`): it has
+the same table as `repo` (`inherits: repo` in the policy file). When the role is `subagent`, the
+parent is `WS_SESSION_PARENT_ROLE` or `WS_PARENT_ROLE`; a subagent inside a repo/home/self session is
+also detected by `agent_id`. A missing or unknown role is a deny for this CLI (fail closed); the
+adapters deliberately skip the policy when no role was declared, so sessions opened before the
+launcher sets the role keep working.
 
 The workspace's own code is a protected path checked before the role table: `WS_DIR` when the
 launcher exported it, else this file's code root. Every role may read it; only a session whose
@@ -70,7 +72,10 @@ CAPABILITIES = (
     "config.read", "config.write", "tmp", "secrets", "session.external",
     "workspace.read", "workspace.write",
 )
-ROLES = ("repo", "home", "subagent")
+ROLES = ("repo", "home", "self", "subagent")
+# Roles a subagent or a plain session may take a capability table from. `self` is the workspace's
+# dev session: it has the table of `repo` (see `inherits` in the policy file).
+PARENT_ROLES = ("repo", "home", "self")
 DECISIONS = ("allow", "ask", "deny")
 _RANK = {"deny": 0, "ask": 1, "allow": 2}
 
@@ -299,6 +304,9 @@ def _validate(document):
         for value in entries.values():
             if value not in DECISIONS:
                 raise PolicyError("policy.reason.invalid")
+    own = roles.get("self")
+    if not isinstance(own, dict) or own != {"inherits": "repo"}:
+        raise PolicyError("policy.reason.invalid")
     subagent = roles.get("subagent")
     if not isinstance(subagent, dict) or subagent.get("inherits") != "parent":
         raise PolicyError("policy.reason.invalid")
@@ -309,9 +317,17 @@ def _validate(document):
             raise PolicyError("policy.reason.invalid")
 
 
+def _role_table(document, role):
+    """Capability table of a role; a role with `inherits` (self) takes the table it names."""
+    entries = document["roles"][role]
+    if "inherits" in entries:
+        return dict(document["roles"][entries["inherits"]])
+    return dict(entries)
+
+
 def _effective_capabilities(document, parent, subagent):
     """Parent's table for a subagent, with explicit subagent entries allowed only to tighten."""
-    capabilities = dict(document["roles"][parent])
+    capabilities = _role_table(document, parent)
     if not subagent:
         return capabilities
     for name, value in (document["roles"].get("subagent") or {}).items():
@@ -343,8 +359,10 @@ def _config_roots():
     return (home / ".config", home / ".claude", home / ".local" / "share" / "ai-tmux-workspace")
 
 
-def _workspace_root():
+def workspace_root():
     """The workspace's own code: `WS_DIR` when exported, else this file's code root.
+
+    Public because `session.py` (the `self` role) and `lib.py` (the dev window name) use the same root.
 
     A checkout keeps this module under `src/` and an installed harness under `harness/`; in both
     the code root is the parent directory, which is the clone (dev or installed) being protected.
@@ -431,7 +449,7 @@ def _resolve(value, root):
 def _path_capability(path, root, write):
     if _is_secret(path):
         return "secrets"
-    workspace = _workspace_root()
+    workspace = workspace_root()
     if workspace and _inside(path, workspace):
         return "workspace.write" if write else "workspace.read"
     # The declared session root wins over the configuration roots: a worktree may live under
@@ -476,7 +494,7 @@ def _protected_decision(capability, root, declared):
     """
     if capability == "workspace.read":
         return "allow", "policy.reason.workspace_read"
-    workspace = _workspace_root()
+    workspace = workspace_root()
     if declared and workspace and root and _inside(root, workspace):
         return "allow", "policy.reason.workspace_self"
     return "deny", "policy.reason.workspace_write"
@@ -1479,9 +1497,9 @@ def check_event(event):
         parent = parent.strip().lower() if isinstance(parent, str) else ""
     else:
         parent = role
-    if subagent and parent not in ("repo", "home"):
+    if subagent and parent not in PARENT_ROLES:
         return _finish("deny", None, "policy.reason.no_parent", event, role="subagent")
-    if not subagent and parent not in ("repo", "home"):
+    if not subagent and parent not in PARENT_ROLES:
         return _finish("deny", None, "policy.reason.unknown_role", event, role=role)
 
     try:

@@ -132,6 +132,44 @@ class SessionTest(unittest.TestCase):
         link.symlink_to(self.repo)
         self.assertEqual(session.environment(str(link))[session.ROOT], str(self.repo))
 
+    # --- the dev window of the workspace's own code (item 85) ------------------------------------
+    def test_workspace_code_root_is_the_self_session(self):
+        self.assertEqual(session.environment(str(self.code)), {
+            session.ROLE: "self", session.ROOT: str(self.code)})
+        self.assertEqual(session.prefix(str(self.code)),
+                         f"env WS_SESSION_ROLE=self WS_SESSION_ROOT={self.code}")
+        # only the root itself is the dev window: a folder inside the code is a plain repo
+        self.assertEqual(session.environment(str(self.code / "src"))[session.ROLE], "repo")
+        self.assertEqual(session.environment(str(self.repo))[session.ROLE], "repo")
+
+    def test_home_wins_over_self_when_the_main_repo_is_the_workspace(self):
+        self.config.write_text(json.dumps({
+            "main": str(self.code), "agent": "claude", "profiles": {"claude": "claude"},
+        }), encoding="utf-8")
+        self.assertEqual(session.environment(str(self.code))[session.ROLE], "home")
+        self.assertEqual(session.environment(str(self.repo))[session.ROLE], "repo")
+
+    def test_self_session_edits_the_workspace_code_and_a_sibling_is_denied(self):
+        target = self.code / "src" / "policy.py"
+        target.write_text("x", encoding="utf-8")
+        self.assertEqual(self.decide(self.write(target), WS_SESSION_ROLE="self",
+                                     WS_SESSION_ROOT=str(self.code))["decision"], "allow")
+        self.assertEqual(self.decide(self.write(target), WS_SESSION_ROLE="repo",
+                                     WS_SESSION_ROOT=str(self.repo))["decision"], "deny")
+
+    def test_reload_keeps_the_dev_window_by_its_name(self):
+        # prune closes windows whose name is not in window-names; the dev window is not in config
+        result = self.lib("window-names", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.code.name, result.stdout.splitlines())
+
+    def test_dev_without_a_running_workspace_fails_clearly(self):
+        profile = f"no-such-dev-{os.getpid()}"
+        process = subprocess.run([str(ROOT / "bin" / "workspace"), "dev", profile],
+                                 env=self.env(), capture_output=True, text=True, check=False)
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertIn(profile, process.stderr)
+
     def test_without_a_repo_there_is_no_environment(self):
         self.assertEqual(session.environment(""), {})
         self.assertEqual(session.environment(None), {})

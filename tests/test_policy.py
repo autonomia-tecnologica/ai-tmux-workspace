@@ -161,12 +161,13 @@ class PolicyTest(unittest.TestCase):
     def test_policy_file_declares_default_deny_roles_and_exact_capabilities(self):
         document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
         self.assertEqual(document["default"], "deny")
-        self.assertEqual(set(document["roles"]), {"repo", "home", "subagent"})
+        self.assertEqual(set(document["roles"]), {"repo", "home", "self", "subagent"})
         self.assertEqual(set(policy.CAPABILITIES), EXPECTED_CAPABILITIES)
         for role in ("repo", "home"):
             self.assertEqual(set(document["roles"][role]), EXPECTED_CAPABILITIES)
             for value in document["roles"][role].values():
                 self.assertIn(value, policy.DECISIONS)
+        self.assertEqual(document["roles"]["self"], {"inherits": "repo"})
         self.assertEqual(document["roles"]["subagent"], {"inherits": "parent"})
 
     def test_policy_file_loads_through_the_engine(self):
@@ -272,13 +273,106 @@ class PolicyTest(unittest.TestCase):
 
     def test_workspace_root_falls_back_to_the_policy_file_location(self):
         with patched_env(WS_DIR=None):
-            self.assertEqual(policy._workspace_root(), str(ROOT))
+            self.assertEqual(policy.workspace_root(), str(ROOT))
             write = policy.check_event(self.write(ROOT / "src" / "policy.py"))
             self.assertEqual((write["decision"], write["capability"]),
                              ("deny", "workspace.write"))
             read = policy.check_event(self.read(ROOT / "src" / "policy.py"))
             self.assertEqual((read["decision"], read["capability"]),
                              ("allow", "workspace.read"))
+
+    # --- the dev role `self` (item 85) ---------------------------------------------------------
+    def workspace_code(self):
+        """A fake workspace clone with one source file, as WS_DIR points to it."""
+        code = self.root / "workspace-code"
+        (code / "src").mkdir(parents=True, exist_ok=True)
+        target = code / "src" / "policy.py"
+        target.write_text("x", encoding="utf-8")
+        return code, target
+
+    def test_self_role_inherits_the_repo_table(self):
+        document = policy.load_policy(HARNESS / "policy.yaml")
+        self.assertEqual(policy._role_table(document, "self"), policy._role_table(document, "repo"))
+        self.assertEqual(policy._effective_capabilities(document, "self", False),
+                         policy._effective_capabilities(document, "repo", False))
+
+    def test_self_role_writes_the_workspace_code_from_its_own_box(self):
+        code, target = self.workspace_code()
+        with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="self", WS_SESSION_ROOT=str(code)):
+            for event in (self.write(target), self.bash(f"echo x > {target}")):
+                with self.subTest(event=event):
+                    result = policy.check_event(event)
+                    self.assertEqual(
+                        (result["decision"], result["capability"], result["reason"]),
+                        ("allow", "workspace.write", "policy.reason.workspace_self"))
+            self.assertEqual(policy.check_event(self.read(target))["decision"], "allow")
+            # the rest of the repo table still applies inside the dev box
+            cases = [
+                (self.write(code / ".env"), "secrets", "deny"),
+                (self.write(self.outside), "repo.outside", "deny"),
+                (self.write(self.home / ".config" / "app.conf"), "config.write", "deny"),
+                (self.bash("curl https://example.com"), "net", "deny"),
+                (self.bash("pip install requests"), "install", "deny"),
+                (self.bash("sudo ls"), "admin", "deny"),
+                (self.bash("git push origin main"), "vcs.remote", "ask"),
+                (self.bash("git status"), "vcs.read", "allow"),
+            ]
+            for event, capability, decision in cases:
+                with self.subTest(event=event):
+                    result = policy.check_event(event)
+                    self.assertEqual((result["capability"], result["decision"]),
+                                     (capability, decision))
+
+    def test_repo_sibling_stays_denied_from_the_workspace_code(self):
+        code, target = self.workspace_code()
+        with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo)):
+            for event in (self.write(target), self.bash(f"echo x > {target}")):
+                with self.subTest(event=event):
+                    result = policy.check_event(event)
+                    self.assertEqual((result["decision"], result["capability"]),
+                                     ("deny", "workspace.write"))
+            self.assertEqual(policy.check_event(self.write(self.repo / "a.py"))["decision"],
+                             "allow")
+
+    def test_self_role_outside_the_workspace_code_does_not_open_it(self):
+        code, target = self.workspace_code()
+        with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="self", WS_SESSION_ROOT=str(self.repo)):
+            result = policy.check_event(self.write(target))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("deny", "workspace.write"))
+
+    def test_unknown_role_stays_denied_even_inside_the_workspace_code(self):
+        code, target = self.workspace_code()
+        for role in ("dev", "Self-ish", "admin"):
+            with self.subTest(role=role):
+                with patched_env(WS_DIR=str(code), WS_SESSION_ROLE=role,
+                                 WS_SESSION_ROOT=str(code)):
+                    result = policy.check_event(self.write(target))
+                    self.assertEqual((result["decision"], result["reason"]),
+                                     ("deny", "policy.reason.unknown_role"))
+
+    def test_subagent_of_the_dev_session_takes_the_self_table(self):
+        code, target = self.workspace_code()
+        with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="subagent",
+                         WS_SESSION_PARENT_ROLE="self", WS_SESSION_ROOT=str(code)):
+            result = policy.check_event(self.write(target, agent_id="agent-1"))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("allow", "workspace.write"))
+        with patched_env(WS_DIR=str(code), WS_SESSION_ROLE="subagent",
+                         WS_SESSION_PARENT_ROLE="dev", WS_SESSION_ROOT=str(code)):
+            result = policy.check_event(self.write(target, agent_id="agent-1"))
+            self.assertEqual((result["decision"], result["reason"]),
+                             ("deny", "policy.reason.no_parent"))
+
+    def test_self_entry_is_only_the_repo_inheritance(self):
+        # a self role that grants anything on its own is an invalid policy: fail closed
+        document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
+        document["roles"]["self"]["net"] = "allow"
+        path = self.root / "self-policy.yaml"
+        path.write_text(yaml_min.dumps(document), encoding="utf-8")
+        with self.assertRaises(policy.PolicyError) as raised:
+            policy.load_policy(path)
+        self.assertEqual(raised.exception.reason, "policy.reason.invalid")
 
     # --- fail closed ---------------------------------------------------------------------------
     def test_unknown_and_ambiguous_actions_fail_closed(self):

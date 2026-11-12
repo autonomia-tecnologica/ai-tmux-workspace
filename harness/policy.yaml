@@ -60,5 +60,9 @@ roles:
     tmp: allow
     secrets: deny
     session.external: ask
+  # `self` is the workspace's dev session (`workspace dev`): it takes the table of `repo` as is, and
+  # the workspace code is still decided by the protected-path rule above (write only from its box).
+  self:
+    inherits: repo
   subagent:
     inherits: parent

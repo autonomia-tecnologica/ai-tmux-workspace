@@ -106,6 +106,7 @@ main: ~/Codes/main-repo
 
 # Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
 # "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).
+# O código do próprio workspace não entra aqui: `workspace dev` abre a janela dele, com papel "self".
 groups:
   Example:
     - ~/Codes/some-repo

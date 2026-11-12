@@ -9,6 +9,7 @@
 #   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace privileged <cmd...>  system step: full command on a separate screen, exit code returned
+#   workspace dev [profile]   window on the workspace's own code (role self): the only session that edits it; not in config
 #   workspace stop [profile]   kill the profile's tmux server
 #   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
 #                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
@@ -1067,8 +1068,19 @@ print(t("workspace.hooks.summary", events=len(events), status=status, rest=rest)
 PY
 }
 
+# Opens the window of the workspace's own code (root = ROOT, role `self`, see src/session.py). It is not in
+# config.yaml on purpose: `reload` keeps it because prune reads its name from `window-names` (src/lib.py).
+dev_open() { # $1=profile (default claude)
+  local profile="${1:-claude}" sock="ws-${1:-claude}"
+  env -u TMUX tmux -L "$sock" has-session -t "$profile" 2>/dev/null || { msg cli.no_workspace profile="$profile" >&2; exit 1; }
+  env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$ROOT'"
+  [ -n "${WS_NO_ATTACH:-}" ] && return 0
+  exec env -u TMUX tmux -L "$sock" attach -t "$profile"
+}
+
 case "${1:-}" in
   open) shift; open_repo "$@" ;;
+  dev) shift; dev_open "$@" ;;
   side) shift; side "$@" ;;
   worktree) shift; worktree_cmd "$@" ;;
   left) shift; left "$@" ;;
