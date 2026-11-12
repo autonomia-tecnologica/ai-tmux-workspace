@@ -62,6 +62,7 @@ import re
 import shlex
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 try:
@@ -131,13 +132,20 @@ SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore")
 SECRET_DIRS = {".ssh", ".gnupg"}
 # Credential stores that live under the home and are not named like a secret file. They are
 # secrets even when the file name is generic (`hosts.yml`, `config.json`, `credentials`).
+# The `Library/...` entries are the macOS equivalents (Keychain, Messages, Mail, Safari, cookies
+# and the Claude desktop app data); they are listed for every platform because they are only
+# reached through the home directory.
 SECRET_HOME_DIRS = (
     ".aws", ".docker", ".kube", ".npm", ".gnupg", ".ssh", ".config/gh", ".config/gcloud",
     ".config/hub", ".config/containers",
+    "Library/Keychains", "Library/Application Support/Claude", "Library/Cookies",
+    "Library/Messages", "Library/Mail", "Library/Safari",
 )
 SECRET_HOME_FILES = (
     ".git-credentials", ".netrc", ".npmrc", ".pypirc", ".yarnrc.yml",
     ".cargo/credentials.toml", ".config/pip/pip.conf", ".config/git/credentials",
+    "Library/Cookies/Cookies.binarycookies",
+    "Library/Application Support/Claude/claude_desktop_config.json",
 )
 
 # A path with shell expansion or a glob is not a concrete path: the form is ambiguous and defers, and
@@ -150,6 +158,9 @@ ADMIN_PROGRAMS = {
     "swapoff", "modprobe", "insmod", "rmmod", "iptables", "ip6tables", "nft", "ufw", "firewall-cmd",
     "useradd", "userdel", "usermod", "groupadd", "groupdel", "passwd", "visudo", "docker",
     "podman", "nerdctl", "kubectl", "helm",
+    # macOS admin tools (accounts, launchd, Gatekeeper/SIP, FileVault, network and disks).
+    "sysadminctl", "dseditgroup", "dscl", "launchctl", "spctl", "csrutil", "fdesetup",
+    "systemsetup", "networksetup", "diskutil", "security",
 }
 NET_PROGRAMS = {
     "curl", "wget", "http", "https", "ssh", "scp", "sftp", "ftp", "telnet", "nc", "netcat",
@@ -347,12 +358,29 @@ def _effective_capabilities(document, parent, subagent):
 
 # --- path helpers ------------------------------------------------------------------------------
 
+def _is_darwin():
+    """Whether the host is macOS. Patched in tests so the darwin cases run on Linux."""
+    return sys.platform == "darwin"
+
+
+def _norm(value):
+    """Comparison form of a path: NFC-normalized and case-folded on macOS only.
+
+    APFS (macOS) is case- and normalization-insensitive, so `~/.SSH` names `~/.ssh` there and an
+    NFD spelling names the same file as its NFC form. Linux is case- and normalization-sensitive:
+    folding there would let a differently-spelled path match a box it is not inside. The path that
+    is stored, reported and logged is never changed.
+    """
+    text = str(value)
+    return unicodedata.normalize("NFC", text).casefold() if _is_darwin() else text
+
+
 def _inside(path, root):
     if not path or not root:
         return False
     try:
-        left = os.path.normcase(os.path.normpath(os.path.abspath(str(path))))
-        right = os.path.normcase(os.path.normpath(os.path.abspath(str(root))))
+        left = _norm(os.path.normpath(os.path.abspath(str(path))))
+        right = _norm(os.path.normpath(os.path.abspath(str(root))))
         return os.path.commonpath([left, right]) == right
     except (OSError, ValueError):
         return False
@@ -387,18 +415,29 @@ def workspace_root():
         return None
 
 
-def _tmp_roots():
-    """The only global area of the box is /tmp (and its realpath on systems that symlink it).
+TMP_ROOTS = ("/tmp",)
+# macOS per-session temp directory: `tempfile.gettempdir()` returns something under
+# `/var/folders`, and `/var` is a symlink to `/private/var`, so both spellings are in the box.
+MACOS_TMP_ROOTS = ("/private/var/folders", "/var/folders")
 
-    TMPDIR is deliberately ignored: a session cannot enlarge the box by pointing TMPDIR elsewhere.
+
+def _tmp_roots():
+    """The only global areas of the box: /tmp and, on macOS, the fixed temp root.
+
+    On macOS the temp directory is a per-session directory under `/var/folders` (real path
+    `/private/var/folders`). Both are fixed strings: TMPDIR is deliberately ignored, so a session
+    cannot enlarge the box by pointing TMPDIR elsewhere.
     """
-    roots = ["/tmp"]
-    try:
-        real = os.path.realpath("/tmp")
-    except OSError:
-        real = "/tmp"
-    if real not in roots:
-        roots.append(real)
+    roots = list(TMP_ROOTS)
+    if _is_darwin():
+        roots.extend(MACOS_TMP_ROOTS)
+    for candidate in tuple(roots):
+        try:
+            real = os.path.realpath(candidate)
+        except OSError:
+            real = candidate
+        if real not in roots:
+            roots.append(real)
     return tuple(roots)
 
 
@@ -407,7 +446,7 @@ def _is_secret(path):
         path = os.path.expanduser(str(path))
     except (TypeError, ValueError):
         return True
-    name = os.path.basename(path)
+    name = _norm(os.path.basename(path))
     if name.endswith(".example"):        # F05 exception: model files stay readable
         return False
     if name == ".env" or name.startswith(".env."):
@@ -415,15 +454,15 @@ def _is_secret(path):
     if name in SECRET_NAMES or name.endswith(SECRET_SUFFIXES):
         return True
     parts = Path(path).parts
-    if any(part in SECRET_DIRS for part in parts):
+    if any(_norm(part) in SECRET_DIRS for part in parts):
         return True
     try:
         home = Path.home()
     except (RuntimeError, OSError):
         return False
-    relative_path = os.path.normpath(path).lstrip(os.sep)
+    relative_path = _norm(os.path.normpath(path).lstrip(os.sep))
     for relative in SECRET_HOME_DIRS + SECRET_HOME_FILES:
-        secret = os.path.normpath(relative)
+        secret = _norm(os.path.normpath(relative))
         if _inside(path, home / relative):
             return True
         # Also catches relative paths and `rev:path` arguments from git, where the candidate is
@@ -1346,7 +1385,11 @@ def _cd_anchor(tokens, root, anchor):
     return [], path
 
 
-PROGRAM_DIRECTORIES = {"", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin"}
+PROGRAM_DIRECTORIES = {
+    "", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin",
+    # Apple Silicon Homebrew (Intel uses /usr/local, already listed).
+    "/opt/homebrew/bin", "/opt/homebrew/sbin",
+}
 # Words that run the next word as a command: `xargs sudo`, `find -exec sudo`, `env sudo`, `time sudo`.
 COMMAND_WRAPPERS = {
     "xargs", "eval", "exec", "env", "nohup", "nice", "timeout", "time", "then", "do", "else", "if",
