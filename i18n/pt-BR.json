@@ -412,6 +412,7 @@
   "policy.reason.auto": "Permitido automaticamente dentro da caixa: {capability}.",
   "policy.reason.inert": "Ferramenta sem efeito de arquivo ou rede.",
   "policy.reason.unknown": "Ação não reconhecida pela política; negada por padrão.",
+  "policy.reason.ask_mode": "Modo decisão: confirme esta ação.",
   "policy.reason.no_role": "Sessão sem papel declarado; a política não se aplica.",
   "policy.reason.unknown_role": "Papel de sessão desconhecido; negado por padrão.",
   "policy.reason.no_parent": "Subagente sem papel pai; negado por padrão.",

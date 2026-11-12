@@ -28,6 +28,12 @@ over everything, including the session root.
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
+`ask` mode (item 119) is opt-in by the person: `WS_POLICY_ASK`/`WS_POLICY_OPEN` or the marker
+`policy.ask`/`policy.open` in `$WS_STATE`. In it an action the engine cannot classify becomes `ask`
+(`policy.reason.ask_mode`) instead of a blind `deny`, and `net`/`install` denied by the table become
+`ask`. Secrets, `admin`, `repo.outside`, `config.write` and the workspace code stay denied; without
+the marker nothing changes.
+
 Every decision is appended to `$WS_STATE/policy.jsonl` (mode 0600) with the role, session,
 capability, target, decision and reason. The target is a path or a command summary, never the raw
 argument list, so a value passed on the command line is not written to the log.
@@ -1331,10 +1337,30 @@ def _auto_enabled(event):
     return False
 
 
-def _log_path():
+def _state_root():
     base = os.environ.get("WS_STATE")
-    root = Path(base).expanduser() if base else Path.home() / ".cache" / "workspace"
-    return root / "policy.jsonl"
+    return Path(base).expanduser() if base else Path.home() / ".cache" / "workspace"
+
+
+def _log_path():
+    return _state_root() / "policy.jsonl"
+
+
+def _ask_mode():
+    """Whether the person chose to decide unknown actions themselves (opt-in, item 119).
+
+    On when `WS_POLICY_ASK`/`WS_POLICY_OPEN` is 1/true/yes or when the person dropped the marker
+    `policy.ask`/`policy.open` in the state directory. Without either the engine keeps failing
+    closed, so deleting the marker closes the mode again.
+    """
+    setting = os.environ.get("WS_POLICY_ASK") or os.environ.get("WS_POLICY_OPEN")
+    if isinstance(setting, str) and setting.strip().lower() in ("1", "true", "yes"):
+        return True
+    try:
+        root = _state_root()
+        return any((root / marker).is_file() for marker in ("policy.ask", "policy.open"))
+    except (OSError, RuntimeError):
+        return False
 
 
 def _one_line(value, limit):
@@ -1411,9 +1437,17 @@ def check_event(event):
         findings = classify(event, root)
     except Exception:
         findings = None
+    failed_closed = "subagent" if subagent else parent
+    ask_mode = _ask_mode()
     if findings is None:
-        return _finish("deny", None, "policy.reason.unknown", event,
-                       role="subagent" if subagent else parent)
+        # Opt-in item 119: an action the engine cannot classify is the person's call, not a blind
+        # deny. The target is the tool name, never the raw command. Without the marker this stays
+        # `deny`/`unknown` (fail closed).
+        if ask_mode:
+            tool = event.get("tool_name")
+            return _finish("ask", None, "policy.reason.ask_mode", event,
+                           role=failed_closed, target=tool if isinstance(tool, str) else None)
+        return _finish("deny", None, "policy.reason.unknown", event, role=failed_closed)
 
     auto = _auto_enabled(event) and root_declared
     capabilities = _effective_capabilities(document, parent, subagent)
@@ -1426,6 +1460,8 @@ def check_event(event):
         else:
             decision = capabilities.get(finding.capability, "deny")
             reason = "policy.reason." + decision
+            if decision == "deny" and ask_mode and finding.capability in ("net", "install"):
+                decision, reason = "ask", "policy.reason.ask_mode"
             if (decision == "ask" and auto and finding.capability in BOX_CAPABILITIES
                     and _inside_box(finding.path, root)):
                 decision, reason = "allow", "policy.reason.auto"

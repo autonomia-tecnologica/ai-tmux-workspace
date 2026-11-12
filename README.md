@@ -235,5 +235,11 @@ A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao
 
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 
+### Controle de comandos
+
+O controle de comandos está em aberto e precisa ser pensado junto com o controle de arquivos e pastas, não isolado dele. A resolução é a pessoa — o agente pede e a pessoa aprova — e não bloquear tudo completamente, que trava trabalho legítimo no repo. Enquanto o desenho não fecha, o modo decisão é interino e opt-in: com o marcador `~/.cache/workspace/policy.ask` (ou `WS_POLICY_ASK=1`) o comando ou a ferramenta que o motor não classifica vira `ask` em vez de `deny`, e `net`/`install` que a tabela manda negar também passam a `ask`; cada decisão vai para o `policy.jsonl` com o motivo `policy.reason.ask_mode`. Segredos, comandos administrativos, leitura fora da caixa, escrita na config e escrita no código do workspace continuam negados: o controle de arquivos e pastas não é afrouxado. O marcador é da pessoa; apagá-lo fecha o modo de novo.
+
+**Isto é uma medida interina, não o desenho final do controle de comandos.**
+
 ## Textos (i18n)
 Todo texto exibido e todo prompt enviado ao agente ativo mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.

@@ -40,7 +40,7 @@ EXPECTED_CAPABILITIES = {
 ENV_KEYS = (
     "HOME", "WS_STATE", "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE",
     "WS_PARENT_ROLE", "WS_SESSION_ID", "WS_POLICY", "WS_POLICY_AUTO", "WS_AUTO", "WS_DIR",
-    "WS_I18N", "WS_POLICY_CLI", "TMPDIR",
+    "WS_I18N", "WS_POLICY_CLI", "TMPDIR", "WS_POLICY_ASK", "WS_POLICY_OPEN",
 )
 
 
@@ -940,6 +940,186 @@ class PolicyTest(unittest.TestCase):
                 result = self.cli(self.bash(command))
                 self.assertEqual((result["decision"], result["capability"]),
                                  (decision, capability))
+
+    # --- ask mode: the person decides the unknown (item 119) -----------------------------------
+    def ask_marker(self, name="policy.ask"):
+        self.state.mkdir(parents=True, exist_ok=True)
+        marker = self.state / name
+        marker.write_text("", encoding="utf-8")
+        return marker
+
+    def test_ask_mode_is_off_without_the_marker_or_env(self):
+        events = (
+            self.bash("some-unknown-command --flag"),
+            self.obash("other-unknown-command"),
+            {"tool_name": "UnknownTool", "tool_input": {}, "session_id": "sess-1"},
+        )
+        for event in events:
+            with self.subTest(event=event):
+                result = self.decide(event)
+                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual(result["reason"], "policy.reason.unknown")
+        with patched_env(WS_POLICY_ASK="0"):
+            self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+        # A marker outside the declared state directory is not the person's marker.
+        elsewhere = self.home / ".cache" / "workspace" / "policy.ask"
+        elsewhere.parent.mkdir(parents=True)
+        elsewhere.write_text("", encoding="utf-8")
+        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+
+    def test_ask_mode_marker_turns_unknown_commands_and_tools_into_ask(self):
+        self.ask_marker()
+        events = (
+            self.bash("some-unknown-command --flag"),
+            self.obash("other-unknown-command"),
+            {"tool_name": "UnknownTool", "tool_input": {}, "session_id": "sess-1"},
+        )
+        for event in events:
+            with self.subTest(event=event):
+                result = self.decide(event)
+                self.assertEqual((result["decision"], result["capability"]), ("ask", None))
+                self.assertEqual(result["reason"], "policy.reason.ask_mode")
+        # The alias marker opens the same mode.
+        (self.state / "policy.ask").unlink()
+        self.ask_marker("policy.open")
+        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "ask")
+
+    def test_ask_mode_env_var_opens_the_same_mode(self):
+        for name, value in (("WS_POLICY_ASK", "1"), ("WS_POLICY_ASK", "true"),
+                            ("WS_POLICY_OPEN", "yes")):
+            with self.subTest(name=name, value=value):
+                with patched_env(**{name: value}):
+                    result = policy.check_event(self.bash("some-unknown-command"))
+                    self.assertEqual((result["decision"], result["reason"]),
+                                     ("ask", "policy.reason.ask_mode"))
+
+    def test_ask_mode_marker_defaults_to_the_cache_state_dir(self):
+        marker = self.home / ".cache" / "workspace" / "policy.ask"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("", encoding="utf-8")
+        with patched_env(WS_STATE=None):
+            self.assertEqual(policy._log_path(),
+                             Path(self.home) / ".cache" / "workspace" / "policy.jsonl")
+            self.assertEqual(policy.check_event(self.bash("some-unknown-command"))["decision"],
+                             "ask")
+        # With WS_STATE declared the cache marker is not read: the test state is the only one.
+        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+
+    def test_ask_mode_keeps_secrets_admin_outside_config_and_workspace_denied(self):
+        self.ask_marker()
+        cases = (
+            ("cat .env", "secrets"),
+            ("sudo ls", "admin"),
+            ("ls ~/Desktop", "repo.outside"),
+            ("git config --global user.name Someone", "config.write"),
+        )
+        for command, capability in cases:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
+                self.assertEqual(result["reason"], "policy.reason.deny")
+        for event in (self.write(ROOT / "src" / "policy.py"),
+                      self.bash(f"echo x > {ROOT}/src/policy.py")):
+            with self.subTest(event=event):
+                result = self.decide(event)
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("deny", "workspace.write"))
+        # The marker belongs to the person: a repo session cannot write it.
+        result = self.decide(self.write(self.state / "policy.ask"))
+        self.assertEqual((result["decision"], result["capability"]), ("deny", "repo.outside"))
+
+    def test_ask_mode_turns_net_and_install_into_ask(self):
+        self.ask_marker()
+        cases = (
+            ("curl https://example.com", "net"),
+            ("pip install requests", "install"),
+            ("python3 -m pip install requests", "install"),
+            ("git pull", "vcs.remote"),
+        )
+        for command, capability in cases:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                if capability == "vcs.remote":
+                    # Already `ask` in the table: the reason does not change.
+                    self.assertEqual((result["decision"], result["reason"]),
+                                     ("ask", "policy.reason.ask"))
+                else:
+                    self.assertEqual((result["decision"], result["capability"]),
+                                     ("ask", capability))
+                    self.assertEqual(result["reason"], "policy.reason.ask_mode")
+        external = {"tool_name": "send_message", "tool_input": {}, "session_id": "sess-1"}
+        self.assertEqual(self.decide(external)["reason"], "policy.reason.ask")
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+            result = policy.check_event(self.bash("curl https://example.com"))
+            self.assertEqual((result["decision"], result["reason"]),
+                             ("ask", "policy.reason.ask"))
+
+    def test_ask_mode_keeps_the_allows_and_the_dev_session_write(self):
+        self.ask_marker()
+        cases = (
+            (self.bash("git status"), "vcs.read", "allow"),
+            (self.bash("cat README.md"), "repo.read", "allow"),
+            (self.write(self.repo / "a.py"), "repo.write", "allow"),
+            (self.write("/tmp/policy-ask-mode.txt"), "tmp", "allow"),
+            (self.read(ROOT / "src" / "policy.py"), "workspace.read", "allow"),
+            (self.bash("python3 -m unittest discover -s tests"), "test.run", "allow"),
+        )
+        for event, capability, decision in cases:
+            with self.subTest(event=event):
+                result = self.decide(event)
+                self.assertEqual((result["decision"], result["capability"]),
+                                 (decision, capability))
+        with patched_env(WS_DIR=str(self.repo), WS_SESSION_ROOT=str(self.repo)):
+            result = policy.check_event(self.write(self.repo / "src" / "policy.py"))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("allow", "workspace.write"))
+
+    def test_ask_mode_is_logged_with_the_tool_name_and_no_raw_command(self):
+        self.ask_marker()
+        secret = "SUPERSECRET-ASK-MODE"
+        self.cli(self.bash(f"some-unknown-command --token {secret}"))
+        self.cli(self.bash("curl https://example.com"))
+        path = self.state / "policy.jsonl"
+        text = path.read_text(encoding="utf-8")
+        entries = [json.loads(line) for line in text.splitlines() if line]
+        self.assertEqual(len(entries), 2)
+        self.assertEqual((entries[0]["decision"], entries[0]["capability"]),
+                         ("ask", None))
+        self.assertEqual(entries[0]["reason"], "policy.reason.ask_mode")
+        self.assertEqual(entries[0]["target"], "Bash")
+        self.assertNotIn(secret, text)
+        self.assertEqual((entries[1]["decision"], entries[1]["capability"]),
+                         ("ask", "net"))
+        self.assertEqual((entries[1]["reason"], entries[1]["target"]),
+                         ("policy.reason.ask_mode", "curl"))
+
+    def test_cli_without_the_marker_keeps_fail_closed(self):
+        result = self.cli(self.bash("some-unknown-command"))
+        self.assertEqual(result, {"decision": "deny", "capability": None,
+                                  "reason": "policy.reason.unknown"})
+        self.assertEqual(self.cli(self.bash("curl https://example.com"))["decision"], "deny")
+
+    def test_cli_covers_the_item_119_acceptance_battery(self):
+        self.ask_marker()
+        cases = (
+            (self.bash("some-unknown-command"), "ask", None),
+            ({"tool_name": "UnknownTool", "tool_input": {}, "session_id": "s"},
+             "ask", None),
+            (self.bash("cat .env"), "deny", "secrets"),
+            (self.bash("sudo ls"), "deny", "admin"),
+            (self.bash("ls ~/Desktop"), "deny", "repo.outside"),
+            (self.write(ROOT / "src" / "policy.py"), "deny", "workspace.write"),
+            (self.bash("curl https://example.com"), "ask", "net"),
+            (self.bash("pip install requests"), "ask", "install"),
+            (self.bash("git status"), "allow", "vcs.read"),
+        )
+        for event, decision, capability in cases:
+            with self.subTest(event=event):
+                result = self.cli(event)
+                self.assertEqual((result["decision"], result["capability"]),
+                                 (decision, capability))
+        self.assertEqual(i18n.t("policy.reason.ask_mode"),
+                         "Modo decisão: confirme esta ação.")
 
     # --- audit log -----------------------------------------------------------------------------
     def test_log_is_0600_and_never_contains_a_secret(self):
