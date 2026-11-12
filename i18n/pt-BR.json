@@ -431,8 +431,7 @@
   "doctor.source_json_missing": "source.json não encontrado em {path}; reinstale o harness",
   "doctor.source_json_invalid": "source.json inválido em {path}: {error}",
   "doctor.not_managed": "harness não gerenciado (harness_managed: false); a cópia instalada do HARNESS.md não é conferida",
-  "doctor.path_missing": "caminho citado no HARNESS.md não existe em nenhum root: {path}"
-,
+  "doctor.path_missing": "caminho citado no HARNESS.md não existe em nenhum root: {path}",
   "installer.status.ok": "ok: ",
   "installer.status.warn": "aviso: ",
   "installer.status.error": "erro: ",
@@ -504,5 +503,20 @@
   "config.hooks.applied": "Hooks registrados. Sessões do Claude abertas só leem hooks ao reabrir.",
   "config.hooks.failed": "Falha ao registrar os hooks: {error}",
   "config.hint": "Nada foi alterado. Rode `workspace config update --apply` para aplicar.",
-  "config.done": "Pronto. `workspace reload` basta para a config; hooks valem nas sessões novas."
+  "config.done": "Pronto. `workspace reload` basta para a config; hooks valem nas sessões novas.",
+  "repo.disabled": "repo desligado, sem janela nem agente: {repo}. Ligue com `workspace repo on {repo}` ou com T no painel de repos.",
+  "repo.config_error": "config ilegível, não gravo por cima: {path}",
+  "repo.not_in_folder": "não é um repo da pasta de repositórios: {repo}",
+  "repo.no_folder": "nenhuma pasta de repositórios: declare \"repos_folder\" no config.yaml",
+  "repo.state.on": "ligado",
+  "repo.state.off": "desligado",
+  "repo.set": "{repo}: {state}",
+  "repo.usage": "uso: workspace repo list | on <nome> | off <nome>",
+  "repos.filter.line": "FILTRO: {filter} · F muda · T liga/desliga",
+  "repos.filter.all": "todos",
+  "repos.filter.on": "ligados",
+  "repos.filter.off": "desligados",
+  "repos.disabled": "desligado",
+  "repos.toggled": "{repo}: {state}",
+  "repos.open_disabled": "{repo} está desligado: ligue com T antes de abrir"
 }
