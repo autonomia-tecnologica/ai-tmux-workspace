@@ -7,6 +7,7 @@
 #   workspace fit [profile]    re-apply the layout once, only what changed (run by the tmux hooks on attach/resize)
 #   workspace reload [profile] reload tmux.conf, restart the panels (picks up code changes) and add the tab strip to open windows (no restart)
 #   workspace doctor          drift check of the installed harness (--warn: only warns, used by reload)
+#   workspace config [update [--apply]]  show the config; update compares config.yaml, the harness, settings and hooks with this repo (src/config_cmd.py)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace privileged <cmd...>  system step: full command on a separate screen, exit code returned
 #   workspace stop [profile]   kill the profile's tmux server
@@ -1082,6 +1083,7 @@ case "${1:-}" in
   install-hooks) install_hooks ;;
   privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
+  config) shift; python3 "$SRC/config_cmd.py" "$@" ;;
   stop) stop_workspace "${2:-claude}" ;;
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;

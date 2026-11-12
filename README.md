@@ -195,7 +195,9 @@ para o uso do tmux. O desenho aprovado para a próxima versão — persistência
 escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, item 70.
 
 ## Comandos
-`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica).
+`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica) · `config` (mostra o caminho e o texto do `config.yaml`) · `config update [--apply]` (compara o `config.yaml` com `config/config.example.yaml`, o harness instalado, as settings por perfil e os hooks do Claude com este repo).
+
+`workspace config update` sem argumento só mostra a diferença. Com `--apply`: acrescenta ao `config.yaml` só o que falta (uma chave ou um item de lista, por texto exato), sem alterar nem remover o que você tem; antes grava um backup `config.yaml.bak-<data>`. O que você já viu ou removeu não volta: fica registrado em `~/.config/ai-tmux-workspace/state/config-offered.json`. Perfis, grupos, caminhos e relações nunca são tocados. O harness instalado, as settings geradas e os hooks são regenerados a partir da fonte e deste repo. `workspace reload` basta; hooks valem nas sessões do Claude que abrirem depois.
 
 ## HARNESS.md enxuto
 
