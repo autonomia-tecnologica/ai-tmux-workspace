@@ -25,7 +25,7 @@ import yaml_min  # noqa: E402
 from i18n import t  # noqa: E402
 
 EXAMPLE_TEXT = EXAMPLE.read_text(encoding="utf-8")
-LAST_PROMPT = next(line for line in EXAMPLE_TEXT.splitlines() if line.startswith('  - "Já validei'))
+LAST_PROMPT = [line for line in EXAMPLE_TEXT.splitlines() if line.startswith('  - "')][-1]
 
 
 def without_line(text, line):
