@@ -129,6 +129,17 @@ main: ~/Codes/main-repo
 # repos_disabled:
 #   - some-repo
 
+# Pastas livres (opcional): abas de navegação na janela da home (o repo principal). Não são repos:
+# não abrem janela nem sessão de agente. Enter abre/fecha a pasta e abre o arquivo pelo visualizador
+# (`viewer`); tipo que o visualizador não cobre fica como está. Cada entrada é um caminho ou um mapa
+# com "path" e "label" (o nome mostrado). Caminhos aceitam ~. Sem esta chave, a home não tem a aba
+# PASTAS. A primeira versão só navega e abre; nada é movido, renomeado ou apagado.
+# free_folders:
+#   - ~/Documentos
+#   - path: ~/Imagens
+#     label: Imagens
+#   - ~/Vídeos
+
 # Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
 # "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).
 # O código do próprio workspace não entra aqui: `workspace dev` abre a janela dele, com papel "self".
