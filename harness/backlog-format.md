@@ -39,4 +39,11 @@ Em `A refinar`, o item pode ainda trazer `Contexto (data)` e `Falta decidir:`.
 
 - Fatia de até 65k de contexto; se não cabe numa sessão, divida.
 - `(PAUSADA)` no título tira o item do despacho.
-- Não refinar sem pedido; não perguntar antes de salvar tarefa nova.
+- Tarefa que a pessoa pede entra já refinada: `Caminhos`, `Depende de`, `Aceite` e `Validação` escritos;
+  o que for leve a sessão decide sozinha.
+- Refinamento que exige decisão pesada: perguntar uma vez, em enquete, entre salvar já refinada (e então
+  fazer as perguntas, uma por vez) ou salvar sem refinar em `A refinar`. "Salva sem refinar" a qualquer
+  momento vale sem enquete.
+- A pergunta nunca interrompe o processo em curso: o item é salvo na hora com o que se sabe, e o
+  refinamento pesado vem depois.
+- A decisão da pessoa entra no `Decidido` na hora em que ela responde (ver `HARNESS.md`).
