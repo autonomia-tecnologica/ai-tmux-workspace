@@ -4,19 +4,31 @@ a browser upload, etc. attaches it without going through the file manager.
 macOS: osascript `set the clipboard to POSIX file`. Linux: wl-copy (Wayland) or xclip (X11) with
 `text/uri-list`. Returns the kind of copy that happened ("file", "path") or None.
 """
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
+def _applescript_str(value):
+    """AppleScript string literal for `value`: backslash, quote and line/tab controls are escaped."""
+    return '"' + (value.replace("\\", "\\\\").replace('"', '\\"')
+                  .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")) + '"'
+
+
 def build_command(path, platform=None, wayland=None, which=shutil.which):
-    """(argv, stdin_bytes) that copies `path` as a file, or None if no tool is available."""
+    """(argv, stdin_bytes) that copies `path` as a file, or None if no tool is available.
+
+    The path is made absolute first, so the clipboard entry and the URI name the same file whatever
+    the caller's working directory is.
+    """
     platform = platform or sys.platform
+    absolute = os.path.abspath(path)
     if platform == "darwin":
-        esc = path.replace("\\", "\\\\").replace('"', '\\"')
-        return ["osascript", "-e", f'set the clipboard to (POSIX file "{esc}")'], None
-    uri = (Path(path).as_uri() + "\r\n").encode()
+        return ["osascript", "-e",
+                f"set the clipboard to (POSIX file {_applescript_str(absolute)})"], None
+    uri = (Path(absolute).as_uri() + "\r\n").encode()
     if platform.startswith("linux"):
         if which("wl-copy"):
             return ["wl-copy", "--type", "text/uri-list"], uri

@@ -3,6 +3,10 @@
 the window's active Claude tab, without Enter. Recording ends after SILENCE_S of silence following speech;
 "silence" is adaptive (see SilenceDetector), not a fixed volume.
 
+Linux only: the recorder is ALSA's arecord (`alsa-utils`), and the optional GPU backend is a ROCm
+container. On other platforms `available()` is False and `run()` returns after the "not available"
+message instead of shelling out to Linux tools; the options screen hides the dictation leaf there.
+
 Screen: 1 s on a red background with an animated sine wave (get ready), then green showing the
 live waveform of the captured audio, then a short "transcribing" screen while faster-whisper runs
 offline (src/stt.py, in the venv at ~/.cache/at-whisper/venv, override with AT_WHISPER_VENV).
@@ -36,9 +40,23 @@ BG_RED, BG_GREEN, BG_BLUE = "\x1b[48;5;124m", "\x1b[48;5;28m", "\x1b[48;5;24m"
 FG = "\x1b[38;5;255m"
 VENV = os.environ.get("AT_WHISPER_VENV", os.path.expanduser("~/.cache/at-whisper/venv"))
 DOCKER_IMAGE = os.environ.get("AT_WHISPER_IMAGE", "at-whisper-rocm")
-GGML_MODEL = os.environ.get("AT_WHISPER_GGML", "/mnt/Data/LLM/at-whisper/ggml/ggml-small.bin")
 LANGUAGE = os.environ.get("AT_WHISPER_LANGUAGE", "pt")
 STT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stt.py")
+
+
+def available(platform=None):
+    """True on the only platform the recorder supports: Linux/ALSA (arecord)."""
+    return (platform or sys.platform).startswith("linux")
+
+
+def default_ggml_model(platform=None):
+    """Default whisper.cpp model file: the legacy Linux install path, or the cache elsewhere."""
+    if (platform or sys.platform).startswith("linux"):
+        return "/mnt/Data/LLM/at-whisper/ggml/ggml-small.bin"
+    return os.path.expanduser("~/.cache/at-whisper/ggml/ggml-small.bin")
+
+
+GGML_MODEL = os.environ.get("AT_WHISPER_GGML", default_ggml_model())
 
 
 def frame(bg, cols, rows, amps, title):
@@ -124,7 +142,8 @@ def pcm_rms(buf):
 
 
 def record(raw, peaks, det, outcome, done):
-    """Records the default device (arecord) into `raw` and `peaks` until `det` says stop/cancel (-> `outcome`)."""
+    """Records the default device (arecord, Linux/ALSA) into `raw` and `peaks` until `det` says stop/cancel
+    (-> `outcome`)."""
     proc = subprocess.Popen(["arecord", "-q", "-f", "S16_LE", "-r", str(RATE), "-c", "1", "-t", "raw",
                              ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     while True:
@@ -158,7 +177,10 @@ def docker_ready():
 def start_stt():
     """Picks the STT backend and starts what can start early. -> (backend, proc, error).
     "docker": whisper.cpp on the GPU (ROCm) in a container, no network; runs after recording.
-    "venv": faster-whisper on the CPU; starts now so the model loads while the user records."""
+    "venv": faster-whisper on the CPU; starts now so the model loads while the user records.
+    Off Linux it starts nothing and returns the "not available" message."""
+    if not available():
+        return None, None, i18n.t("mic.no_arecord")
     if os.environ.get("AT_WHISPER_BACKEND", "auto") in ("auto", "docker") and docker_ready() \
             and os.path.exists(GGML_MODEL):
         return "docker", None, None
@@ -200,7 +222,7 @@ def transcribe(handle, raw):
 
 
 def run(window):
-    if not shutil.which("arecord"):
+    if not available() or not shutil.which("arecord"):
         print(i18n.t("mic.no_arecord"))
         time.sleep(2)
         return
