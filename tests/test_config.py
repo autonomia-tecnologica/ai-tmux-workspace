@@ -158,6 +158,19 @@ class YamlConfigTest(ConfigTestCase):
         self.assertEqual(lib.siblings(b), [a])   # declared only on a, visible from b
         self.assertEqual(lib.siblings(c), [])
 
+    def test_five_repos_declared_as_mutual_siblings_see_the_other_four(self):
+        names = ["ai-tmux-workspace", "at", "site", "home", "ambiente-de-trabalho"]
+        lines = ["groups:", "  Autonomia:"]
+        for name in names:
+            others = ", ".join(str(self.dir / o) for o in names if o != name)
+            lines.append(f"    - path: {self.dir / name}")
+            lines.append(f"      siblings: [{others}]")
+        self.write("config.yaml", "\n".join(lines) + "\n")
+        for name in names:
+            with self.subTest(repo=name):
+                expected = sorted(str(self.dir / o) for o in names if o != name)
+                self.assertEqual(lib.siblings(str(self.dir / name)), expected)
+
     def test_parent_folder_makes_everything_inside_siblings_and_mixes_with_declared(self):
         parent = self.dir / "AT"
         self.write("config.yaml", (

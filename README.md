@@ -194,6 +194,30 @@ visível. Não há comando de conferência na CLI: a CLI do `workspace` é para 
 para o uso do tmux. O desenho aprovado para a próxima versão — persistência da conferência, `/clear`,
 escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, item 70.
 
+### Cinco repos como irmãos mútuos
+
+Para a conferência de cada repo mostrar os outros quatro, declare `siblings` em cada entrada do grupo, com os
+outros repos. A declaração explícita vale nos dois sentidos, então o trecho abaixo (com os cinco repos do
+ambiente de trabalho) funciona de qualquer janela:
+
+```yaml
+groups:
+  Autonomia:
+    - path: ~/Codes/ai-tmux-workspace
+      siblings: [~/Codes/at, ~/Codes/site, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
+    - path: ~/Codes/at
+      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/site, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
+    - path: ~/Codes/site
+      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
+    - path: ~/Codes/home
+      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/site, ~/Codes/ambiente-de-trabalho]
+    - path: ~/Codes/ambiente-de-trabalho
+      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/site, ~/Codes/home]
+```
+
+Se um desses repos já estiver em outro grupo, não repita a entrada: acrescente só o `siblings` na entrada que
+já existe, porque um repo listado duas vezes aparece duas vezes no painel de repos.
+
 ## Comandos
 `workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica) · `config` (mostra o caminho e o texto do `config.yaml`) · `config update [--apply]` (compara o `config.yaml` com `config/config.example.yaml`, o harness instalado, as settings por perfil e os hooks do Claude com este repo).
 
