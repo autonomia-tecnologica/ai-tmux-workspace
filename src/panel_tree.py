@@ -159,7 +159,7 @@ def enter(v, key, _pressed):
     if kind == "d":
         OPEN_FOLDERS.toggle(path)
         v.redraw.set()
-    elif opener.use_system(path) and opener.open_system(path):
+    elif opener.open_file(path):
         return
     else:
         open_with_editor(path)
@@ -279,7 +279,12 @@ def parent_of(path):
 
 
 def on_key(v, k):
-    """Right opens the folder under the cursor, Left closes it (or jumps to the parent folder)."""
+    """`e` opens the editor menu for the file under the cursor (also for HTML and media, which Enter
+    sends to their viewer). Right opens the folder under the cursor, Left closes it (or jumps to the
+    parent folder)."""
+    if k == "e" and v.key and v.key[0] == "f":
+        open_with_editor(v.key[1])
+        return
     if k not in ("left", "right") or not v.key:
         return
     kind, path = v.key

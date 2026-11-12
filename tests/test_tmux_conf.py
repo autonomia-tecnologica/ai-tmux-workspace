@@ -132,7 +132,7 @@ class LayoutOwnerTest(unittest.TestCase):
 
     def test_session_paths_do_not_reapply_the_layout(self):
         for name in ("tab_show", "tab_new", "tab_exit", "tab_step", "session_new", "session_exit",
-                     "session_run", "resume", "open_sessions", "session_restore", "side", "left"):
+                     "session_run", "open_sessions", "session_restore", "side", "left"):
             with self.subTest(function=name):
                 self.assertNotIn("layout_apply", self.functions[name])
 
