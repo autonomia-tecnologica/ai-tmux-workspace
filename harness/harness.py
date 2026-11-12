@@ -11,7 +11,9 @@ invalid input or missing session id exits 0 with no decision (fail open). Events
 - PreToolUse (Write, Edit, NotebookEdit): denies the write until the harness was read.
 
 `render` writes settings.json from the forcado.yaml of the harness it points at. It registers the
-hooks and translates every item with `tipo: deny` into a permissions.deny entry.
+hooks and translates every item with `tipo: deny` into a permissions.deny entry. The hook command
+uses the interpreter exported by the launcher (`WS_PYTHON`) when present, with a plain `python3`
+fallback, and quotes the script path.
 
 The harness directory comes from AT_HARNESS_DIR or --harness (render); the default is derived from
 Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_STATE (or
@@ -20,6 +22,7 @@ Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -27,7 +30,7 @@ from pathlib import Path
 DEFAULT_HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
 GATE_ITEM_ID = "F07"
 DEFAULT_GATE_TOOLS = ("Write", "Edit", "NotebookEdit")
-HOOK_COMMAND = 'python3 "$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+HOOK_SCRIPT = '"$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
 
 USAGE = """usage: harness.py [--help]
        harness.py render [--harness DIR] [--out FILE]
@@ -522,8 +525,19 @@ def deny_entries(document):
     return entries
 
 
+def hook_command():
+    """Hook command line: the launcher's interpreter (WS_PYTHON) with the script path quoted.
+
+    `workspace` exports WS_PYTHON before the agent starts because a GUI-launched shell may not have
+    Homebrew on PATH. `shlex.quote` leaves a plain name untouched and quotes a path with spaces, so a
+    standalone render (WS_PYTHON unset) still produces the historical `python3 "$HOME/..."` command.
+    """
+    python = os.environ.get("WS_PYTHON") or "python3"
+    return f"{shlex.quote(python)} {HOOK_SCRIPT}"
+
+
 def build_settings(document):
-    hook = {"type": "command", "command": HOOK_COMMAND}
+    hook = {"type": "command", "command": hook_command()}
     gate = find_item(document, GATE_ITEM_ID)
     gate_matcher = "|".join(gate_tools(gate)) if isinstance(gate, dict) else "|".join(DEFAULT_GATE_TOOLS)
     return {

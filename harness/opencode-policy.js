@@ -2,9 +2,12 @@
 /**
  * OpenCode adapter for the central capability policy.
  *
- * This file holds no rule of its own: every decision comes from `python3 policy.py check`, the same
- * CLI the Claude Code hook uses (`src/policy.py`). `decide`/`decideMany` are exported so the test
- * suite can run the same battery of actions through both adapters and compare the decisions.
+ * This file holds no rule of its own: every decision comes from the policy engine CLI, the same
+ * `policy.py check` the Claude Code hook uses (`src/policy.py`). The interpreter is `WS_PYTHON`
+ * (exported by `workspace`) with a plain `python3` fallback, passed as an argv array and never
+ * through a shell, so a Homebrew path or a path with spaces reaches the process unchanged.
+ * `decide`/`decideMany` are exported so the test suite can run the same battery of actions through
+ * both adapters and compare the decisions.
  *
  * OpenCode's `tool.execute.before` has no "ask" channel in the plugin API, so `ask` is surfaced as
  * a thrown error: the tool does not run unattended, which is the fail-closed reading of the same

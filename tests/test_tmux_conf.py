@@ -6,14 +6,17 @@ windows resizes the new window but fires no client hook, so without a window/ses
 kept the desktop pane layout squeezed into its width (no zoom) until some client event happened.
 These tests read config/tmux.conf and bin/workspace; they need no tmux server.
 """
+import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-CONF = Path(__file__).resolve().parent.parent / "config" / "tmux.conf"
+ROOT = Path(__file__).resolve().parent.parent
+CONF = ROOT / "config" / "tmux.conf"
 
 # Events that must re-apply the layout: client events (attach/resize/switch/focus) and window events
 # (tmux followed the latest client, or the current window changed).
@@ -26,7 +29,7 @@ FIT_EVENTS = (
     "session-window-changed",
 )
 
-HOOK_RE = re.compile(r'^set-hook -g (\S+) "(.*)"\s*$')
+HOOK_RE = re.compile(r'^set-hook -g (\S+) (?:\{(.*)\}|"(.*)")\s*$')
 
 
 def hooks(conf):
@@ -35,7 +38,8 @@ def hooks(conf):
     for line in conf.splitlines():
         match = HOOK_RE.match(line.strip())
         if match:
-            found.setdefault(match.group(1), []).append(match.group(2))
+            command = match.group(2) if match.group(2) is not None else match.group(3)
+            found.setdefault(match.group(1), []).append(command.strip())
     return found
 
 
@@ -59,7 +63,7 @@ class FitHooksTest(unittest.TestCase):
             for command in self.hooks[event]:
                 with self.subTest(event=event, command=command):
                     self.assertTrue(command.startswith("run-shell -b "), command)
-                    self.assertIn("bin/workspace fit '#{@ws_profile}'", command)
+                    self.assertIn('"${WS_DIR}/bin/workspace" fit "#{@ws_profile}"', command)
                     self.assertIn(">/dev/null 2>&1", command)
 
     def test_fit_hooks_are_identical(self):
@@ -74,9 +78,131 @@ class StatusBarProfileTest(unittest.TestCase):
 
     def test_statusbar_receives_session_profile_with_fallback_to_window_profile(self):
         self.assertIn(
-            "statusbar.py '#{@ws_repo}' '#{?#{@ws_session_profile},#{@ws_session_profile},#{@ws_profile}}'",
+            '"${WS_PYTHON:-python3}" "${WS_DIR}/src/statusbar.py" "#{@ws_repo}" '
+            '"#{?#{@ws_session_profile},#{@ws_session_profile},#{@ws_profile}}"',
             self.conf,
         )
+
+
+class InterpreterQuotingTest(unittest.TestCase):
+    """The tmux server may start without Homebrew on PATH, and WS_DIR may contain a space: every
+    interpreter is the one exported by the launcher and every path is passed as one shell word."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.conf = CONF.read_text(encoding="utf-8")
+        cls.lines = cls.conf.splitlines()
+
+    def commands(self):
+        return [line for line in self.lines if not line.lstrip().startswith("#")]
+
+    def test_python_spawns_use_the_launcher_interpreter(self):
+        spawns = [line for line in self.commands() if "python3" in line]
+        self.assertTrue(spawns)
+        for line in spawns:
+            with self.subTest(line=line):
+                self.assertIn('"${WS_PYTHON:-python3}"', line)
+                rest = line.replace('"${WS_PYTHON:-python3}"', "")
+                self.assertNotRegex(rest, r"\bpython3\b", "spawn the launcher interpreter, not a bare python3")
+
+    def test_every_ws_dir_is_quoted(self):
+        occurrences = list(re.finditer(r"\$\{WS_DIR\}", self.conf))
+        self.assertTrue(occurrences)
+        for match in occurrences:
+            start = match.start()
+            with self.subTest(context=self.conf[max(0, start - 40):start + 20]):
+                self.assertIn(self.conf[start - 1], "\"'",
+                              "quote ${WS_DIR} inside run-shell and #() commands")
+
+    def test_run_shell_commands_quote_the_shell_string(self):
+        # run-shell/bind commands are parsed again when the key or hook runs: the shell command is a
+        # single quoted tmux argument whose inner quotes reach /bin/sh.
+        for line in self.commands():
+            if "run-shell" not in line:
+                continue
+            with self.subTest(line=line):
+                self.assertRegex(line, r"run-shell(?: -b)? '")
+                self.assertNotRegex(line, r'run-shell(?: -b)? "\$')
+
+
+class MinimumTmuxVersionTest(unittest.TestCase):
+    """The features above the minimum are guarded, not removed: modern tmux keeps them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.conf = CONF.read_text(encoding="utf-8")
+
+    def guarded_block(self, marker):
+        lines = self.conf.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() != "%if" and not line.strip().startswith("%if "):
+                continue
+            block = [line]
+            for inner in lines[index + 1:]:
+                block.append(inner)
+                if inner.strip() == "%endif":
+                    break
+            if any(marker in item for item in block):
+                return "\n".join(block)
+        self.fail(f"{marker!r} is not inside a %if guard")
+
+    def test_header_declares_the_minimum_versions(self):
+        header = self.conf.split("set -g default-terminal", 1)[0]
+        self.assertIn("Minimum tmux: 3.2", header)
+        self.assertRegex(header, r"popup[^\n]*3\.2")
+        self.assertRegex(header, r"pane-border-lines[^\n]*3\.3")
+        self.assertRegex(header, r"MouseUp1Status[^\n]*3\.4")
+
+    def test_border_options_are_guarded_and_present(self):
+        block = self.guarded_block("set -g pane-border-lines heavy")
+        self.assertIn("pane-border-indicators off", block)
+        self.assertIn("#{version}", block)
+
+    def test_popup_is_guarded_and_present(self):
+        block = self.guarded_block("bind h { display-popup")
+        self.assertIn("display-popup", block)
+        self.assertIn("#{version}", block)
+
+    def test_status_range_click_is_guarded_and_present(self):
+        block = self.guarded_block("bind -n MouseUp1Status")
+        self.assertIn("mouse_status_range", block)
+        self.assertIn("#{version}", block)
+
+
+class HarnessCommandTest(unittest.TestCase):
+    """The hook command must quote its script path and use the interpreter exported by the launcher."""
+
+    COMMAND = '"$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+
+    def commands(self, settings):
+        return [hook["command"]
+                for groups in settings["hooks"].values()
+                for group in groups
+                for hook in group["hooks"]]
+
+    def test_render_uses_ws_python_and_quotes_it(self):
+        harness = ROOT / "harness" / "harness.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "harness"
+            directory.mkdir()
+            (directory / "forcado.yaml").write_text("itens: []\n", encoding="utf-8")
+            target = Path(tmp) / "settings.json"
+            env = dict(os.environ, WS_PYTHON="/opt/My Py/python3")
+            proc = subprocess.run(
+                [sys.executable, str(harness), "render", "--harness", str(directory),
+                 "--out", str(target)],
+                env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            for command in self.commands(json.loads(target.read_text(encoding="utf-8"))):
+                with self.subTest(command=command):
+                    self.assertTrue(command.startswith("'/opt/My Py/python3' "), command)
+                    self.assertTrue(command.endswith(" " + self.COMMAND), command)
+
+    def test_static_settings_quotes_the_script_path(self):
+        settings = json.loads((ROOT / "harness" / "settings.json").read_text(encoding="utf-8"))
+        for command in self.commands(settings):
+            with self.subTest(command=command):
+                self.assertTrue(command.endswith(" " + self.COMMAND), command)
 
 
 BIN = Path(__file__).resolve().parent.parent / "bin" / "workspace"
