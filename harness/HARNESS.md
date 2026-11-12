@@ -39,8 +39,16 @@ no harness do workspace.
 - Sessão de repo escreve só no próprio repo e em `/tmp`.
 - Home lê e edita qualquer repo do ambiente; não edita o código do workspace.
 - Código do workspace é protegido: só a sessão com root nele escreve.
-- Comando privilegiado: pedir ao ambiente (tela separada com `pkexec`); nunca `sudo`/`pkexec` direto. Fora do tmux, entregar um comando de uma linha pronto para colar; o código de saída volta para a sessão.
+- Comando interativo ou privilegiado: tela separada da sessão, nunca no painel do agente; privilégio pede ao ambiente (`pkexec`), nunca `sudo`/`pkexec` direto. Fora do tmux, entregar um comando de uma linha pronto para colar; o código de saída volta para a sessão.
 - Não matar sessões ou janelas que não criou.
+
+## Modelo
+
+- CLI ativo: Claude Code hoje; OpenCode também usa este `HARNESS.md`.
+- Provedor: Anthropic ou DeepSeek.
+- Nomes curtos: Sonnet, Opus, Haiku (Anthropic); Flash, Pro (DeepSeek).
+- DeepSeek: Sonnet→flash, Opus→v4-pro, Haiku→flash; Flash→flash, Pro→v4-pro.
+- Opus e Pro só por pedido explícito do Rafael.
 
 ## Conversa
 
