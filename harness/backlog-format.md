@@ -30,6 +30,8 @@ Em `Refinadas` e `A refinar`:
 - `Depende de:` ids dos quais a fatia depende, ou `—`.
 - `Aceite:` o que precisa ser verdade quando a fatia terminar.
 - `Validação:` como se verifica o aceite — testes, comandos, o que olhar.
+- `Estado:` entrega de subagente registrada pela sessão: branch, validação e o que falta. Vazio até
+  haver entrega.
 
 Em `A refinar`, o item pode ainda trazer `Contexto (data)` e `Falta decidir:`.
 

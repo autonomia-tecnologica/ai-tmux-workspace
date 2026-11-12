@@ -54,6 +54,9 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
   (camadas, dono único, eventos, UI, ciclo de vida e dívida de desenho; freio em `tests/test_architecture.py`).
 - Refinada = despachável, não concluída; item ambíguo fica em `A refinar`.
 - Não refinar sem pedido; não perguntar antes de salvar tarefa nova.
+- Decisão da pessoa vai para o `Decidido` do item na hora em que ela responde, antes da próxima pergunta; nunca em lote no fim.
+- Item com `Decidido` não é perguntado de novo; pergunta só o que está em `Falta decidir`.
+- Trabalho entregue por subagente vai para o `Estado` do item (branch, validação, o que falta) antes de encerrar a sessão.
 - Fatia de até 65k de contexto; item em torno de 15 linhas; `(PAUSADA)` tira do despacho.
 
 ## Agentes
