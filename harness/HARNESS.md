@@ -59,7 +59,8 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
   tarefa de subagente, uma tarefa por subagente; a sessão principal não implementa, só refina,
   despacha, confere e fecha. Backlog, handoff, commit e a conferência entre repos ficam na sessão
   principal.
-- Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita.
+- Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita; fecha com
+  `SubagentHandback` — arquivos alterados, validação rodada e resultado; entrega sem handback não conta.
 - Fechar e commitar: sessão que despachou.
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
 - Worktree não é sandbox; só remover o que o próprio agente criou.
