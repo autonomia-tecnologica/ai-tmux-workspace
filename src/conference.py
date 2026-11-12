@@ -49,6 +49,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import paths
+
 try:
     import fcntl
 except ImportError:     # no fcntl (Windows): updates are not serialized
@@ -96,9 +98,8 @@ SECRET_PATTERNS = (
 
 
 def state_dir():
-    """Conference folder: ~/.config/ai-tmux-workspace/conference, or WS_CONFERENCE (tests)."""
-    return Path(os.environ.get(
-        "WS_CONFERENCE", Path.home() / ".config" / "ai-tmux-workspace" / "conference")).expanduser()
+    """Conference folder: the control plane's conference/, or WS_CONFERENCE (tests)."""
+    return paths.conference_dir()
 
 
 def active_path():
@@ -806,8 +807,8 @@ SCRIPT = Path(__file__).resolve()
 
 
 def requests_dir():
-    """STATE/requests, following WS_STATE (same default as lib.STATE)."""
-    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace")) / "requests"
+    """State/requests, following WS_STATE (same owner as every other state folder)."""
+    return paths.state_dir() / "requests"
 
 
 def _request_path(request_id):

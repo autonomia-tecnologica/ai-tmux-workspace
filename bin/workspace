@@ -56,6 +56,12 @@ BIN="$(resolve_path "${BASH_SOURCE[0]}")"; BIN="${BIN%/*}"   # resolve_path leav
 ROOT="${BIN%/*}"; [ -n "$ROOT" ] || ROOT=/   # repo root
 SRC="$ROOT/src"
 export WS_DIR="$ROOT"
+# Move the old ~/.cache/workspace state into the control plane before any module reads it. A declared
+# WS_STATE disables it (the person chose the folder); an error prints one line on stderr and the
+# session still opens.
+if [ -f "$SRC/paths.py" ]; then
+  "$PYTHON" "$SRC/paths.py" migrate >/dev/null || true
+fi
 MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
 SESSION_MIN_SECONDS=10   # shorter than this, a session that ended was a failed launch (never reopen the default)
 

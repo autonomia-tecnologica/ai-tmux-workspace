@@ -18,7 +18,8 @@ This module is stdlib-only at import time: hook.py imports it on every Stop.
 import contextlib
 import json
 import os
-from pathlib import Path
+
+import paths
 
 try:
     import fcntl
@@ -30,7 +31,7 @@ MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions
 
 
 def _state_dir():
-    return Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace"))
+    return paths.state_dir()
 
 
 def path():

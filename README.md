@@ -43,7 +43,7 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Settings gerada do agente
 
-Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `security/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
+Ao abrir um repo, o workspace gera uma settings por perfil em `~/.config/ai-tmux-workspace/state/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `security/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
 
 `manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (a retomada por aba continua). Sem a chave, o comportamento histórico vale (`manage: true`).
 
@@ -268,14 +268,15 @@ o racional e os dois vocabulários (harness de inferência e harness determinís
 
 ## Persistência
 Sem plugins de tmux. As abas de sessão de cada repo ficam em `$WS_STATE/tabs/`: uma lista ordenada com o perfil e o id de cada aba, mais `session-<aba>` com o id real gravado pelo hook do Claude e pelo plugin do OpenCode. `reload`, `restart` e fechar/abrir o workspace restauram as abas na ordem, cada uma no próprio id; sem abas persistidas, abre a padrão. O resto vem do `config.yaml` e dos arquivos do repo.
-O estado de runtime fica em `~/.cache/workspace` (`WS_STATE`). Os nomes de contrato interno agora são em inglês
-(`WS_STATE`/`WS_PROFILE`, opções `@ws_*`, `@role`, papéis e chaves de estado); o estado antigo é descartável e um
-`workspace restart` é necessário depois desta mudança. O desenho aprovado separa
-config/estado em `~/.config/ai-tmux-workspace` (`state/`, `conference/`) do código e do
-`HARNESS.md` em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`), com escopo por
-repo/home/conferência; está no `BACKLOG.md`, item 72. O harness instalado guarda um `source.json`
-lateral com a fonte, o commit e os sha256 do `HARNESS.md`; `workspace doctor` compara esse registro
-com a cópia instalada e a fonte canônica, e o `reload` mostra o aviso sem abortar.
+O estado de runtime fica em `~/.config/ai-tmux-workspace/state` (`WS_STATE`); a conferência fica em
+`~/.config/ai-tmux-workspace/conference`. Os nomes de contrato interno agora são em inglês
+(`WS_STATE`/`WS_PROFILE`, opções `@ws_*`, `@role`, papéis e chaves de estado). O código instalado e o
+`HARNESS.md` ficam em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`): o harness
+não vai para `.config`. A migração de `~/.cache/workspace` é automática no launcher e no instalador,
+não sobrescreve o que já existe no destino e não roda quando `WS_STATE` está declarado. O harness
+instalado guarda um `source.json` lateral com a fonte, o commit e os sha256 do `HARNESS.md`;
+`workspace doctor` compara esse registro com a cópia instalada e a fonte canônica, e o `reload` mostra
+o aviso sem abortar.
 
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
@@ -307,15 +308,15 @@ O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DI
 
 ### Caixa da sessão
 
-A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. Configuração da máquina (`~/.config`, `~/.claude`, a cópia instalada) é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
+A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. O plano de controle do workspace (`~/.config/ai-tmux-workspace`, com `config.yaml`, `state/` e `conference/`) é caminho protegido: todo papel pode ler, nenhum papel de agente escreve, e a barreira vem antes da tabela de papéis. O resto de `~/.config` e `~/.claude` segue a tabela; a cópia instalada é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
 
-**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a caixa é política de harness, não usuário de SO nem sandbox (item 74); a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado; e a persistência está dividida entre `~/.cache/workspace` e `~/.local/share`. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–72) e a lista completa de requisitos está no JSON.
+**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a caixa é política de harness, não usuário de SO nem sandbox (item 74); a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–74) e a lista completa de requisitos está no JSON.
 
 Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
 
 ### Controle de comandos
 
-O controle de comandos está em aberto e precisa ser pensado junto com o controle de arquivos e pastas, não isolado dele. A resolução é a pessoa — o agente pede e a pessoa aprova — e não bloquear tudo completamente, que trava trabalho legítimo no repo. Enquanto o desenho não fecha, o modo decisão é interino e opt-in: com o marcador `~/.cache/workspace/policy.ask` (ou `WS_POLICY_ASK=1`) o comando ou a ferramenta que o motor não classifica vira `ask` em vez de `deny`, e `net`/`install` que a tabela manda negar também passam a `ask`; cada decisão vai para o `policy.jsonl` com o motivo `policy.reason.ask_mode`. Segredos, comandos administrativos, leitura fora da caixa, escrita na config e escrita no código do workspace continuam negados: o controle de arquivos e pastas não é afrouxado. O marcador é da pessoa; apagá-lo fecha o modo de novo.
+O controle de comandos está em aberto e precisa ser pensado junto com o controle de arquivos e pastas, não isolado dele. A resolução é a pessoa — o agente pede e a pessoa aprova — e não bloquear tudo completamente, que trava trabalho legítimo no repo. Enquanto o desenho não fecha, o modo decisão é interino e opt-in: com o marcador `~/.config/ai-tmux-workspace/state/policy.ask` (ou `WS_POLICY_ASK=1`) o comando ou a ferramenta que o motor não classifica vira `ask` em vez de `deny`, e `net`/`install` que a tabela manda negar também passam a `ask`; cada decisão vai para o `policy.jsonl` com o motivo `policy.reason.ask_mode`. Segredos, comandos administrativos, leitura fora da caixa, escrita na config e escrita no código do workspace continuam negados: o controle de arquivos e pastas não é afrouxado. O marcador é da pessoa; apagá-lo fecha o modo de novo.
 
 **Isto é uma medida interina, não o desenho final do controle de comandos.**
 

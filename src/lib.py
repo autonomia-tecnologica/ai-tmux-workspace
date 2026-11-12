@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from i18n import t
+import paths
 import permission_state
 import policy
 import session
@@ -23,7 +24,7 @@ import yaml_min
 BASE = Path(__file__).resolve().parent.parent   # repo root
 WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # the `workspace` script
 HOME = Path.home()
-STATE = Path(os.environ.get("WS_STATE", HOME / ".cache" / "workspace"))
+STATE = paths.state_dir()
 SESSIONS = STATE / "sessions"
 WAIT_S = 8                 # a tool open for longer than this = "waiting for things to happen"
 WAIT_CAP_S = 30 * 60       # no event for this long: the wait on a tool turns idle
@@ -51,14 +52,12 @@ class RepoDisabledError(ValueError):
 
 def config_path():
     """Single config.yaml; lives outside the repo (the repo holds only the structure). AT_WS_CONFIG overrides the path."""
-    return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "config.yaml"))
+    return paths.config_path()
 
 
 def legacy_path():
     """Old settings.json (JSON), read while config.yaml does not exist. With AT_WS_CONFIG, it is the same path with .json."""
-    if "AT_WS_CONFIG" in os.environ:
-        return config_path().with_suffix(".json")
-    return HOME / ".config" / "ai-tmux-workspace" / "settings.json"
+    return paths.legacy_config_path()
 
 
 CONFIG_ERROR = None   # (path, line or None) of the last failed read; None when it read fine
@@ -275,7 +274,7 @@ _KEY_LITERAL = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{10,}|sk-or-v1-[A-Za-z0-9]{
 def settings_dir():
     """Directory of the generated per-profile settings. Read at call time, like the other state under
     WS_STATE, so a caller that changes it (tests, a different state dir) gets its own files."""
-    return Path(os.environ.get("WS_STATE", HOME / ".cache" / "workspace")) / "settings"
+    return paths.settings_dir()
 
 
 def _has_settings_flag(command):
@@ -285,13 +284,7 @@ def _has_settings_flag(command):
 
 def security_dir():
     """Installed mechanism directory: AT_SECURITY_DIR, the harness sibling, or the default."""
-    override = os.environ.get("AT_SECURITY_DIR")
-    if override:
-        return Path(override).expanduser()
-    installed = os.environ.get("AT_HARNESS_DIR")
-    if installed:
-        return Path(installed).expanduser().parent / "security"
-    return HOME / ".local" / "share" / "ai-tmux-workspace" / "security"
+    return paths.security_dir()
 
 
 def _security_module(path=None):
@@ -336,8 +329,7 @@ def _set_hook_command(settings, command):
 def security_base_settings():
     """Hooks + deny of the deterministic gate. The installed harness is used when it has a forcado.yaml;
     until item 33 installs it, the committed security/settings.json is the explicit fallback."""
-    installed = Path(os.environ.get(
-        "AT_HARNESS_DIR", HOME / ".local" / "share" / "ai-tmux-workspace" / "harness")).expanduser()
+    installed = paths.harness_dir()
     command = _gate_hook_command(installed)
     if (installed / "forcado.yaml").is_file():
         try:

@@ -109,13 +109,22 @@ function opencodeEvent(input, output) {
   return event;
 }
 
+function stateDir(env) {
+  env = env || process.env;
+  if (env.WS_STATE) return env.WS_STATE;
+  // Same owner as src/paths.py: the control plane holds the state folder.
+  const configDir = env.AT_WS_CONFIG
+    ? path.dirname(path.resolve(env.AT_WS_CONFIG))
+    : path.join(env.HOME || os.homedir(), ".config", "ai-tmux-workspace");
+  return path.join(configDir, "state");
+}
+
 function recordSession(input, env) {
   env = env || process.env;
   const tab = env.WS_SESSION_TAB;
   const sid = input && input.sessionID;
   if (!tab || !sid) return;
-  const base = env.WS_STATE || path.join(os.homedir(), ".cache", "workspace");
-  const dir = path.join(base, "tabs");
+  const dir = path.join(stateDir(env), "tabs");
   const file = path.join(dir, "session-" + tab);
   const text = String(sid);
   try {
@@ -156,6 +165,7 @@ module.exports.decideMany = decideMany;
 module.exports.permission = permission;
 module.exports.before = before;
 module.exports.recordSession = recordSession;
+module.exports.stateDir = stateDir;
 module.exports.resolveCli = resolveCli;
 module.exports.translate = translate;
 module.exports.default = plugin;

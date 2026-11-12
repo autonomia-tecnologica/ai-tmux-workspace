@@ -5,7 +5,7 @@ Este documento explica o que o ai-tmux-workspace protege, o que ele não protege
 ## Papéis
 
 - **O Claude executa.** Lê arquivos, escreve, roda comandos e usa ferramentas com as permissões da sua conta de usuário.
-- **O ai-tmux-workspace organiza.** Abre um repo por janela do tmux, monta os painéis, as sessões e a config em `~/.config/ai-tmux-workspace`, e registra os hooks do Claude Code. Ele não é um sandbox.
+- **O ai-tmux-workspace organiza.** Abre um repo por janela do tmux, monta os painéis, as sessões e a config em `~/.config/ai-tmux-workspace` (com `state/` e `conference/`), e registra os hooks do Claude Code. Nenhum papel de agente escreve nesse plano de controle: a política nega a escrita antes da tabela de papéis. O código instalado e o `HARNESS.md` ficam em `~/.local/share/ai-tmux-workspace` (`app/`, `harness/`, `security/`). Ele não é um sandbox.
 - **O `ambiente-de-trabalho` define a regra.** É o repositório que guarda a descrição das regras (`HARNESS.md`) e os bloqueios forçados (`forcado.yaml`). O workspace copia essa regra para o harness instalado.
 
 ## Harness: forçado e recomendado

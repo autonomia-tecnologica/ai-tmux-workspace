@@ -15,13 +15,13 @@ divergência entra em `## Dívidas conhecidas`, com o motivo.
 
 | camada | pasta/arquivos | responsabilidade | proibido |
 |---|---|---|---|
-| Fundação | `src/tmux.py`, `src/i18n.py`, `src/colors.py`, `src/yaml_min.py`, `i18n/` | único dono do comando `tmux`, do texto por locale, das cores ANSI e do leitor YAML mínimo | importar qualquer camada acima; pintar tela; escrever estado |
+| Fundação | `src/paths.py`, `src/tmux.py`, `src/i18n.py`, `src/colors.py`, `src/yaml_min.py`, `i18n/` | dono único dos caminhos do workspace, do comando `tmux`, do texto por locale, das cores ANSI e do leitor YAML mínimo | importar qualquer camada acima; pintar tela; escrever conteúdo de estado (só `paths.py` cria a estrutura e migra o legado) |
 | Sessão e permissões | `src/session.py`, `src/session_state.py`, `src/permission_state.py`, `src/policy.py` | caixa e papel da sessão, abas persistidas, último modo de permissão, decisão da política | importar `lib`, `viewer`, `panel_*`, `agents` ou `hook`; chamar `tmux` fora de `tmux.py`; decidir permissão fora de `policy.py` |
 | Estado e serviços | `src/lib.py`, `src/worktrees.py`, `src/tree_state.py`, `src/backlog.py`, `src/drift.py`, `src/extra_usage.py`, `src/session_risk.py`, `src/notify.py`, `src/opener.py`, `src/clipboard.py`, `src/statusbar.py`, `src/agents/` | config e estado do workspace, obra de worktree, estado de árvore, leitura do backlog, doctor do harness, uso extra, risco, notificação, abrir arquivo, clipboard, texto da barra de status, adaptadores de agente que normalizam o estado para os painéis | importar `viewer`, `panel_*`, `help`, `options` ou `hook`; pintar tela |
 | Desenho e telas | `src/viewer.py`, `src/context_menu.py`, `src/panel_diff.py`, `src/panel_folders.py`, `src/panel_github.py`, `src/panel_repos.py`, `src/panel_sessions.py`, `src/panel_tabs.py`, `src/panel_tasks.py`, `src/panel_tree.py`, `src/help.py`, `src/options.py`, `src/session_placeholder.py`, `src/conference.py`, `src/conference_budget.py`, `src/conference_worker.py`, `src/mic.py`, `src/stt.py`, `src/glyphs.py`, `src/icons.py` | pintar linhas, telas e popups; painéis só devolvem `collect(viewer)`; menu de contexto declarado por tipo de item; símbolos e ícones desenhados; conferência e ditado | rodar o comando `tmux` (só `tmux.py`); escrever arquivo de estado; importar `hook`, `installer` ou `bin/workspace` |
 | Entrada e adaptadores | `bin/workspace`, `src/lifecycle.py`, `src/installer.py`, `src/config_cmd.py`, `src/hook.py`, `src/statusline.py`, `src/session_menu.py` | launcher e comandos, dono do ciclo de vida dos servidores `ws-*` (perfil ↔ servidor, quais estão vivos; `restart`, `stop` e `reload` agem por servidor), instalação/remoção, `workspace config update` (compara e acrescenta config, harness, settings e hooks), hook do Claude, statusLine, menu de sessão | decidir permissão (só encaminha para `policy.py`); pintar tela por conta própria; ser importado por camada abaixo |
 | Regra | `harness/` | texto de regra e declaração (`HARNESS.md`, `arch-format.md`, `choke-point.md`, `README.md`, `regras/`, `forcado.yaml`) | importar `src/` ou `tests/`; virar dependência de runtime do produto |
-| Motor e freio | `security/` | motor instalado (`gate.py`, `policy.yaml`, `opencode-policy.js`, `settings.json`, `policy.py`, `yaml_min.py`, `i18n/`) | importar `src/` ou `tests/`; decidir permissão fora de `policy.py`; depender de terceiros |
+| Motor e freio | `security/` | motor instalado (`gate.py`, `policy.yaml`, `opencode-policy.js`, `settings.json`, `policy.py`, `paths.py`, `yaml_min.py`, `i18n/`) | importar `src/` ou `tests/`; decidir permissão fora de `policy.py`; depender de terceiros |
 | Freios | `tests/` | provas executáveis: desenho, idioma, política, config, painéis e este arquivo | ser importado por `src/` ou `bin/` |
 
 ## Direção de dependência
@@ -64,6 +64,7 @@ Todo efeito tem um dono; o resto pede a ele. A pergunta é "quem pode produzir e
 | chamada ao `tmux` | `src/tmux.py` | `tmux.run(...)` e as funções nomeadas do módulo; nada de `subprocess` com `tmux` |
 | geometria de janela e layout | `layout_apply` em `bin/workspace` | `workspace fit`; item 108 |
 | escrita de arquivo | dono do formato: `src/lib.py` (config e estado do workspace), `src/session_state.py` (abas), `src/permission_state.py` (modo), `src/hook.py` (ficha de sessão), `src/installer.py` (manifesto e backup), `src/extra_usage.py` (cache de uso), `src/config_cmd.py` (registro `state/config-offered.json`); o `config.yaml` é gravado só por `lib.write_config_text` (com backup) | chame a função do dono; não abra o mesmo arquivo em outro lugar |
+| default de caminho (config, estado, conferência, cópia instalada) | `src/paths.py` | `paths.config_path()`, `paths.state_dir()`, `paths.conference_dir()`, `paths.install_dir()`; não reimplemente `Path.home() / ".config" / "ai-tmux-workspace"` |
 | formatação de caminho | `src/lib.py` (`expand_path`, caminho de config), `src/session.py` (normalização da caixa) e `src/agents/base.py` (`short_path`, caminho curto para texto) | chame o dono do caso; não reimplemente `expanduser`/`relpath` para outro fim |
 | persistência | o módulo dono do formato, na linha de escrita | idem |
 | i18n | `src/i18n.py` + `i18n/pt-BR.json` | `t("chave", ...)`; texto de usuário não nasce no código |
@@ -181,7 +182,8 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 
 | arquivo | dono do formato | escritores |
 |---|---|---|
-| `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/lib.py` (`config_path`) | a pessoa, editando; `lib` lê e grava (edição textual mínima, com backup) |
+| `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/paths.py` (`config_path`); `src/lib.py` lê e grava | a pessoa, editando; `lib` (edição textual mínima, com backup) |
+| `~/.config/ai-tmux-workspace/state/` (`WS_STATE`) | `src/paths.py` (`state_dir`, `settings_dir`) | os donos de cada arquivo abaixo |
 | `$WS_STATE/tabs/<sha1>.json` (abas por repo) | `src/session_state.py` | `session_state`; `bin/workspace` pede por `state_sync_window` |
 | `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `security/opencode-policy.js` e `session_state` (dívida) |
 | `$WS_STATE/permission.json` (último modo de permissão) | `src/permission_state.py` (`path`, `record_mode`) | `permission_state` |
@@ -193,9 +195,14 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 | `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin da política) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
 | `$WS_STATE/requests/` (pedidos de conferência) | `src/conference.py` | `conference` (dívida: camada de desenho) |
 | cache de uso extra | `src/extra_usage.py` | `extra_usage` |
+| `~/.config/ai-tmux-workspace/conference/` (conferência) | `src/paths.py` (`conference_dir`) | `src/conference.py` |
+| `~/.local/share/ai-tmux-workspace/{app,harness,security}` (código e `HARNESS.md` instalados) | `src/paths.py` (`install_dir`, `harness_dir`, `security_dir`) | o instalador; os demais só leem |
 
-Defaults: `WS_STATE` (`~/.cache/workspace`), o caminho da config e `WS_CONFERENCE` são lidos em vários
-módulos, cada um com o próprio default (dívida abaixo). O dono do default deveria ser um só.
+Defaults: `src/paths.py` é o dono de `WS_STATE`, do caminho da config, de `WS_CONFERENCE` e da cópia
+instalada; `WS_STATE` cai em `~/.config/ai-tmux-workspace/state`, a conferência em
+`.../conference` e o instalado em `~/.local/share/ai-tmux-workspace`. As variáveis de override
+vencem o default. A migração de `~/.cache/workspace` é feita por `paths.migrate_state()`, no launcher
+e no instalador, e não sobrescreve o destino. Prova: `grep -n "def state_dir\|def config_dir\|def install_dir" src/paths.py`.
 
 ## Idioma e contratos
 
@@ -219,7 +226,6 @@ módulos, cada um com o próprio default (dívida abaixo). O dono do default dev
 | `conference*` escreve estado na camada de desenho (pedidos, log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
 | `lib` carrega `security/gate.py` por caminho | a renderização do settings do freio mora no motor instalado, então `src/` depende de `security/` | `lib` chama o motor instalado (`AT_SECURITY_DIR`) por processo, ou a renderização vai para `src/`; `security/` guarda o motor e `harness/` fica só com o texto. Prova: `grep -n spec_from_file_location src/lib.py` e `grep -n GATE_PY src/lib.py` |
 | `tabs/session-<aba>` tem três escritores (`session_state`, `hook`, `opencode-policy.js`) | o id vivo da aba nasceu em três lugares, cada um com a própria escrita | um escritor de formato em `session_state`; o plugin OpenCode (JS) precisa de ponte documentada. Prova: `grep -n session- src/hook.py src/session_state.py security/opencode-policy.js` |
-| default de `WS_STATE` e da config repetido em vários módulos | cada módulo reimplementa `Path.home() / ".cache" / "workspace"`, porque a fundação não importa `lib` | um default só, em `src/session.py` (camada de sessão, abaixo de `lib`); os módulos importam dele. Prova: `grep -n WS_STATE src/*.py` (lib, permission_state, hook, session_state, statusline, conference) e `grep -n AT_WS_CONFIG src/lib.py` |
 | `agents/claude.py` e `agents/opencode.py` importam `conference` no nível do módulo (estado → desenho) | o adaptador lê as constantes da conferência; import de módulo quebra a direção permitida | import local dentro da função que usa a constante, com motivo (como `lib`), ou levar as constantes para a camada de estado. Prova: `grep -n "^import conference" src/agents/claude.py src/agents/opencode.py` (linhas 13 e 15) |
 | `conference_worker` importa `agents` no nível do módulo (desenho → estado) | o worker usa o adaptador para rodar o agente, e o texto anterior dizia que o ciclo era só local | import local dentro da função que chama o adaptador, com motivo no código. Prova: `grep -n "^import agents" src/conference_worker.py` (linha 39) |
 | `lib` ramifica por harness fora de `src/agents/` (`is_claude_harness`) | a geração de settings do Claude decide em `lib`, fora do adaptador (sessão e launch já pedem ao adaptador) | a geração de settings vai para o adaptador do Claude, e `lib` pede a ele. Prova: `grep -n is_claude_harness src/lib.py` |

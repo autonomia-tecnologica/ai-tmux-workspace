@@ -273,7 +273,7 @@ class LegacyAndMigrationTest(ConfigTestCase):
     def test_default_paths_under_home(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AT_WS_CONFIG", None)
-            with mock.patch.object(lib, "HOME", self.dir):
+            with mock.patch.dict(os.environ, {"HOME": str(self.dir)}):
                 folder = self.dir / ".config" / "ai-tmux-workspace"
                 folder.mkdir(parents=True)
                 (folder / "settings.json").write_text(json.dumps(self.LEGACY), encoding="utf-8")

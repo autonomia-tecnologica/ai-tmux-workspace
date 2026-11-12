@@ -15,9 +15,10 @@ import os
 import re
 import sys
 import time
-from pathlib import Path
 
-STATE = Path(os.environ.get("WS_STATE", Path.home() / ".cache" / "workspace"))
+import paths
+
+STATE = paths.state_dir()
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 

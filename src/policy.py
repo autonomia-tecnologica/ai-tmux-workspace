@@ -24,6 +24,11 @@ launcher exported it, else this file's code root. Every role may read it; only a
 `WS_SESSION_ROOT` is inside that root may write it (the dev session that edits the workspace). The
 `home` role is denied too, with no exception.
 
+The control plane (`paths.config_dir()`, the folder with `config.yaml`, `state/` and `conference/`)
+is the other protected path checked before the role table: every role may read it (`config.read`)
+and no agent role writes it (`control_plane.write`, reason `policy.reason.control_plane`). It wins
+over the declared session root. The rest of `~/.config` keeps the table (`config.write` for `home`).
+
 The declared session root wins over the configuration roots (`~/.config`, `~/.claude`, the installed
 workspace): a worktree may live under one of them and still be writable as its own repo. Secrets win
 over everything, including the session root.
@@ -53,8 +58,8 @@ Every decision is appended to `$WS_STATE/policy.jsonl` (mode 0600) with the role
 capability, target, decision and reason. The target is a path or a command summary, never the raw
 argument list, so a value passed on the command line is not written to the log.
 
-Stdlib only and no import from the workspace libraries except the YAML reader: this runs on every
-tool call.
+Stdlib only and no import from the workspace libraries except the YAML reader and the path owner
+(`paths.py`, stdlib only): this runs on every tool call.
 """
 import fnmatch
 import json
@@ -70,6 +75,11 @@ try:
     import yaml_min
 except Exception:       # installed without the reader: load_policy fails closed
     yaml_min = None
+
+try:
+    import paths
+except Exception:       # a hand-copied engine may be missing the path owner: fail closed below
+    paths = None
 
 
 CAPABILITIES = (
@@ -93,6 +103,11 @@ BOX_CAPABILITIES = {"repo.read", "repo.write", "repo.outside", "config.read", "c
 # nothing by itself, so the session's mode decides (`allow` with `policy.reason.defer`, which the
 # hooks answer by staying silent). Other findings of the same command still apply.
 DEFER = "defer"
+
+# Protected path checked before the role table (item 72): a write into the control plane is denied
+# for every role, while reads stay `config.read`. Like DEFER it is not part of CAPABILITIES, so no
+# role table can grant it.
+CONTROL_PLANE = "control_plane.write"
 
 MAX_TARGET = 300
 MAX_SESSION = 100
@@ -395,6 +410,20 @@ def _config_roots():
     return (home / ".config", home / ".claude", home / ".local" / "share" / "ai-tmux-workspace")
 
 
+def control_plane_root():
+    """The workspace control plane (`paths.config_dir`): config, state and conference.
+
+    Public because the protected-path rule is the policy's, not the adapters'. It reads the
+    environment on every call (`AT_WS_CONFIG` may point the tests at a temporary config folder).
+    """
+    if paths is not None:
+        return paths.config_dir()
+    override = os.environ.get("AT_WS_CONFIG")
+    if override:
+        return Path(override).expanduser().parent
+    return Path.home() / ".config" / "ai-tmux-workspace"
+
+
 def workspace_root():
     """The workspace's own code: `WS_DIR` when exported, else this file's code root.
 
@@ -496,6 +525,10 @@ def _resolve(value, root):
 def _path_capability(path, root, write):
     if _is_secret(path):
         return "secrets"
+    # The control plane is a hard barrier checked before the workspace code and before the declared
+    # session root. Reads stay `config.read`; only writes get the protected capability.
+    if _inside(path, control_plane_root()):
+        return CONTROL_PLANE if write else "config.read"
     workspace = workspace_root()
     if workspace and _inside(path, workspace):
         return "workspace.write" if write else "workspace.read"
@@ -1487,8 +1520,10 @@ def _ambiguous_findings(text, root, anchor):
         explicit = bool(glob) or "/" in word or word.startswith((".", "~")) or os.path.exists(path)
         if explicit and _is_secret(path):
             findings.append(Finding("secrets", path, path))
-        elif _path_capability(path, root, True) == "workspace.write":
-            findings.append(Finding("workspace.write", path, path))
+        else:
+            capability = _path_capability(path, root, True)
+            if capability in ("workspace.write", CONTROL_PLANE):
+                findings.append(Finding(capability, path, path))
     return findings
 
 
@@ -1569,8 +1604,15 @@ def _auto_enabled(event):
 
 
 def _state_root():
+    if paths is not None:
+        return paths.state_dir()
     base = os.environ.get("WS_STATE")
-    return Path(base).expanduser() if base else Path.home() / ".cache" / "workspace"
+    if base:
+        return Path(base).expanduser()
+    override = os.environ.get("AT_WS_CONFIG")
+    folder = (Path(override).expanduser().parent if override
+              else Path.home() / ".config" / "ai-tmux-workspace")
+    return folder / "state"
 
 
 def _log_path():
@@ -1691,6 +1733,10 @@ def check_event(event):
             # `ask` mode (opt-in marker) keeps asking the person about the unknown.
             decision, reason = (("ask", "policy.reason.ask_mode") if ask_mode
                                 else ("allow", "policy.reason.defer"))
+        elif finding.capability == CONTROL_PLANE:
+            # Protected-path list before the role capabilities (item 72): no role writes the
+            # control plane, and neither `auto` nor `ask` mode turns this into anything else.
+            decision, reason = "deny", "policy.reason.control_plane"
         elif finding.capability in ("workspace.read", "workspace.write"):
             decision, reason = _protected_decision(finding.capability, root, root_declared)
         else:

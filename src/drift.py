@@ -21,10 +21,9 @@ from pathlib import Path, PurePosixPath
 
 from i18n import t
 from session import harness_managed
+import paths
 
 ROOT = Path(__file__).resolve().parent.parent
-HOME = Path(os.environ.get("HOME") or Path.home())
-DEFAULT_HARNESS_DIR = HOME / ".local" / "share" / "ai-tmux-workspace" / "harness"
 SOURCE_FILE = "source.json"
 
 # Only code/config paths are checked: the HARNESS.md quotes prose, commands and anti-examples
@@ -36,8 +35,7 @@ CODE_DIRS = {"src", "bin", "harness", "security", "config", "i18n", "tests"}
 
 def harness_dir():
     """The installed harness directory: AT_HARNESS_DIR overrides it, as in lib.py."""
-    value = os.environ.get("AT_HARNESS_DIR")
-    return Path(value).expanduser() if value else DEFAULT_HARNESS_DIR
+    return paths.harness_dir()
 
 
 def code_root():

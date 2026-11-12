@@ -15,6 +15,11 @@
 # denied for repo/home/sibling and allowed only when the session box (WS_SESSION_ROOT) is inside the
 # workspace root. The values below are the declared defaults, not the decision.
 #
+# The control plane (the config folder with config.yaml, state/ and conference/) is the other
+# protected path resolved before this table: reading is `config.read` for every role and writing is
+# denied for every role (`control_plane.write`). It is a code barrier, so no entry below can grant it
+# and the declared session root does not reopen it.
+#
 # Decisions: allow runs without asking; ask waits for the person; deny never runs. `auto` (read
 # from WS_POLICY_AUTO or the event permission_mode) only turns `ask` into `allow` for path-scoped
 # capabilities whose target is inside the box, and never touches `deny`.

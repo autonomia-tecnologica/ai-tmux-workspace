@@ -69,9 +69,9 @@ class SessionTest(unittest.TestCase):
         self.other = self.root / "other"
         self.code = self.root / "workspace-code"
         for folder in (self.home / ".config", self.state, self.main, self.repo, self.other,
-                       self.code / "src"):
+                       self.code / "src", self.root / "config"):
             folder.mkdir(parents=True)
-        self.config = self.root / "config.json"
+        self.config = self.root / "config" / "config.json"
         self.config.write_text(json.dumps({
             "main": str(self.main),
             "agent": "claude",
@@ -210,7 +210,7 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(
                 session.prefix(str(self.repo), tab="tab-1"),
                 f"env WS_SESSION_ROLE=repo WS_SESSION_ROOT={self.repo} "
-                f"WS_SESSION_TAB=tab-1 WS_STATE={self.home / '.cache' / 'workspace'}")
+                f"WS_SESSION_TAB=tab-1 WS_STATE={self.config.parent / 'state'}")
 
     def test_prefix_reads_the_main_repo_from_the_config(self):
         self.assertEqual(session.prefix(str(self.main)),

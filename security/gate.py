@@ -20,9 +20,9 @@ fallback, and quotes the script path.
 
 The harness text directory comes from AT_HARNESS_DIR or --harness (render); the default is derived
 from Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_STATE (or
-~/.cache/workspace). The installed mechanism directory (`security/`) is resolved by the workspace
-when it builds the hook command, not here. Stdlib only, and no import from src/: this file is
-installed on its own.
+~/.config/ai-tmux-workspace/state, the same owner as the workspace state). The installed mechanism
+directory (`security/`) is resolved by the workspace when it builds the hook command, not here.
+Stdlib only, and no import from src/: this file is installed on its own.
 """
 import json
 import os
@@ -281,7 +281,12 @@ def state_dir():
     if os.environ.get("AT_HARNESS_STATE"):
         return Path(os.environ["AT_HARNESS_STATE"]).expanduser()
     base = os.environ.get("WS_STATE")
-    return (Path(base).expanduser() if base else Path.home() / ".cache" / "workspace") / "harness"
+    if base:
+        return Path(base).expanduser() / "harness"
+    override = os.environ.get("AT_WS_CONFIG")
+    folder = (Path(override).expanduser().parent if override
+              else Path.home() / ".config" / "ai-tmux-workspace")
+    return folder / "state" / "harness"
 
 
 def load_rules(directory):

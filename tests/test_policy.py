@@ -41,7 +41,7 @@ EXPECTED_CAPABILITIES = {
 ENV_KEYS = (
     "HOME", "WS_STATE", "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE",
     "WS_PARENT_ROLE", "WS_SESSION_ID", "WS_POLICY", "WS_POLICY_AUTO", "WS_AUTO", "WS_DIR",
-    "WS_I18N", "WS_POLICY_CLI", "TMPDIR", "WS_POLICY_ASK", "WS_POLICY_OPEN",
+    "WS_I18N", "WS_POLICY_CLI", "TMPDIR", "WS_POLICY_ASK", "WS_POLICY_OPEN", "AT_WS_CONFIG",
 )
 
 
@@ -281,6 +281,94 @@ class PolicyTest(unittest.TestCase):
             read = policy.check_event(self.read(ROOT / "src" / "policy.py"))
             self.assertEqual((read["decision"], read["capability"]),
                              ("allow", "workspace.read"))
+
+    # --- the control plane (item 72) -----------------------------------------------------------
+    def test_control_plane_is_denied_for_every_role_before_the_table(self):
+        control = self.home / ".config" / "ai-tmux-workspace"
+        targets = (control / "config.yaml", control / "state" / "policy.jsonl",
+                   control / "conference" / "log.json")
+        roles = (
+            {"WS_SESSION_ROLE": "repo", "WS_SESSION_ROOT": str(self.repo)},
+            {"WS_SESSION_ROLE": "home", "WS_SESSION_ROOT": str(self.home)},
+            {"WS_SESSION_ROLE": "self", "WS_SESSION_ROOT": str(self.repo)},
+            {"WS_SESSION_ROLE": "subagent", "WS_SESSION_PARENT_ROLE": "home",
+             "WS_SESSION_ROOT": str(self.home)},
+        )
+        for role_env in roles:
+            with self.subTest(role=role_env["WS_SESSION_ROLE"]):
+                with patched_env(**role_env):
+                    for target in targets:
+                        with self.subTest(target=target):
+                            result = policy.check_event(self.write(target))
+                            self.assertEqual(
+                                (result["decision"], result["capability"], result["reason"]),
+                                ("deny", "control_plane.write", "policy.reason.control_plane"))
+                            # Reading the control plane stays config.read for every role.
+                            read = policy.check_event(self.read(target))
+                            self.assertEqual((read["decision"], read["capability"]),
+                                             ("allow", "config.read"))
+
+    def test_installed_harness_and_code_stay_readable_by_a_repo_session(self):
+        # Item 72 exception: the installed code and HARNESS.md are outside the control plane and
+        # readable by any role, while a write to them keeps the role-table decision.
+        installed = self.home / ".local" / "share" / "ai-tmux-workspace"
+        harness = installed / "harness" / "HARNESS.md"
+        read = self.decide(self.read(harness))
+        self.assertEqual((read["decision"], read["capability"]), ("allow", "config.read"))
+        code = self.decide(self.read(ROOT / "src" / "policy.py"))
+        self.assertEqual((code["decision"], code["capability"]), ("allow", "workspace.read"))
+        write = self.decide(self.write(harness))
+        self.assertEqual((write["decision"], write["capability"]), ("deny", "config.write"))
+
+    def test_control_plane_blocks_the_shell_forms_that_write(self):
+        control = self.home / ".config" / "ai-tmux-workspace"
+        commands = (
+            f"echo x > {control}/config.yaml",
+            f"cp /tmp/a.txt {control}/config.yaml",
+            f"rm -rf {control}",
+            f"sed -i s/x/y/ {control}/config.yaml",
+            f"tee {control}/state/policy.jsonl",
+            f"mv /tmp/a.txt {control}/conference/log.json",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual(
+                    (result["decision"], result["capability"], result["reason"]),
+                    ("deny", "control_plane.write", "policy.reason.control_plane"))
+
+    def test_control_plane_wins_over_the_declared_root_auto_and_ask_mode(self):
+        control = self.home / ".config" / "ai-tmux-workspace"
+        target = control / "config.yaml"
+        # A declared root inside the control plane does not reopen it.
+        with patched_env(WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(control)):
+            self.assertEqual(self.decide(self.write(target))["capability"],
+                             "control_plane.write")
+        # Neither `auto` nor the opt-in ask mode turns the barrier into an allow/ask.
+        with patched_env(WS_POLICY_AUTO="1"):
+            self.assertEqual(self.decide(self.write(target))["decision"], "deny")
+        with patched_env(WS_POLICY_ASK="1"):
+            result = self.decide(self.write(target))
+            self.assertEqual((result["decision"], result["reason"]),
+                             ("deny", "policy.reason.control_plane"))
+        # The rest of ~/.config is not the control plane: home still has config.write there.
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.repo)):
+            result = self.decide(self.write(self.home / ".config" / "app.conf"))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("allow", "config.write"))
+
+    def test_control_plane_follows_at_ws_config(self):
+        folder = self.root / "custom-config"
+        folder.mkdir()
+        with patched_env(AT_WS_CONFIG=str(folder / "config.yaml"),
+                         WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.repo)):
+            result = self.decide(self.write(folder / "state" / "policy.jsonl"))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("deny", "control_plane.write"))
+            # The default folder is now just another path under ~/.config (the home table allows it).
+            result = self.decide(self.write(self.home / ".config" / "ai-tmux-workspace" / "config.yaml"))
+            self.assertEqual((result["decision"], result["capability"]),
+                             ("allow", "config.write"))
 
     # --- the dev role `self` (item 85) ---------------------------------------------------------
     def workspace_code(self):
@@ -1237,7 +1325,7 @@ class PolicyTest(unittest.TestCase):
             self.assertEqual(self.decide(self.bash("some-unknown-command"))["reason"],
                              "policy.reason.defer")
         # A marker outside the declared state directory is not the person's marker.
-        elsewhere = self.home / ".cache" / "workspace" / "policy.ask"
+        elsewhere = self.home / ".config" / "ai-tmux-workspace" / "state" / "policy.ask"
         elsewhere.parent.mkdir(parents=True)
         elsewhere.write_text("", encoding="utf-8")
         self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "allow")
@@ -1248,8 +1336,10 @@ class PolicyTest(unittest.TestCase):
         cases = (
             ("dotnet --version", "allow", "policy.reason.defer"),
             ("dotnet build && cat .env", "deny", "policy.reason.deny"),
-            ("dotnet build && rm -rf ~/.config/ai-tmux-workspace", "deny", "policy.reason.deny"),
-            ("dotnet build > ~/.config/ai-tmux-workspace/out", "deny", "policy.reason.deny"),
+            ("dotnet build && rm -rf ~/.config/ai-tmux-workspace", "deny",
+             "policy.reason.control_plane"),
+            ("dotnet build > ~/.config/ai-tmux-workspace/out", "deny",
+             "policy.reason.control_plane"),
             ("dotnet build && sudo ls", "deny", "policy.reason.deny"),
             ("git status && dotnet --version", "allow", "policy.reason.allow"),
         )
@@ -1422,16 +1512,16 @@ class PolicyTest(unittest.TestCase):
                     self.assertEqual((result["decision"], result["reason"]),
                                      ("ask", "policy.reason.ask_mode"))
 
-    def test_ask_mode_marker_defaults_to_the_cache_state_dir(self):
-        marker = self.home / ".cache" / "workspace" / "policy.ask"
+    def test_ask_mode_marker_defaults_to_the_config_state_dir(self):
+        marker = self.home / ".config" / "ai-tmux-workspace" / "state" / "policy.ask"
         marker.parent.mkdir(parents=True)
         marker.write_text("", encoding="utf-8")
         with patched_env(WS_STATE=None):
             self.assertEqual(policy._log_path(),
-                             Path(self.home) / ".cache" / "workspace" / "policy.jsonl")
+                             Path(self.home) / ".config" / "ai-tmux-workspace" / "state" / "policy.jsonl")
             self.assertEqual(policy.check_event(self.bash("some-unknown-command"))["decision"],
                              "ask")
-        # With WS_STATE declared the cache marker is not read: the test state is the only one.
+        # With WS_STATE declared the config marker is not read: the test state is the only one.
         self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "allow")
 
     def test_ask_mode_keeps_secrets_admin_outside_config_and_workspace_denied(self):
@@ -1620,6 +1710,8 @@ class PolicyTest(unittest.TestCase):
             (self.write(self.repo / "a.py"), self.owrite(self.repo / "a.py")),
             (self.write(self.outside), self.owrite(self.outside)),
             (self.write(self.home / ".config" / "x"), self.owrite(self.home / ".config" / "x")),
+            (self.write(self.home / ".config" / "ai-tmux-workspace" / "config.yaml"),
+             self.owrite(self.home / ".config" / "ai-tmux-workspace" / "config.yaml")),
             (self.write("/tmp/policy-battery.txt"), self.owrite("/tmp/policy-battery.txt")),
             (self.write(self.repo / ".env"), self.owrite(self.repo / ".env")),
             (self.read(ROOT / "src" / "policy.py"), self.oread(ROOT / "src" / "policy.py")),
@@ -1733,18 +1825,38 @@ process.stdout.write(JSON.stringify(result));
     # --- installation --------------------------------------------------------------------------
     def test_security_files_lists_the_policy_artifacts(self):
         names = installer.security_files(self.repo)
-        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "policy.py", "yaml_min.py",
-                     "i18n/pt-BR.json", "settings.json"):
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "policy.py", "paths.py",
+                     "yaml_min.py", "i18n/pt-BR.json", "settings.json"):
             self.assertIn(name, names)
         text = installer.harness_files(self.repo)
         for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json"):
             self.assertNotIn(name, text)
 
+    def test_copy_harness_replaces_the_old_tree_and_recreates_the_mechanism(self):
+        # Item 72: the installed harness of the old layout may still carry harness.py/policy.yaml/
+        # settings.json inside harness/. The copy replaces the whole tree and recreates security/.
+        target = self.root / "installed" / "harness"
+        target.mkdir(parents=True)
+        for name in ("harness.py", "policy.yaml", "settings.json"):
+            (target / name).write_text("old\n", encoding="utf-8")
+        source = self.root / "source-harness"
+        source.mkdir()
+        (source / "HARNESS.md").write_text("# Harness\n\nRead the rules.\n", encoding="utf-8")
+        (source / "forcado.yaml").write_text("versao: 1\nitens: []\n", encoding="utf-8")
+        installer.copy_harness(source, target)
+        for name in ("harness.py", "policy.yaml", "settings.json"):
+            self.assertFalse((target / name).exists(), f"old mechanism stayed in harness/: {name}")
+        self.assertTrue((target / "HARNESS.md").is_file())
+        security = target.parent / "security"
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "policy.py", "paths.py",
+                     "settings.json"):
+            self.assertTrue((security / name).is_file(), f"missing security file: {name}")
+
     def test_policy_installation_is_idempotent_and_self_contained(self):
         target = self.root / "installed"
         first = installer.install_policy_files(target)
         self.assertEqual(first, ["gate.py", "policy.yaml", "opencode-policy.js", "policy.py",
-                                 "yaml_min.py", "i18n/pt-BR.json"])
+                                 "paths.py", "yaml_min.py", "i18n/pt-BR.json"])
         snapshot = {name: (target / name).read_bytes() for name in first}
         second = installer.install_policy_files(target)
         self.assertEqual(first, second)
