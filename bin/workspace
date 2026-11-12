@@ -20,27 +20,59 @@
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions|folders>
 #   session-menu|session-new|session-run|session-exit  (profile sessions) · tab-new|tab-show|tab-step|tab-exit  (temporary terminal tabs) · plugins-sync <profile>
 set -u
-BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-ROOT="$(dirname "$BIN")"        # repo root
+# Absolute path of $1 with every symlink followed. The `-f` flag of readlink only exists on macOS
+# >= 12.3 and the stock bash there is 3.2, so each link is followed with plain `readlink` and the
+# existing parent is canonicalised with `cd -P`; a missing final component is appended as given.
+resolve_path() {
+  local path="$1" link n=0 parent base
+  [ -n "$path" ] || { printf '\n'; return 0; }
+  while [ -L "$path" ] && [ "$n" -lt 40 ]; do
+    link="$(readlink "$path")" || break
+    case "$link" in
+      /*) path="$link" ;;
+      *) case "$path" in */*) path="${path%/*}/$link" ;; *) path="$link" ;; esac ;;
+    esac
+    n=$((n + 1))
+  done
+  case "$path" in
+    */*) parent="${path%/*}"; base="${path##*/}" ;;
+    *) parent="."; base="$path" ;;
+  esac
+  [ -n "$parent" ] || parent=/
+  if parent="$(cd -P "$parent" 2>/dev/null && pwd -P)"; then
+    case "$parent" in /) printf '/%s\n' "$base" ;; *) printf '%s/%s\n' "$parent" "$base" ;; esac
+  else
+    printf '%s\n' "$path"
+  fi
+}
+# Quotes one shell word for a command tmux runs later (bash 3.2 lacks the 4.4 quoting expansion).
+quote() { printf '%q' "$1"; }
+# The Python interpreter of every command this script emits (panels, popups, hooks, settings). Chosen
+# once, so the same absolute path reaches the tmux server; WS_PYTHON overrides it.
+PYTHON="${WS_PYTHON:-$(command -v python3 || echo python3)}"
+export WS_PYTHON="$PYTHON"
+BIN="$(resolve_path "${BASH_SOURCE[0]}")"; BIN="${BIN%/*}"   # resolve_path leaves an absolute dir
+[ -n "$BIN" ] || BIN=/
+ROOT="${BIN%/*}"; [ -n "$ROOT" ] || ROOT=/   # repo root
 SRC="$ROOT/src"
 export WS_DIR="$ROOT"
 MOBILE_W=100   # windows narrower than this (columns) use the phone layout: one zoomed view + hamburger menu
 SESSION_MIN_SECONDS=10   # shorter than this, a session that ended was a failed launch (never reopen the default)
 
-msg() { python3 "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
-profile_cmd() { python3 "$SRC/lib.py" profile-cmd "$1" "${2:-}"; }
+msg() { "$PYTHON" "$SRC/i18n.py" "$@"; }   # i18n text: msg <key> [name=value ...]
+profile_cmd() { "$PYTHON" "$SRC/lib.py" profile-cmd "$1" "${2:-}"; }
 # Regenerates the harness wiring of a profile without starting the agent: the Claude settings and the
 # OpenCode plugin plus generated config. A config error does not fail the caller (reload/restart): the
 # specific message goes to stderr and the other profiles continue.
-settings_refresh() { python3 "$SRC/lib.py" prepare-profile "${1:-}" >/dev/null || true; }
+settings_refresh() { "$PYTHON" "$SRC/lib.py" prepare-profile "${1:-}" >/dev/null || true; }
 settings_refresh_all() {
   local p
-  while read -r p; do [ -n "$p" ] && settings_refresh "$p"; done < <(python3 "$SRC/lib.py" profile-names)
+  while read -r p; do [ -n "$p" ] && settings_refresh "$p"; done < <("$PYTHON" "$SRC/lib.py" profile-names)
 }
 env_global() { tmux show-environment -g "$1" 2>/dev/null | cut -d= -f2-; }
-doctor() { python3 "$SRC/drift.py" "$@"; }
+doctor() { "$PYTHON" "$SRC/drift.py" "$@"; }
 loop_cmd() { # $1 = repos | tasks | folders | tree | sessions | diff | github | tabs [claude|terminal]
-  printf 'while :; do python3 %q %s; sleep 1; done' "$SRC/panel_$1.py" "${2:-}"
+  printf 'while :; do %s %s %s; sleep 1; done' "$(quote "$PYTHON")" "$(quote "$SRC/panel_$1.py")" "${2:-}"
 }
 
 # Side column widths: a share of the window, clamped so they stay usable on small and ultrawide screens.
@@ -140,7 +172,7 @@ build_window() { # $1=path  $2=-d (do not select)
   [ -n "$T" ] && init_tabs "$W" "$T" t
   # The main pane starts as the SESSÕES placeholder, so no session is adopted by mistake; the
   # restore/default step below turns it into the first session.
-  tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
+  tmux respawn-pane -k -t "$P" -c "$path" "$(quote "$PYTHON") $(quote "$SRC/session_placeholder.py")"
   tmux select-pane -t "$P"
   # Restore the recorded session tabs (order, profile and session id) or open the default profile
   # only when the repo has no recorded tab.
@@ -283,14 +315,15 @@ tab_new() { # $1=window $2=role of the focused pane (sets the kind; default sess
   # Terminal: swap first, then start the shell at its final size (a resize while zsh starts
   # prints a stray "%"), with no typed command line either.
   tab_show "$W" "$P"
-  tmux respawn-pane -k -t "$P" -c "$path" "cd ${path@Q}; $cmd; '$BIN/workspace' tab-exit \"\$TMUX_PANE\""
+  tmux respawn-pane -k -t "$P" -c "$path" "cd $(quote "$path"); $cmd; $(quote "$BIN/workspace") tab-exit \"\$TMUX_PANE\""
 }
 
 tab_step() { # $1=window $2=+1|-1 $3=role of the focused pane (sets the kind)
-  local W="$1" active ids i=0 idx=0 n kind p
+  local W="$1" active ids i=0 idx=0 n kind p id
   kind="$(tab_kind "${3:-}")"; tab_vars "$kind"
   active="$(tmux show -wqv -t "$W" $K_ACT)"
-  mapfile -t ids < <(tab_list "$W" "$kind"); n=${#ids[@]}
+  # read the live ids one per line, keeping the order (the stock bash 3.2 has no array reader)
+  ids=(); while IFS= read -r id; do ids+=("$id"); done < <(tab_list "$W" "$kind"); n=${#ids[@]}
   [ "$n" -gt 1 ] || return 0
   for p in "${ids[@]}"; do [ "$p" = "$active" ] && idx=$i; i=$((i + 1)); done
   tab_show "$W" "${ids[$(( (idx + $2 + n) % n ))]}"
@@ -309,9 +342,9 @@ tab_exit() { # $1=pane that ended: returns focus to the main one and removes the
 
 open_repo() {
   local path S existing
-  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
+  path="$(resolve_path "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   [ -d "$path" ] || { msg cli.not_exists path="$path" >&2; exit 1; }
-  python3 "$SRC/lib.py" repo-enabled "$path" || exit 1   # switched off: no window, no agent (message on stderr)
+  "$PYTHON" "$SRC/lib.py" repo-enabled "$path" || exit 1   # switched off: no window, no agent (message on stderr)
   existing="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   if [ -n "$existing" ]; then
     tmux select-window -t "$existing"
@@ -335,10 +368,10 @@ worktree_cmd() { # $1=new|list|remove|merge ...
   local sub="${1:-}" path
   shift || true
   if [ "$sub" = new ]; then
-    path="$(python3 "$SRC/worktrees.py" new "$@")" || exit $?
+    path="$("$PYTHON" "$SRC/worktrees.py" new "$@")" || exit $?
     [ -n "$path" ] && open_repo "$path"
   else
-    python3 "$SRC/worktrees.py" "$sub" "$@"
+    "$PYTHON" "$SRC/worktrees.py" "$sub" "$@"
   fi
 }
 
@@ -368,14 +401,14 @@ left() { # $1=repos|sessions|folders $2=window
 # $3=0 sends without leaving the current window (used by the tasks panel).
 send_prompt() { # $1=repo path $2=message $3=focus (default 1)
   local path W pane S prev="" P i
-  python3 "$SRC/lib.py" repo-enabled "$1" || return 1   # switched off: the message is refused, not queued
+  "$PYTHON" "$SRC/lib.py" repo-enabled "$1" || return 1   # switched off: the message is refused, not queued
   [ "${3:-1}" = 0 ] && prev="$(tmux display -p '#{window_id}' 2>/dev/null)"
   open_repo "$1"
-  path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
+  path="$(resolve_path "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   W="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   [ -n "$W" ] || return 1
   if [ -z "$(tab_list "$W" s)" ]; then
-    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)" || return 1
+    session_new "$W" "$("$PYTHON" "$SRC/lib.py" default-profile)" || return 1
     P="$(pane_with_role "$W" claude)"; i=0
     while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
       sleep 0.1; i=$((i + 1))
@@ -395,7 +428,7 @@ send_prompt() { # $1=repo path $2=message $3=focus (default 1)
 type_prompt() { # $1=window id $2=text
   local W="$1" pane P i
   if [ -z "$(tab_list "$W" s)" ]; then
-    session_new "$W" "$(python3 "$SRC/lib.py" default-profile)" || return 1
+    session_new "$W" "$("$PYTHON" "$SRC/lib.py" default-profile)" || return 1
     P="$(pane_with_role "$W" claude)"; i=0
     while [ -n "$(tmux show -pqv -t "$P" @ws_placeholder 2>/dev/null)" ] && [ "$i" -lt 50 ]; do
       sleep 0.1; i=$((i + 1))
@@ -419,7 +452,7 @@ type_prompt() { # $1=window id $2=text
 # stable id and profile, plus `session-<tab>` where the hook/plugin write the real session id. The id
 # is also the `WS_SESSION_TAB` of the session and travels in the pane option @ws_tab_id, so the state
 # can be rebuilt from a live server before a `restart` kills it.
-state_cmd() { python3 "$SRC/session_state.py" "$@"; }
+state_cmd() { "$PYTHON" "$SRC/session_state.py" "$@"; }
 
 tab_state_id() { # $1=pane: stable tab id, created the first time the pane is recorded
   local P="$1" id
@@ -504,16 +537,16 @@ session_restore() { # $1=window $2=repo path
 }
 
 open_sessions() { # $1=window $2=repo path: restore the recorded tabs, else open the default profile
-  session_restore "$1" "$2" || session_new "$1" "$(python3 "$SRC/lib.py" default-profile)"
+  session_restore "$1" "$2" || session_new "$1" "$("$PYTHON" "$SRC/lib.py" default-profile)"
 }
 
 session_menu() { # $1=window: blocking profile menu for a new session
-  python3 "$SRC/session_menu.py" "$1"
+  "$PYTHON" "$SRC/session_menu.py" "$1"
 }
 
 risk_check() { # $1=window $2=profile $3=path
   local W="$1" profile="$2" path="$3" client status answer
-  python3 "$SRC/session_risk.py" --check "$profile" >/dev/null 2>&1 || return 0
+  "$PYTHON" "$SRC/session_risk.py" --check "$profile" >/dev/null 2>&1 || return 0
   client="$(tmux display -p '#{client_name}' 2>/dev/null)"
   if [ -z "$client" ]; then
     msg session.risk.no_client >&2
@@ -521,7 +554,7 @@ risk_check() { # $1=window $2=profile $3=path
   fi
   status="$(mktemp "${TMPDIR:-/tmp}/ws-risk.XXXXXX")" || return 1
   tmux display-popup -E -c "$client" -w 70% -h 40% -d "$path" \
-    "python3 '$SRC/session_risk.py' --confirm '$profile' --status '$status'"
+    "$(quote "$PYTHON") $(quote "$SRC/session_risk.py") --confirm $(quote "$profile") --status $(quote "$status")"
   answer="$(cat "$status" 2>/dev/null)"
   rm -f "$status"
   [ "$answer" = "yes" ]
@@ -531,10 +564,10 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
   local W="$1" profile="${2:-}" path S n P tab="${3:-}" restore="${4:-}"
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   [ -n "$path" ] || return 1
-  python3 "$SRC/lib.py" repo-enabled "$path" || return 1   # switched off: no agent process
+  "$PYTHON" "$SRC/lib.py" repo-enabled "$path" || return 1   # switched off: no agent process
   S="$(env_global WS_PROFILE)"
-  if [ -z "$profile" ]; then profile="$(python3 "$SRC/lib.py" default-profile)"; fi
-  if ! python3 "$SRC/lib.py" profile-list | grep -qxF "$profile"; then
+  if [ -z "$profile" ]; then profile="$("$PYTHON" "$SRC/lib.py" default-profile)"; fi
+  if ! "$PYTHON" "$SRC/lib.py" profile-list | grep -qxF "$profile"; then
     msg session.unknown profile="$profile" >&2
     return 1
   fi
@@ -552,7 +585,7 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
     tmux set -w -t "$W" @ws_active "$P"
     tmux set -w -t "$W" @ws_session_profile "$profile"
     state_add_tab "$W" "$P"
-    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q} ${tab@Q}"
+    tmux respawn-pane -k -t "$P" -c "$path" "$(quote "$BIN/workspace") session-run $(quote "$W") $(quote "$profile") $(quote "$path") $(quote "$tab")"
     tmux select-pane -t "$P"
   else
     # another session: a hidden window, swapped into the slot
@@ -566,7 +599,7 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
     tmux set -w -t "$W" @ws_next $((n + 1))
     state_add_tab "$W" "$P"
     tab_show "$W" "$P"
-    tmux respawn-pane -k -t "$P" -c "$path" "'$BIN/workspace' session-run '$W' ${profile@Q} ${path@Q} ${tab@Q}"
+    tmux respawn-pane -k -t "$P" -c "$path" "$(quote "$BIN/workspace") session-run $(quote "$W") $(quote "$profile") $(quote "$path") $(quote "$tab")"
   fi
   tab_render "$W" s
   return 0
@@ -574,7 +607,7 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
 
 session_run() { # $1=window $2=profile $3=path $4=tab id: the agent process of one session pane
   local profile="$2" path="$3" tab="${4:-}" line started="$SECONDS"
-  line="$(python3 "$SRC/lib.py" session-command "$profile" "$path" "$tab")"
+  line="$("$PYTHON" "$SRC/lib.py" session-command "$profile" "$path" "$tab")"
   if [ -z "$line" ]; then
     msg session.unknown profile="$profile" >&2
     sleep 10
@@ -617,11 +650,11 @@ session_exit() { # $1=pane of a session that ended $2=how many seconds it stayed
       # default profile: that would loop every few seconds. Say why and leave the placeholder.
       if [ -n "$alive" ] && [ "$alive" -lt "$SESSION_MIN_SECONDS" ] 2>/dev/null; then
         tmux display-message "$(msg session.failed_fast profile="$profile")" 2>/dev/null || true
-      elif [ -n "$path" ] && session_new "$W" "$(python3 "$SRC/lib.py" default-profile)"; then
+      elif [ -n "$path" ] && session_new "$W" "$("$PYTHON" "$SRC/lib.py" default-profile)"; then
         return 0
       fi
       # last: replace this pane with the placeholder (kills this shell, so nothing may run after)
-      tmux respawn-pane -k -t "$P" -c "$path" "python3 '$SRC/session_placeholder.py'"
+      tmux respawn-pane -k -t "$P" -c "$path" "$(quote "$PYTHON") $(quote "$SRC/session_placeholder.py")"
       return 0
     fi
   else
@@ -652,7 +685,7 @@ session_exit() { # $1=pane of a session that ended $2=how many seconds it stayed
 # Runs on reload, so removing a repo from settings cleans up the rest.
 prune() { # $1=session
   local names id name base
-  names="$(python3 "$SRC/lib.py" window-names "$1")"
+  names="$("$PYTHON" "$SRC/lib.py" window-names "$1")"
   [ -n "$names" ] || return 0   # unreadable/empty settings: never prune
   while IFS='|' read -r id name; do
     [ "$name" = boot ] && continue
@@ -697,7 +730,7 @@ restart_one() { # $1=profile
 lifecycle_each() { # $1=function $2=optional argument
   local fn="$1" arg="${2:-}" p
   local -a targets=()
-  while IFS= read -r p; do [ -n "$p" ] && targets+=("$p"); done < <(python3 "$SRC/lifecycle.py" profiles "$arg")
+  while IFS= read -r p; do [ -n "$p" ] && targets+=("$p"); done < <("$PYTHON" "$SRC/lifecycle.py" profiles "$arg")
   if [ "${#targets[@]}" -eq 0 ]; then
     [ -n "$arg" ] && { msg cli.unknown_profile profile="$arg" >&2; return 2; }
     targets=(claude)
@@ -899,7 +932,7 @@ plugin_sync() { # $1=profile: opens or completes the window of each listed plugi
     else
       block+="$line"$'\n'
     fi
-  done < <(python3 "$SRC/lib.py" plugins "$S")
+  done < <("$PYTHON" "$SRC/lib.py" plugins "$S")
   [ -n "$id" ] && plugin_open "$S" "$id" "$dir" "$label" "$block"
   return 0
 }
@@ -980,8 +1013,9 @@ start_workspace() {
       -x "${WS_COLS:-$(tput cols 2>/dev/null || echo 200)}" -y "${WS_LINES:-$(tput lines 2>/dev/null || echo 50)}"
     env -u TMUX tmux -L "$sock" set-environment -g WS_PROFILE "$profile"
     env -u TMUX tmux -L "$sock" set-environment -g WS_DIR "$ROOT"
+    env -u TMUX tmux -L "$sock" set-environment -g WS_PYTHON "$PYTHON"
     if [ "$(env -u TMUX tmux -L "$sock" list-windows -t "$profile:" -F '#{window_name}' | grep -vc '^boot$')" -eq 0 ]; then
-      first_repo="$(python3 "$SRC/lib.py" initial-repo)"
+      first_repo="$("$PYTHON" "$SRC/lib.py" initial-repo)"
       env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace open '$first_repo'"
     fi
     env -u TMUX tmux -L "$sock" run-shell "$BIN/workspace plugins-sync '$profile'"
@@ -1000,8 +1034,8 @@ install() {
 # fast-forward. A dev checkout (this file running from anywhere else) is refused: its owner pulls it.
 update_workspace() {
   local app here
-  app="$(readlink -f "${AT_WS_INSTALL_DIR:-$HOME/.local/share/ai-tmux-workspace/app}" 2>/dev/null)"
-  here="$(readlink -f "$ROOT")"
+  app="$(resolve_path "${AT_WS_INSTALL_DIR:-$HOME/.local/share/ai-tmux-workspace/app}")"
+  here="$(resolve_path "$ROOT")"
   if [ -z "$app" ] || [ "$here" != "$app" ]; then
     msg cli.update.dev root="$ROOT" >&2
     return 1
@@ -1023,11 +1057,11 @@ update_workspace() {
 }
 
 install_hooks() {
-  python3 - "$SRC/hook.py" "$SRC/statusline.py" "$SRC" <<'PY'
-import json, os, shutil, sys
+  "$PYTHON" - "$SRC/hook.py" "$SRC/statusline.py" "$SRC" "$PYTHON" <<'PY'
+import json, os, shlex, shutil, sys
 from pathlib import Path
 
-hook, statusline, src = sys.argv[1], sys.argv[2], sys.argv[3]
+hook, statusline, src, python = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 sys.path.insert(0, src)
 from i18n import t
 
@@ -1051,12 +1085,14 @@ for ev in EVENTS:
     groups = hooks.setdefault(ev, [])
     if any(hook in h.get("command", "") for g in groups for h in g.get("hooks", [])):
         continue
-    groups.append({"hooks": [{"type": "command", "command": f"python3 {hook}", "timeout": 5}]})
+    command = f"{shlex.quote(python)} {shlex.quote(hook)}"
+    groups.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
     changed.append(ev)
 
 sl = cfg.get("statusLine")
 if sl is None:
-    cfg["statusLine"] = {"type": "command", "command": f"python3 {statusline}"}
+    cfg["statusLine"] = {"type": "command",
+                         "command": f"{shlex.quote(python)} {shlex.quote(statusline)}"}
     changed.append("statusLine")
     warning = None
 elif isinstance(sl, dict) and statusline in str(sl.get("command", "")):
@@ -1104,9 +1140,9 @@ case "${1:-}" in
   worktree) shift; worktree_cmd "$@" ;;
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" "${4:-1}" ;;
-  request) shift; python3 "$SRC/conference.py" request "$@" ;;
+  request) shift; "$PYTHON" "$SRC/conference.py" request "$@" ;;
   type) type_prompt "$2" "$3" ;;
-  options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "python3 $SRC/options.py $3" ;;
+  options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "$(quote "$PYTHON") $(quote "$SRC/options.py")${3:+ $(quote "$3")}" ;;
   session-menu) session_menu "$2" ;;
   session-new) session_new "$2" "${3:-}" ;;
   session-run) session_run "$2" "$3" "$4" "${5:-}" ;;
@@ -1120,16 +1156,16 @@ case "${1:-}" in
   update) update_workspace ;;
   -h|--help) msg cli.help ;;
   install-hooks) install_hooks ;;
-  privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
+  privileged) shift; "$PYTHON" "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
-  config) shift; python3 "$SRC/config_cmd.py" "$@" ;;
+  config) shift; "$PYTHON" "$SRC/config_cmd.py" "$@" ;;
   stop) shift; lifecycle_each server_down "${1:-}" ;;
   restart) shift; lifecycle_each restart_one "${1:-}" ;;
   reload) shift; lifecycle_each reload "${1:-}" ;;
-  repo) shift; python3 "$SRC/lib.py" repo "$@" ;;
+  repo) shift; "$PYTHON" "$SRC/lib.py" repo "$@" ;;
   fit) shift; fit "$@" ;;
   mview) shift; mview "$@" ;;
-  view) shift; python3 "$SRC/opener.py" "$@" ;;
+  view) shift; "$PYTHON" "$SRC/opener.py" "$@" ;;
   menu) menu "$2" "$3" ;;
   ""|-*) start_workspace claude ;;
   *) msg cli.unknown_command command="$1" >&2; exit 2 ;;
