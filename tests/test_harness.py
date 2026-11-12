@@ -254,9 +254,9 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(hooks["PreToolUse"][0]["hooks"][0]["command"], PRODUCTION_COMMAND)
 
         deny = settings["permissions"]["deny"]
-        for entry in ("Bash(sudo:*)", "Write(./**/.env)", "Edit(./**/.env)",
-                      "Write(./**/*.pem)", "Edit(./**/*.pem)"):
+        for entry in ("Bash(sudo:*)", "Edit(./**/.env)", "Edit(./**/*.pem)"):
             self.assertIn(entry, deny)
+        self.assertFalse(any(entry.startswith("Write(") for entry in deny))
         self.assertFalse(any(".example" in entry for entry in deny))
 
     def test_render_is_deterministic(self):
@@ -278,7 +278,7 @@ class HarnessTest(unittest.TestCase):
         self.assertTrue(REPO_SETTINGS.is_file())
         settings = json.loads(REPO_SETTINGS.read_text(encoding="utf-8"))
         self.assertIn("Bash(sudo:*)", settings["permissions"]["deny"])
-        self.assertIn("Write(./**/.env)", settings["permissions"]["deny"])
+        self.assertIn("Edit(./**/.env)", settings["permissions"]["deny"])
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"], PRODUCTION_COMMAND)
 
 

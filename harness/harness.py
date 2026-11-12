@@ -513,7 +513,9 @@ def deny_entries(document):
             if not isinstance(pattern, str) or not pattern.strip():
                 continue
             for tool in tools:
-                entry = _tool_glob(tool, pattern)
+                # Claude Code's Edit deny already covers Write; a Write(...) deny entry is never
+                # matched and only shows a warning, so it is emitted as Edit(...).
+                entry = _tool_glob("Edit" if tool == "Write" else tool, pattern)
                 if entry not in seen:
                     seen.add(entry)
                     entries.append(entry)

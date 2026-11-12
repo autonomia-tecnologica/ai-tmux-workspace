@@ -134,7 +134,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         deny = self.generated()["permissions"]["deny"]
         self.assertIn("Bash(sudo:*)", deny)
-        self.assertIn("Write(./**/.env)", deny)
+        self.assertIn("Edit(./**/.env)", deny)
 
     # 2 ---------------------------------------------------------------------------------------
     def test_literal_env_key_is_refused_and_nothing_is_written(self):
