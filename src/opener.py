@@ -1,16 +1,23 @@
-"""Decides how a file from the tree is opened: nvim (default) or the OS default program.
+"""The one door for opening a file outside the editor (item 44).
 
-Extensions of types that normally have a default viewer/player go to the OS opener
-(macOS `open`, Linux `xdg-open`, WSL `wslview`/`explorer.exe`, Windows `start`).
-Everything else, including unknown extensions, stays in the editor.
+Every caller (the tree panel, `workspace view`) asks `open_file(path)` and nothing else opens files.
+Order: the viewer configured for the kind of file (`viewer:` in config.yaml: html, image, video,
+audio; a program with a window of its own, not the full application), then the OS default program
+for document/archive types (macOS `open`, Linux `xdg-open`, WSL `wslview`/`explorer.exe`, Windows
+`start`). Text and code, and anything else, return False and the caller offers the editor.
+The programs come from config: nothing here names chromium, mpv or imv.
 """
 import glob
 import os
+import pathlib
+import re
+import shlex
 import shutil
 import subprocess
 import sys
 
 import lib
+from i18n import t
 
 SYSTEM_EXTENSIONS = {
     # documents
@@ -27,6 +34,16 @@ SYSTEM_EXTENSIONS = {
     "zip", "7z", "rar", "tar", "gz", "xz", "bz2", "dmg", "iso",
 }
 
+
+# Kinds a configured viewer opens (`viewer:` in config.yaml). SVG stays in the editor (it is text).
+VIEWER_KINDS = {
+    "html": {"html", "htm", "xhtml"},
+    "image": {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "heic", "heif", "avif"},
+    "video": {"mp4", "mkv", "mov", "avi", "webm", "wmv", "flv", "m4v", "mpg", "mpeg"},
+    "audio": {"mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma"},
+}
+# Placeholders in a `viewer` command: absolute path, file:// URL (for browsers) and base name.
+_PLACEHOLDER = re.compile(r"\{(file|url|name)\}")
 
 # Extensions opened in Blender (the OS has no sensible default for them).
 BLENDER_EXTENSIONS = {"ifc", "ifczip"}
@@ -188,6 +205,61 @@ def build_command(path, platform=None, wsl=None, which=shutil.which):
     return None
 
 
+def kind_of(path):
+    """Viewer kind (html, image, video, audio) of `path`, or None when no viewer covers it."""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    for kind, exts in VIEWER_KINDS.items():
+        if ext in exts:
+            return kind
+    return None
+
+
+def _viewer_template(kind):
+    """argv template from `viewer.<kind>` (a command string or a list of strings), or None."""
+    config = lib.read_config().get("viewer")
+    if not isinstance(config, dict):
+        return None
+    raw = config.get(kind)
+    try:
+        if isinstance(raw, str) and raw.strip():
+            return shlex.split(raw)
+    except ValueError:      # unbalanced quotes: the config is wrong, so this kind has no viewer
+        return None
+    if isinstance(raw, list) and raw and all(isinstance(x, str) and x.strip() for x in raw):
+        return list(raw)
+    return None
+
+
+def viewer_command(path):
+    """argv that opens `path` in the configured viewer for its kind, or None when there is none.
+
+    The command is split before the placeholders are filled, so a path with spaces stays one
+    argument and no shell runs. The program must exist in PATH. A command without a placeholder
+    gets the file as its last argument.
+    """
+    kind = kind_of(path)
+    template = _viewer_template(kind) if kind else None
+    if not template or not shutil.which(template[0]):
+        return None
+    absolute = os.path.abspath(path)
+    values = {"file": absolute, "url": pathlib.Path(absolute).as_uri(),
+              "name": os.path.basename(absolute)}
+    argv = [_PLACEHOLDER.sub(lambda m: values[m.group(1)], token) for token in template]
+    if not any(_PLACEHOLDER.search(token) for token in template):
+        argv.append(absolute)
+    return argv
+
+
+def _spawn(cmd):
+    """Runs `cmd` detached from the workspace. Returns False when it cannot start."""
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    return True
+
+
 def open_system(path):
     """Spawns the OS opener detached. Returns False when there is no opener available."""
     cmd = None
@@ -198,9 +270,35 @@ def open_system(path):
     cmd = cmd or build_command(path)
     if not cmd:
         return False
-    try:
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-    except OSError:
-        return False
-    return True
+    return _spawn(cmd)
+
+
+def open_file(path):
+    """Opens `path` outside the editor: the configured viewer, then the OS default program.
+
+    Returns False when neither can open it; the caller then offers the editor menu.
+    """
+    cmd = viewer_command(path)
+    if cmd and _spawn(cmd):
+        return True
+    return use_system(path) and open_system(path)
+
+
+def main(argv=None):
+    """`workspace view <file>`: opens the file the same way the tree does. Exit 0 when opened."""
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) != 1:
+        print(t("view.usage"), file=sys.stderr)
+        return 2
+    path = args[0]
+    if not os.path.isfile(path):
+        print(t("view.not_found", path=path), file=sys.stderr)
+        return 1
+    if open_file(path):
+        return 0
+    print(t("view.none", name=os.path.basename(path)), file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

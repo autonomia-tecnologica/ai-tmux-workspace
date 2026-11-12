@@ -45,6 +45,18 @@ editor:
       command: micro
       fullscreen: false
 
+# Visualizadores (item 44): HTML, imagem, vídeo e áudio abrem com o programa daqui, numa janela
+# própria e sem o programa completo. O comando é uma linha (dividida como shell, sem shell); os
+# marcadores {file} (caminho), {url} (file://, para o navegador) e {name} (nome) são trocados pelo
+# arquivo. Sem marcador, o arquivo vai no fim. Tipo sem linha aqui, ou programa que não está no
+# PATH: cai no programa padrão do sistema (xdg-open, open…) e, se ele também não abrir, no editor.
+# Exemplos (escolha o que você tem instalado; o workspace não traz nenhum):
+viewer:
+  html: chromium --app={url} --window-size=1000,760      # modo app: sem abas, barra nem menus
+  image: imv {file}                                       # ou feh, ou swayimg
+  video: mpv --force-window=yes --geometry=640x360 --title={name} {file}   # janela pequena; controles do mpv
+  audio: mpv --no-video {file}                            # sem janela: controles pelo teclado do terminal
+
 # Perfis. Esta lista é a lista de perfis aprovados mostrada no menu `+` da tira de sessões. O valor
 # pode ser a linha de comando (formato antigo, ex. `claude`) ou um mapa com
 # `command` e `settings`. Com `manage: true`, o workspace gera a settings de cada perfil do harness
