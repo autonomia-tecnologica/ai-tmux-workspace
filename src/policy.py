@@ -30,13 +30,17 @@ over everything, including the session root.
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
-A shell program that no table knows (`dotnet`, `cargo --version`, ...) is not a deny (item 135):
-the engine answers `allow` with `policy.reason.defer`, which the hooks turn into no answer, so the
-session's own mode decides. The same holds for a known toolchain's form it does not know (`cargo run`,
-`go run`, `make -C dir`, `npm run`): it defers, and its path arguments still meet the barriers.
-The rest of the same command is still classified. Arbitrary code forms (`python -c`, `sh -c`,
-`eval`) stay denied. Denied for every role, with no list to maintain: `admin` (`sudo`, `pkexec`,
-`su`, `doas`), secrets, the box and the workspace code.
+The engine does not decide what it cannot place, and it does not ask either. A shell program that no
+table knows (`dotnet`, `cargo --version`, ...), a known toolchain's form it does not know (`cargo run`,
+`npm run`, `make -C dir`), and an ambiguous form (`grep -r`, `find -exec`, `sed`/`awk` scripts,
+`python -c`, `sh -c`, `eval`, `$(...)`, backticks, globs, expansions, unclosed quotes, `cd` without a
+plain directory, unknown tool names) is answered `allow` with `policy.reason.defer`. The hooks turn
+that into no answer, so the session's own mode decides. Such a segment still meets the barriers that
+hold whatever its form is (`_ambiguous_findings`): an admin program named anywhere in it, and a secret
+or a workspace-code write among its words. Known segments keep their table decision. A `cd` into a
+directory, inside or outside the box, reanchors the following segments of the same command; `git -C`
+works the same way. Denied for every role, with no list to maintain: `admin` (`sudo`, `pkexec`, `su`,
+`doas`, ...), secrets, and the workspace code (write).
 
 `ask` mode (item 119) is opt-in by the person: `WS_POLICY_ASK`/`WS_POLICY_OPEN` or the marker
 `policy.ask`/`policy.open` in `$WS_STATE`. In it an action the engine cannot classify becomes `ask`
@@ -51,6 +55,7 @@ argument list, so a value passed on the command line is not written to the log.
 Stdlib only and no import from the workspace libraries except the YAML reader: this runs on every
 tool call.
 """
+import fnmatch
 import json
 import os
 import re
@@ -91,7 +96,8 @@ MAX_TARGET = 300
 MAX_SESSION = 100
 
 # Tool names are compared case-insensitively; OpenCode uses lower-case names and Claude Code uses
-# CamelCase. The lists below are the whole classification surface: anything else fails closed.
+# CamelCase. The lists below are the whole classification surface: a tool name outside them defers
+# to the session's own permission flow, and a malformed event (no tool name) is still denied.
 READ_TOOLS = {"read", "glob", "grep", "ls", "list", "notebookread"}
 WRITE_TOOLS = {"write", "edit", "multiedit", "patch", "notebookedit"}
 BASH_TOOLS = {"bash", "shell", "execute"}
@@ -134,8 +140,9 @@ SECRET_HOME_FILES = (
     ".cargo/credentials.toml", ".config/pip/pip.conf", ".config/git/credentials",
 )
 
-# A path with shell expansion or a glob is not a concrete path: reject it (fail closed). `~` and
-# `~user` stay valid; they are expanded before this check.
+# A path with shell expansion or a glob is not a concrete path: the form is ambiguous and defers, and
+# `_ambiguous_findings` still checks the secret and workspace parts it names. `~` and `~user` stay
+# valid; they are expanded before this check.
 _EXPANSION = re.compile(r"[$`*?\[\]{}]")
 
 ADMIN_PROGRAMS = {
@@ -242,7 +249,7 @@ class Finding:
 
 
 class _Ambiguous(Exception):
-    """A path argument was present but could not be resolved. The caller fails closed."""
+    """A path argument was present but could not be resolved. The caller treats the segment as ambiguous."""
 
 
 # --- policy file -------------------------------------------------------------------------------
@@ -471,19 +478,6 @@ def _inside_box(path, root):
     return _inside(path, root) or any(_inside(path, temporary) for temporary in _tmp_roots())
 
 
-def _box_contains(path, root):
-    """Whether a resolved path is inside the box: the declared root or the global /tmp.
-
-    Unlike `_inside_box` this still accepts /tmp when there is no declared root, so `git -C` and
-    `cd` can be checked against the same box the rest of the policy uses.
-    """
-    if not path:
-        return False
-    if any(_inside(path, temporary) for temporary in _tmp_roots()):
-        return True
-    return bool(root) and _inside(path, root)
-
-
 def _protected_decision(capability, root, declared):
     """Decision for a protected workspace path, before the role table.
 
@@ -576,7 +570,9 @@ def classify(event, root):
         if path is None:
             return None
         return [Finding(_path_capability(path, root, True), path, path)]
-    return None        # unknown tool: fail closed
+    # Unknown tool name (an MCP tool, a tool this table does not list): not a command the engine
+    # can place, so it defers to the session's own permission flow instead of being denied (item 1xx).
+    return [Finding(DEFER, name, None)]
 
 
 # --- command splitting and classification ------------------------------------------------------
@@ -692,7 +688,7 @@ def _classify_paths(arguments, root, write, skip_first=False, target=None, ancho
     `anchor` is the directory relative paths are resolved against (a `cd` in the same command);
     the capability is still decided against the session box `root`. No path argument means None
     (the caller may use its fallback). A path argument that cannot be resolved raises
-    `_Ambiguous`, which the caller turns into a denial: `*`/`$HOME` are not paths.
+    `_Ambiguous`, which the caller turns into an ambiguous segment: `*`/`$HOME` are not paths.
     """
     paths = _path_args(arguments, skip_first)
     if not paths:
@@ -954,8 +950,8 @@ def _git_expanded_argument(arguments):
 def _classify_git(arguments, root, anchor=None):
     if not arguments:
         return None
-    # `-C <dir>` reanchors the repository, but only inside the box. The subcommand is classified
-    # normally: a worktree under `.claude/worktrees/` is vcs.read/vcs.write like any other repo.
+    # `-C <dir>` reanchors the repository, inside the box or outside it: the subcommand is classified
+    # normally, so a worktree under `.claude/worktrees/` is vcs.read/vcs.write like any other repo.
     base = anchor or root
     index = 0
     while index < len(arguments):
@@ -965,10 +961,10 @@ def _classify_git(arguments, root, anchor=None):
             continue
         if token == "-C":
             if index + 1 >= len(arguments):
-                return None                     # -C without a value
+                return None                     # -C without a value: ambiguous
             resolved = _resolve(arguments[index + 1], base)
-            if resolved is None or not _box_contains(resolved, root):
-                return None                     # outside the box: would enlarge it
+            if resolved is None:
+                return None                     # expansion or glob: ambiguous
             if _is_secret(resolved):
                 return [Finding("secrets", "git -C", None)]
             base = resolved
@@ -1032,7 +1028,7 @@ def _classify_python(arguments):
 
     `-I`, `-B`, `-u`, `-E`, `-s`, `-S`, `-O`, `-OO`, `-X <value>` and `-W <value>` (separate or
     glued) only shape the interpreter, so the module decides the capability. `-c`, stdin, a
-    positional script or an unknown flag is arbitrary code and fails closed.
+    positional script or an unknown flag is arbitrary code: an ambiguous form, so it defers.
     """
     index = 0
     while index < len(arguments):
@@ -1063,14 +1059,14 @@ def _classify_python(arguments):
             return [Finding("test.run", "python3 -m pip " + action, None)]
     if module == "venv":
         return [Finding("install", "python3 -m venv", None)]    # same target rule as pip: none
-    return None                         # arbitrary module, script or -c: fail closed
+    return None                         # arbitrary module, script or -c: ambiguous, defers
 
 
 def _classify_godot(arguments, root, anchor=None):
     """`godot`/`godot4` run tests only with `--headless`, and every path stays inside the box.
 
     Paths are the values of `--path`, `--main-pack`, `--script`/`-s` (separate or glued) and every
-    positional argument. `--export*` writes an artifact with its own flags, so it is denied.
+    positional argument. `--export*` writes an artifact with its own flags, so it is ambiguous.
     """
     if "--headless" not in arguments:
         return None
@@ -1101,8 +1097,9 @@ def _classify_godot(arguments, root, anchor=None):
         index += consumed
         if value is not None:
             path = _resolve(value, base)
-            if path is None or not _box_contains(path, root):
-                return None
+            if path is None:
+                return None                 # expansion or glob: ambiguous
+            # outside the box is the table's decision (`repo.outside`), not an ambiguity
             paths.append(Finding(_path_capability(path, root, False), path, path))
     return [Finding("test.run", "godot --headless", None)] + paths
 
@@ -1266,7 +1263,7 @@ def _classify_tokens_impl(tokens, root, anchor=None):
         if findings is None and writes is None:
             return [Finding("repo.read", root, root)] if root else None
         return (findings or []) + (writes or [])
-    # A program no table knows: not a fail-closed case any more (item 135). Sub-classifiers that
+    # A program no table knows: not ambiguous (item 135). Sub-classifiers that
     # return None (arbitrary code such as `python -c`, `sh -c`, `eval`) still fail closed above.
     return _unknown_program_findings(program, arguments, root, anchor)
 
@@ -1288,10 +1285,15 @@ def _unknown_program_findings(program, arguments, root, anchor, attached=()):
 
     Its path-like values still meet the path barriers: positional words, the value of
     `--opt=value` and the `attached` values the caller extracts (make's `-Cdir`). A value that
-    cannot be resolved (glob, expansion) raises `_Ambiguous` and the segment is denied. The `DEFER`
-    finding is always added, so the session mode (or the `ask` mode marker) decides the rest.
-    Other attached short-option values (`-o/path`) are not checked.
+    cannot be resolved (glob, expansion) raises `_Ambiguous` and the segment is ambiguous, which
+    defers with the barriers of `_ambiguous_findings`. The `DEFER` finding is always added, so the
+    session mode (or the `ask` mode marker) decides the rest. An admin program in command position
+    in the call is still `admin`. Other attached short-option values (`-o/path`) are not checked.
     """
+    # An admin program in command position in the call (`xargs sudo rm`) is still admin.
+    admin = _admin_in_text(" ".join([program] + list(arguments)))
+    if admin:
+        return [Finding("admin", admin, None), Finding(DEFER, program, None)]
     values = list(attached)
     for argument in arguments:
         if argument.startswith("-"):
@@ -1307,7 +1309,7 @@ def _unknown_program_findings(program, arguments, root, anchor, attached=()):
 
 
 def _classify_tokens(tokens, root, anchor=None):
-    """Findings for one shell segment; an unresolvable path makes the whole segment fail closed."""
+    """Findings for one shell segment; None when an unresolvable path makes the segment ambiguous."""
     try:
         return _classify_tokens_impl(tokens, root, anchor)
     except _Ambiguous:
@@ -1318,13 +1320,13 @@ _CD_NOT = object()
 
 
 def _cd_anchor(tokens, root, anchor):
-    """`(findings, new_anchor)` after a `cd`, `_CD_NOT` for a non-cd segment, None to deny.
+    """`(findings, new_anchor)` after a `cd`, `_CD_NOT` for a non-cd segment, None for an ambiguous cd.
 
     Only `cd <dir>`, with an optional `-L`/`-P`, reanchors the following segments of the same
-    command. The target must resolve inside the box, so `cd ../..` from the root cannot enlarge
-    it; `cd` without a directory, `cd -`, extra arguments, any other flag and an expansion or
-    glob are denied. The new anchor is local to this command. The `cd` itself adds no finding:
-    the capability reported for `cd <dir> && <sub>` is the one of `<sub>`.
+    command, inside the box or outside it: the capability of each following segment is still the
+    table's, so the `cd` adds no finding of its own (a secret directory is the one exception). `cd`
+    without a directory, `cd -`, extra arguments, any other flag and an expansion or a glob are
+    ambiguous (None). The new anchor is local to this command.
     """
     stripped = tokens
     while stripped and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", stripped[0]):
@@ -1334,53 +1336,164 @@ def _cd_anchor(tokens, root, anchor):
     arguments = stripped[1:]
     while arguments and arguments[0] in ("-L", "-P"):
         arguments = arguments[1:]
-    if len(arguments) != 1:
-        return None
-    value = arguments[0]
-    if value.startswith("-"):
-        return None                         # `cd -`, `cd --`, any other flag
-    path = _resolve(value, anchor)
-    if path is None or _is_secret(path) or not _box_contains(path, root):
-        return None                         # expansion/glob, secret or outside the box
-    return ([], path)
+    if len(arguments) != 1 or arguments[0].startswith("-"):
+        return None                         # `cd`, `cd -`, `cd --`, extra arguments, other flags
+    path = _resolve(arguments[0], anchor)
+    if path is None:
+        return None                         # expansion or glob
+    if _is_secret(path):
+        return [Finding("secrets", path, path)], path
+    return [], path
+
+
+PROGRAM_DIRECTORIES = {"", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin"}
+# Words that run the next word as a command: `xargs sudo`, `find -exec sudo`, `env sudo`, `time sudo`.
+COMMAND_WRAPPERS = {
+    "xargs", "eval", "exec", "env", "nohup", "nice", "timeout", "time", "then", "do", "else", "if",
+    "while", "-exec", "-execdir", "-ok", "-okdir",
+}
+_PUNCTUATION = set(";&|()<>`{}$")
+_QUOTES = set("'\"")
+# A quoted script is a command only after one of these: `sh -c "sudo id"`, `find -exec 'sudo' ;`.
+QUOTE_COMMAND_PRECEDERS = {
+    "-c", "-exec", "-execdir", "-ok", "-okdir", "eval", "exec", "xargs", "env",
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh",
+}
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _is_admin_word(word):
+    """Whether a word names an admin program: the bare name or one in a program directory.
+
+    `/etc/passwd` is a path, not `passwd`, so it does not match.
+    """
+    return os.path.basename(word) in ADMIN_PROGRAMS and os.path.dirname(word) in PROGRAM_DIRECTORIES
+
+
+def _admin_in_text(text):
+    """The admin program in command position anywhere in a text, or None.
+
+    Command position is the start of a segment or a substitution (after `;&|()`, a backtick or `$`),
+    a quoted script after `-c`/`-exec`/a shell name, a word after a command wrapper (`xargs`,
+    `find -exec`, `env`), or after leading `NAME=value` assignments. A bare admin name used as an
+    argument (`grep -r passwd src`, `grep -r "mount" docs`) is not one.
+    """
+    expect, previous = True, ""
+    for token in re.findall(r"[^\s;&|()<>`'\"{}$]+|[;&|()<>`'\"{}$]", text):
+        if token in _QUOTES:
+            if previous in QUOTE_COMMAND_PRECEDERS:
+                expect = True
+            continue
+        if token in _PUNCTUATION:
+            expect = True
+            continue
+        if expect and _is_admin_word(token):
+            return os.path.basename(token)
+        if token in COMMAND_WRAPPERS or (expect and _ASSIGNMENT.match(token)):
+            expect = True
+        else:
+            expect = False
+        previous = token
+    return None
+
+
+def _secret_glob(pattern):
+    """Whether a glob word can name a secret (`*.env`, `.env*`, `*.pem`). A bare wildcard cannot.
+
+    The pattern must hold a letter, so `*` alone is not taken for the secret names it could match.
+    """
+    if not re.search(r"[A-Za-z]", pattern):
+        return False
+    if any(pattern.endswith(suffix) for suffix in SECRET_SUFFIXES):
+        return True
+    return any(fnmatch.fnmatch(name, pattern) for name in SECRET_NAMES | SECRET_DIRS)
+
+
+def _ambiguous_findings(text, root, anchor):
+    """Findings for a command the engine cannot place: `DEFER`, plus the barriers that hold anyway.
+
+    An unknown form (`grep -r`, `find -exec`, `sh -c`, `$(...)`, a glob, an unclosed quote) is not
+    denied and not asked: `DEFER` leaves the decision to the session's mode. What is still checked
+    is what the text names: an admin program anywhere in it (`echo $(sudo id)`), a secret among its
+    words (`cat .env*`, `sed -n p ~/.ssh/id_rsa`) and a write into the workspace code. `$HOME` is
+    expanded first, and a glob counts through its literal prefix. A bare name (`credentials`,
+    `id_rsa`) counts only when it names an existing file, so `grep -r credentials .` is not a secret;
+    a word with a `/`, a leading `.` or `~`, or a glob is explicit. Other paths are not decided here.
+    """
+    findings = [Finding(DEFER, "shell", None)]
+    admin = _admin_in_text(text)
+    if admin:
+        findings.append(Finding("admin", admin, None))
+    home = os.path.expanduser("~")
+    if not home.startswith("~"):
+        text = text.replace("${HOME}", home).replace("$HOME", home)
+    for word in re.split(r"[\s;&|()<>`'\"{}$=,]+", text):
+        if not word or word.startswith("-"):
+            continue
+        glob = re.search(r"[*?\[]", word)
+        if glob and _secret_glob(os.path.basename(word)):
+            findings.append(Finding("secrets", word, None))
+            continue
+        base = word[:glob.start()] if glob else word
+        base = base.rstrip("/") or base[:1]
+        # A glob with no literal prefix (`*`, `*.py`) is in the directory the shell is in.
+        path = _resolve(base, anchor) if base else (anchor if glob else None)
+        if path is None:
+            continue
+        explicit = bool(glob) or "/" in word or word.startswith((".", "~")) or os.path.exists(path)
+        if explicit and _is_secret(path):
+            findings.append(Finding("secrets", path, path))
+        elif _path_capability(path, root, True) == "workspace.write":
+            findings.append(Finding("workspace.write", path, path))
+    return findings
+
+
+def _segment_findings(segment, root, anchor):
+    """`(findings, anchor)` for one shell segment: its redirections and program, and the directory the
+    shell is in afterwards. An ambiguous segment defers with `_ambiguous_findings`; an ambiguous `cd`
+    leaves the anchor at the box root, since the real directory is unknown."""
+    try:
+        tokens = _tokens(segment)
+    except ValueError:
+        return _ambiguous_findings(segment, root, anchor), anchor
+    redirects, clean = _extract_redirects(tokens)
+    if redirects is None:
+        return _ambiguous_findings(segment, root, anchor), anchor
+    findings = []
+    for write, value in redirects:
+        path = _resolve(value, anchor)
+        if path is None:
+            return _ambiguous_findings(segment, root, anchor), anchor
+        findings.append(Finding(_path_capability(path, root, write), path, path))
+    reanchored = _cd_anchor(clean, root, anchor)
+    if reanchored is None:
+        return _ambiguous_findings(segment, root, anchor), root
+    if reanchored is _CD_NOT:
+        part = _classify_tokens(clean, root, anchor)
+        if part is None:
+            part = _ambiguous_findings(segment, root, anchor)
+        return findings + part, anchor
+    part, new_anchor = reanchored
+    return findings + part, new_anchor
 
 
 def _classify_command(command, root):
-    """Findings for a shell command; None when any segment is unknown or ambiguous."""
+    """Findings for a shell command. Nothing here is a deny by itself: an unknown or ambiguous
+    segment defers (`_ambiguous_findings`) and every known segment keeps its own table entry."""
     if not isinstance(command, str) or not command.strip():
-        return None
+        return [Finding(DEFER, "shell", None)]
     if "`" in command or "$(" in command:
-        return None                         # command substitution: ambiguous
+        return _ambiguous_findings(command, root, root)     # command substitution
     try:
         segments = _split_segments(command)
-    except ValueError:
-        return None
+    except ValueError:                      # unclosed quote
+        return _ambiguous_findings(command, root, root)
     findings = []
     anchor = root
     for segment in segments:
-        try:
-            tokens = _tokens(segment)
-        except ValueError:
-            return None
-        redirects, clean = _extract_redirects(tokens)
-        if redirects is None:
-            return None
-        for write, value in redirects:
-            path = _resolve(value, anchor)
-            if path is None:
-                return None
-            findings.append(Finding(_path_capability(path, root, write), path, path))
-        reanchored = _cd_anchor(clean, root, anchor)
-        if reanchored is _CD_NOT:
-            part = _classify_tokens(clean, root, anchor)
-        elif reanchored is None:
-            return None
-        else:
-            part, anchor = reanchored
-        if part is None:
-            return None
+        part, anchor = _segment_findings(segment, root, anchor)
         findings.extend(part)
-    return findings or None
+    return findings or [Finding(None, "shell", None)]
 
 
 # --- decisions, auto and log -------------------------------------------------------------------
@@ -1514,9 +1627,9 @@ def check_event(event):
     failed_closed = "subagent" if subagent else parent
     ask_mode = _ask_mode()
     if findings is None:
-        # Opt-in item 119: an action the engine cannot classify is the person's call, not a blind
-        # deny. The target is the tool name, never the raw command. Without the marker this stays
-        # `deny`/`unknown` (fail closed).
+        # A malformed event (no tool name, not an object) cannot be placed at all: it stays a deny.
+        # Opt-in item 119: with the `ask` marker it is the person's call instead. The target is the
+        # tool name, never the raw command.
         if ask_mode:
             tool = event.get("tool_name")
             return _finish("ask", None, "policy.reason.ask_mode", event,

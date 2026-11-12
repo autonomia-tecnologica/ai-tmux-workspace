@@ -18,9 +18,13 @@
 # from WS_POLICY_AUTO or the event permission_mode) only turns `ask` into `allow` for path-scoped
 # capabilities whose target is inside the box, and never touches `deny`.
 #
-# A shell program no table knows is not classified here: it defers to the session's mode (item 135),
-# so the table has nothing to list for it. `deny` stays for what is known to be serious: admin
-# (sudo, pkexec, su, doas), secrets, paths outside the box and the workspace code.
+# What the engine cannot place is not denied: an unknown program (`dotnet`), an ambiguous form
+# (`grep -r`, `find -exec`, `sh -c`, `$(...)`, globs, expansions, unclosed quotes, `cd` without a plain
+# directory) or an unknown tool name defers to the session's own mode, with no question asked. Such a
+# segment still meets the barriers that hold for any form: admin programs named anywhere in it, and
+# secrets or workspace-code writes among its words. The table below decides the known forms (file
+# tools and the known Bash forms alike), so `repo.outside` and `config.write` still deny there.
+# `deny` stays for admin (sudo, pkexec, su, doas, ...), secrets and the workspace code.
 version: 1
 default: deny
 roles:

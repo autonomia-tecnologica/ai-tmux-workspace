@@ -375,7 +375,8 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(raised.exception.reason, "policy.reason.invalid")
 
     # --- fail closed ---------------------------------------------------------------------------
-    def test_unknown_and_ambiguous_actions_fail_closed(self):
+    def test_unknown_tools_and_ambiguous_forms_defer_instead_of_failing_closed(self):
+        # Item 1xx: what the engine cannot place is not denied; the session's mode decides.
         cases = [
             {"tool_name": "mcp__server__tool", "tool_input": {}},
             {"tool_name": "UnknownTool", "tool_input": {}},
@@ -385,29 +386,70 @@ class PolicyTest(unittest.TestCase):
             self.bash("rm"),
             self.bash("cat $(echo /etc/passwd)"),
             self.bash("find . -delete"),
-            self.bash("diff --from-file=.env a.txt"),
-            self.bash("diff --to-file=.env a.txt"),
-            self.bash("wc --files0-from=.env"),
-            self.bash("grep --exclude-from=.env x a.txt"),
-            self.bash("rg --ignore-file=.env x ."),
-            self.bash("tree --fromfile=.env"),
-            {"tool_name": "Write", "tool_input": {}},
         ]
         for event in cases:
             with self.subTest(event=event):
                 result = self.decide(event)
-                self.assertEqual(result["decision"], "deny")
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
                 self.assertIsNone(result["capability"])
+        # A secret named by an option value is still a secret, whatever the form.
+        for command in ("diff --from-file=.env a.txt", "diff --to-file=.env a.txt",
+                        "wc --files0-from=.env", "grep --exclude-from=.env x a.txt",
+                        "rg --ignore-file=.env x .", "tree --fromfile=.env"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
+        # A file tool without a path is still an unplaceable file action: fail closed.
+        result = self.decide({"tool_name": "Write", "tool_input": {}})
+        self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+
+    def test_admin_in_an_ambiguous_segment_stays_denied(self):
+        # The engine cannot place these forms, but an admin program named in them still denies,
+        # wherever it sits: a known segment, a substitution, a wrapper, a quoted script.
+        commands = (
+            "grep -r x . ; sudo ls",
+            "find . -exec sudo rm {} \\;",
+            "find . -exec /usr/bin/sudo rm {} \\;",
+            "xargs sudo rm",
+            "sh -c 'sudo id'",
+            "bash -c \"pkexec ls\"",
+            "eval su -c ls",
+            "python3 -c \"import os; os.system('sudo id')\"",
+            "echo $(sudo id)",
+            "echo `doas id`",
+            "cat $(echo /etc/passwd) && sudo ls",
+            "cd $D && sudo ls",
+            "cd /x && sudo ls",
+            "sed -e 's/x/y/' a.txt && sudo ls",
+            "grep -r x . ; echo $(sudo id)",
+            "echo \"$(sudo id)\"",
+            "time sudo ls",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+        # A bare admin name used as an argument is not a command: the form defers.
+        for command in ("grep -r passwd src", "grep -r service .", "grep -r \"mount\" docs"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
+        # The path of a program is not the program: `/etc/passwd` is a path, not `passwd`.
+        result = self.decide(self.bash("sort --random-source=/etc/passwd file"))
+        self.assertEqual(result["decision"], "allow")
 
     # --- regression: shell expansion, globs and ambiguous paths --------------------------------
-    def test_shell_expansion_and_globs_are_not_paths(self):
+    def test_shell_expansion_and_globs_defer_unless_they_name_a_barrier(self):
+        # A glob or an expansion the engine cannot resolve defers (item 1xx); the barriers still
+        # apply to what the text names: a secret glob, a secret or a workspace write.
         commands = [
             "rm -rf $HOME",
             "rm -rf ${HOME}/x",
             "echo x > $HOME/file",
             "tee $HOME/x",
             "cat *",
-            "cat .env*",
             "rm *",
             "sed -i 's/x/y/' *.py",
             "awk '{print}' *.py",
@@ -417,8 +459,23 @@ class PolicyTest(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
-                self.assertIsNone(result["capability"])
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
+        for command, capability in (("cat .env*", "secrets"), ("git add '*.env'", "secrets"),
+                                    ("cat ~/.ssh/*", "secrets"),
+                                    ("cat $HOME/.ssh/id_rsa", "secrets")):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
+        # A glob inside the workspace code is a workspace write, whatever the form (the `*` is in
+        # the directory the `cd` left).
+        workspace = policy.workspace_root()
+        if workspace:
+            for command in (f"rm -rf {workspace}/src/*", f"cd {workspace} && rm -rf *"):
+                with self.subTest(command=command):
+                    result = self.decide(self.bash(command))
+                    self.assertEqual((result["decision"], result["capability"]),
+                                     ("deny", "workspace.write"))
 
     def test_scripts_and_patterns_with_expansion_are_skipped(self):
         commands = [
@@ -433,9 +490,9 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual(result["decision"], "allow")
                 self.assertEqual(result["capability"], "repo.read")
 
-    def test_unknown_programs_with_scripts_or_expansions_stay_denied(self):
-        # Item 135: no command list, but a script with an embedded path or an expansion is not
-        # resolvable, so it is ambiguous and denied whatever the program is.
+    def test_unknown_programs_with_scripts_or_expansions_defer(self):
+        # Item 135 and the ambiguity rule: a script with an embedded path or an expansion is not
+        # resolvable, so it defers whatever the program is; no path is decided from its text.
         commands = [
             "sed -e 's/x/y/w /etc/foo' a.txt",
             "awk 'BEGIN{print \"x\" > \"/etc/foo\"}'",
@@ -446,8 +503,8 @@ class PolicyTest(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
-                self.assertIsNone(result["capability"])
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
 
     def test_unknown_programs_defer_and_keep_the_path_barrier_on_their_arguments(self):
         # Inside the box: no path escape, so the session mode decides (allow, defer).
@@ -584,14 +641,16 @@ class PolicyTest(unittest.TestCase):
         result = self.decide(self.bash("cp -t ~/.config a.txt"))
         self.assertEqual((result["decision"], result["capability"]), ("deny", "config.write"))
 
-    def test_find_write_and_symlink_options_are_denied(self):
+    def test_find_write_and_symlink_options_defer(self):
+        # find's write and symlink options are ambiguous forms now: they defer to the session mode,
+        # and the path they name is not decided by the engine (item 1xx).
         for command in ("find . -fprint /etc/foo", "find . -fprint0 /etc/foo",
                         "find . -fprintf /etc/foo %p", "find . -fls /etc/foo",
                         "find -L .", "find -H .", "find . -follow"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
-                self.assertIsNone(result["capability"])
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
         self.assertEqual(self.decide(self.bash("find . -name '*.py'"))["capability"], "repo.read")
 
     def test_git_combined_short_message_does_not_hide_a_path(self):
@@ -604,7 +663,8 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.decide(self.bash(command))["decision"], "allow")
 
-    def test_recursive_grep_and_hidden_rg_are_denied(self):
+    def test_recursive_grep_and_hidden_rg_defer(self):
+        # Recursive grep and hidden rg are ambiguous forms: they defer, they are not denied.
         for command in ("grep -r x .", "grep -R x .", "grep --recursive x .",
                         "grep --dereference-recursive x .", "grep -rn x .",
                         "grep -d recurse x .", "grep -drecurse x .",
@@ -613,22 +673,27 @@ class PolicyTest(unittest.TestCase):
                         "rg --no-ignore-vcs x .", "rg -L x .", "rg --follow x ."):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
-                self.assertIsNone(result["capability"])
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
         for command in ("rg x .", "grep -er x .", "grep x .", "rg -e-u x ."):
             with self.subTest(command=command):
                 self.assertEqual(self.decide(self.bash(command))["decision"], "allow")
 
-    def test_dangerous_read_program_options_are_denied(self):
-        for command in ("sort --compress-program=sh file", "sort --files0-from=.env file",
-                        "sort --random-source=/etc/passwd file", "sort -T /tmp file",
+    def test_dangerous_read_program_options_defer_but_secrets_still_deny(self):
+        for command in ("sort --compress-program=sh file", "sort -T /tmp file",
                         "sort --temporary-directory=/tmp file", "sort -nT/tmp file",
-                        "file -C", "file --compile file", "file -f .env",
-                        "file --files-from=.env", "file -m /etc/magic file"):
+                        "file -C", "file --compile file", "file -m /etc/magic file",
+                        "sort --random-source=/etc/passwd file"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
-                self.assertIsNone(result["capability"])
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
+        for command, capability in (("sort --files0-from=.env file", "secrets"),
+                                    ("file -f .env", "secrets"),
+                                    ("file --files-from=.env", "secrets")):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
         for command in ("sort file.txt", "sort -o /tmp/out.txt file.txt", "file file.txt"):
             with self.subTest(command=command):
                 self.assertEqual(self.decide(self.bash(command))["decision"], "allow")
@@ -884,21 +949,21 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual((result["decision"], result["capability"]),
                                  ("allow", capability))
 
-    def test_git_dash_c_outside_the_box_or_ambiguous_stays_denied(self):
-        commands = (
-            "git -C /home/qualquer status",
-            "git -C ../outside status",
-            "git -C .claude/worktrees/x -C /home/qualquer status",
-            "git -C",
-            "git -C. status",
-            "git --git-dir=.git status",
-            "git --work-tree=. status",
-            "git -c core.pager=cat status",
-        )
-        for command in commands:
+    def test_git_dash_c_outside_the_box_is_classified_and_ambiguous_defers(self):
+        # `git -C` outside the box reanchors like any other `-C`: the subcommand decides (item 1xx).
+        for command, capability in (("git -C /home/qualquer status", "vcs.read"),
+                                    ("git -C ../outside status", "vcs.read"),
+                                    ("git -C .claude/worktrees/x -C /home/qualquer status", "vcs.read")):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual((result["decision"], result["capability"]), ("allow", capability))
+        # The forms the engine cannot place defer.
+        for command in ("git -C", "git -C. status", "git --git-dir=.git status",
+                        "git --work-tree=. status", "git -c core.pager=cat status"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
         result = self.decide(self.bash("git -C .env status"))
         self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
 
@@ -921,29 +986,30 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual((result["decision"], result["capability"]),
                                  ("allow", capability))
 
-    def test_cd_outside_the_box_or_ambiguous_stays_denied(self):
-        commands = (
-            "cd && git status",
-            "cd - && git status",
-            "cd -- .claude/worktrees/x && git status",
-            "cd .. && git status",
-            "cd ../.. && git status",
-            "cd /home/qualquer && git status",
-            "cd ~ && git status",
-            "cd $HOME && git status",
-            "cd *.d && git status",
-            "cd -a .claude/worktrees/x && git status",
-            "cd .claude/worktrees/x extra && git status",
-        )
-        for command in commands:
+    def test_cd_outside_the_box_is_allowed_and_ambiguous_cd_defers(self):
+        # A `cd` into a directory, inside or outside the box, is not a deny; the following segment
+        # is classified as usual (`git status` is vcs.read whatever the directory).
+        for command in ("cd .. && git status", "cd ../.. && git status",
+                        "cd /home/qualquer && git status", "cd ~ && git status"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual((result["decision"], result["capability"]), ("allow", "vcs.read"))
+        # A `cd` the engine cannot place (no directory, `cd -`, flags, extra arguments, expansions,
+        # globs) defers, and the rest of the line is still classified.
+        for command in ("cd && git status", "cd - && git status",
+                        "cd -- .claude/worktrees/x && git status",
+                        "cd $HOME && git status", "cd *.d && git status",
+                        "cd -a .claude/worktrees/x && git status",
+                        "cd .claude/worktrees/x extra && git status"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
 
     def test_cd_and_git_dash_c_do_not_enter_secret_directories(self):
         with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
             result = policy.check_event(self.bash("cd .ssh && git status"))
-            self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+            self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
             result = policy.check_event(self.bash("git -C .ssh status"))
             self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
 
@@ -960,8 +1026,11 @@ class PolicyTest(unittest.TestCase):
     def test_cd_reanchoring_does_not_persist_between_calls(self):
         self.assertEqual(self.decide(self.bash("cd .claude/worktrees/x && git status"))["decision"],
                          "allow")
-        # with the anchor leaked from the previous call, `cd ..` would still be inside the box
-        self.assertEqual(self.decide(self.bash("cd .. && git status"))["decision"], "deny")
+        # The anchor is local to one command: after a `cd` outside the box, a relative read in a new
+        # call still resolves from the box root (repo.read), not from the directory left behind.
+        self.assertEqual(self.decide(self.bash("cd /home/qualquer && cat x"))["capability"],
+                         "repo.outside")
+        self.assertEqual(self.decide(self.bash("cat x"))["capability"], "repo.read")
 
     def test_python_flags_before_dash_m_keep_the_module_classification(self):
         commands = (
@@ -982,13 +1051,15 @@ class PolicyTest(unittest.TestCase):
                                  ("allow", "test.run"))
         result = self.decide(self.bash("python3 -I -m pip install requests"))
         self.assertEqual((result["decision"], result["capability"]), ("allow", "install"))
+        # Arbitrary code (`-c`), a script and the other forms the table does not list defer.
         for command in ("python3 -c 'print(1)'", "python3 -I -c 'print(1)'",
                         "python3 -I -m unknown_module", "python3 -I -",
                         "python3 -I tests/run.py", "python3 -v -m unittest",
                         "python3 --help"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
 
     def test_python_venv_is_install_in_repo_and_ask_in_home(self):
         # `python -m venv` creates an environment and installs nothing; it is classified like
@@ -1023,19 +1094,25 @@ class PolicyTest(unittest.TestCase):
                 result = self.decide(self.bash(command))
                 self.assertEqual((result["decision"], result["capability"]),
                                  ("allow", "test.run"))
-        for command in ("godot --quit", "godot4 --quit",
-                        "godot --headless --export-release",
-                        "godot --headless --export-debug",
-                        "godot --headless --path /home/qualquer",
+        # A path outside the box is the table's decision (repo.outside); a form the engine cannot
+        # place (no --headless, an export, a missing value) defers.
+        for command in ("godot --headless --path /home/qualquer",
                         "godot --headless --path=/home/qualquer",
                         "godot --headless --main-pack /etc/game.pck",
                         "godot --headless --script /etc/teste.gd",
                         "godot --headless -s /etc/teste.gd",
-                        "godot --headless /etc/project.godot",
+                        "godot --headless /etc/project.godot"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", "repo.outside"))
+        for command in ("godot --quit", "godot4 --quit",
+                        "godot --headless --export-release",
+                        "godot --headless --export-debug",
                         "godot --headless --path"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
         result = self.decide(self.bash("godot --headless --script .env"))
         self.assertEqual((result["decision"], result["capability"]), ("deny", "secrets"))
 
@@ -1049,11 +1126,11 @@ class PolicyTest(unittest.TestCase):
             ("git -C .claude/worktrees/x status", "allow", "vcs.read"),
             ("git -C .claude/worktrees/x diff", "allow", "vcs.read"),
             ("git -C .claude/worktrees/x log", "allow", "vcs.read"),
-            ("git -C /home/qualquer status", "deny", None),
-            ("cd .. && git status", "deny", None),
-            ("python3 -c 'print(1)'", "deny", None),
-            ("godot --quit", "deny", None),
-            ("godot --headless --export-release", "deny", None),
+            ("git -C /home/qualquer status", "allow", "vcs.read"),
+            ("cd .. && git status", "allow", "vcs.read"),
+            ("python3 -c 'print(1)'", "allow", None),
+            ("godot --quit", "allow", None),
+            ("godot --headless --export-release", "allow", None),
         )
         for command, decision, capability in cases:
             with self.subTest(command=command):
@@ -1075,11 +1152,14 @@ class PolicyTest(unittest.TestCase):
                 result = self.decide(event)
                 self.assertEqual((result["decision"], result["capability"]), ("allow", None))
                 self.assertEqual(result["reason"], "policy.reason.defer")
-        # An unknown tool (not a shell command) is still outside the list: fail closed.
+        # An unknown tool name (not a shell command) defers the same way: the session's own
+        # permission flow decides. A malformed event with no tool name still fails closed.
         unknown_tool = {"tool_name": "UnknownTool", "tool_input": {}, "session_id": "sess-1"}
         result = self.decide(unknown_tool)
-        self.assertEqual((result["decision"], result["capability"]), ("deny", None))
-        self.assertEqual(result["reason"], "policy.reason.unknown")
+        self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+        self.assertEqual(result["reason"], "policy.reason.defer")
+        result = self.decide({"tool_input": {}, "session_id": "sess-1"})
+        self.assertEqual((result["decision"], result["reason"]), ("deny", "policy.reason.unknown"))
         with patched_env(WS_POLICY_ASK="0"):
             self.assertEqual(self.decide(self.bash("some-unknown-command"))["reason"],
                              "policy.reason.defer")
@@ -1144,11 +1224,17 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
                 self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
-        # Arbitrary code forms and admin keep their denies; so does a segment with a bad part.
+        # Arbitrary code forms defer (item 1xx); admin and secrets named in the line still deny, and
+        # so does a known segment with a bad part.
+        for command in ("sh -c 'cargo run'", "bash -c ls", "eval ls",
+                        "python3 -c 'print(1)'", "go run ./x 'a b/c'"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
         for command, capabilities in (
-                ("sh -c 'cargo run'", (None,)), ("bash -c ls", (None,)), ("eval ls", (None,)),
-                ("python3 -c 'print(1)'", (None,)), ("go run ./x 'a b/c'", (None,)),
                 ("cargo run && cat .env", ("secrets",)), ("sudo cargo run", ("admin",)),
+                ("sh -c 'sudo cargo run'", ("admin",)),
                 # two denies in one line: the first one found is reported
                 ("make -C /etc && sudo ls", ("repo.outside", "admin"))):
             with self.subTest(command=command):
@@ -1386,8 +1472,9 @@ class PolicyTest(unittest.TestCase):
 
         self.assertIsNone(self.hook(self.bash("git status")))
         self.assertIsNone(self.hook({"tool_name": "TodoWrite", "tool_input": {}}))
-        self.assertEqual(self.hook({"tool_name": "UnknownTool", "tool_input": {}})
-                         ["hookSpecificOutput"]["permissionDecision"], "deny")
+        # An unknown tool name defers: the hook stays silent and the session's own flow decides.
+        self.assertIsNone(self.hook({"tool_name": "UnknownTool", "tool_input": {}}))
+        self.assertIsNone(self.hook(self.bash("grep -r x .")))
 
     def test_hook_without_a_declared_role_keeps_current_sessions_working(self):
         self.assertIsNone(self.hook(self.bash("sudo ls"), WS_SESSION_ROLE=None))
