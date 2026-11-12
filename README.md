@@ -16,7 +16,7 @@ Formato padrão, de uma linha, sem clonar o repo na mão:
 curl -fsSL https://raw.githubusercontent.com/autonomia-tecnologica/ai-tmux-workspace/main/install.sh | sh
 ```
 
-O script baixa o código para `~/.local/share/ai-tmux-workspace/app`, cria o comando `workspace` em `~/.local/bin` e roda o assistente: dependências, autocomplete, `config.yaml` inicial, harness e hooks do Claude Code. Ele não usa `sudo`/`pkexec`; quando falta um pacote, só mostra o comando para você rodar.
+O script baixa o código para `~/.local/share/ai-tmux-workspace/app`, cria o comando `workspace` em `~/.local/bin` e roda o assistente: dependências, autocomplete, `config.yaml` inicial, harness e hooks do Claude Code. Ele não usa `sudo`/`pkexec`; quando falta um pacote, só mostra o comando para você rodar. O assistente exige Python >= 3.9; no macOS veja os requisitos e limites na seção [macOS](#macos).
 
 Desfazer: `bash ~/.local/share/ai-tmux-workspace/app/remove.sh` (restaura o que o instalador mudou, apaga o clone em `app/` e o link; só remove a pasta se for um clone git deste repo, nunca um checkout de dev ou symlink). Atualizar a instalação: `workspace update` (git pull --ff-only; clone com alterações locais aborta). Quem desenvolve roda `./install.sh` do próprio clone (modo dev): é o mesmo assistente, sem baixar nada, e `workspace update` recusa esse checkout, que você atualiza com `git pull`.
 
@@ -124,9 +124,38 @@ Why:
 - `src/viewer.py` and `src/panel_tabs.py` use the POSIX terminal APIs `termios`, `tty`, `select`, `SIGWINCH` and `SIGUSR1`.
 - `src/statusbar.py` uses `fcntl.flock`, which is also POSIX-only.
 
-Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution.
+Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution. For macOS, see the requirements and limits in the [macOS](#macos) section.
 
 The session box (item 64) is documented friction on Windows/WSL2 and in corporate environments: it is a policy enforced by the hook and the OpenCode plugin, not an OS sandbox, so it depends on the agent honouring those adapters.
+
+### macOS
+
+Requisitos mínimos: Python >= 3.9, bash >= 3.2 e tmux >= 3.4, além das Command Line Tools da Apple (que trazem `git` e um `python3`) ou Homebrew. O `install.sh` executa o Python para conferir a versão: num Mac novo, em que `/usr/bin/python3` é só o shim do Xcode, ele mostra o comando certo em vez de falhar com `xcrun: error: invalid active developer path`.
+
+```sh
+xcode-select --install          # Command Line Tools (git e python3)
+# ou, com Homebrew (o bash novo é opcional; o 3.2 do sistema basta):
+brew install bash tmux python
+```
+
+Sem Homebrew, o instalador imprime a linha oficial de instalação (sem `sudo`) e o comando acima:
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+O tmux >= 3.4 é o que a barra de status completa usa (`range`, `mouse_status_range` e `MouseUp1Status`; popups existem desde a 3.2). Com tmux mais antigo o instalador avisa, mostra o comando de atualização e repete o aviso no fim: a instalação não termina como sucesso silencioso. O Python precisa ser >= 3.9 (o código usa `str.removeprefix`). O bash 3.2 do sistema basta — o launcher é compatível com 3.2 — e o instalador prefere o bash do `PATH`, reportando a versão encontrada.
+
+O terminal precisa estar em UTF-8; exporte `LANG` no perfil do shell (no zsh, `~/.zshrc` ou `~/.zprofile`):
+
+```sh
+export LANG=en_US.UTF-8         # ou pt_BR.UTF-8
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Notificações: no macOS são feitas com `osascript` (`display notification`). Na primeira vez, autorize o terminal (Terminal/iTerm) em Ajustes do Sistema → Notificações; sem essa permissão a notificação é ignorada e o workspace continua funcionando.
+
+Limites no macOS: o usuário de agente dedicado é o item 40 e ainda não está implementado; o ditado por microfone é só Linux; e a barra de status completa exige tmux >= 3.4.
 
 ## Bolinhas
 ○ parado · 🟢 agente/subagente trabalhando · 🟡 uma ferramenta rodando há mais de 8 s ·

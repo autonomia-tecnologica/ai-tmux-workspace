@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -98,7 +99,8 @@ class InstallerTest(unittest.TestCase):
     def env(self, **overrides):
         env = {key: value for key, value in os.environ.items()
                if key not in ("AT_WS_CONFIG", "AT_WS_INSTALL_STATE", "AT_HARNESS_SOURCE",
-                              "WS_STATE", "SUDO_USER", "SUDO_UID", "PKEXEC_UID", "DOAS_USER")}
+                              "AT_WS_PLATFORM", "WS_STATE", "SUDO_USER", "SUDO_UID",
+                              "PKEXEC_UID", "DOAS_USER")}
         env.update(HOME=str(self.home), WS_STATE=str(self.state),
                    AT_HARNESS_SOURCE=str(self.source), SHELL="/usr/bin/zsh", NO_COLOR="1",
                    PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
@@ -632,6 +634,89 @@ class InstallerTest(unittest.TestCase):
         cfg, _path = self.config()
         self.assertEqual(cfg["profiles"], {"deepseek": profile})
         self.assertEqual(cfg["agent"], "deepseek")
+
+    # 28 (macOS) -------------------------------------------------------------------------------
+    def test_install_sh_rejects_python_older_than_39(self):
+        fake = self.root / "old-python-bin"
+        fake.mkdir()
+        # The version probe runs the interpreter, not just `command -v`: a shim that exists and
+        # fails (fresh macOS) is reported as an old/broken python3.
+        executable(fake / "python3", "#!/bin/sh\nprintf '3.8.0\\n'\nexit 1\n")
+        executable(fake / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+        result = self.run_script(INSTALL, "", PATH=str(fake))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("python3 >= 3.9 is required", result.stderr)
+        self.assertIn("found: 3.8.0", result.stderr)
+        self.assertIn("xcode-select --install", result.stderr)
+        self.assertIn("brew install python", result.stderr)
+
+    # 29 (macOS) -------------------------------------------------------------------------------
+    def test_install_sh_reports_a_broken_xcode_python_shim(self):
+        fake = self.root / "broken-python-bin"
+        fake.mkdir()
+        executable(fake / "python3",
+                   "#!/bin/sh\nprintf 'xcrun: error: invalid active developer path\\n' >&2\nexit 1\n")
+        executable(fake / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+        result = self.run_script(INSTALL, "", PATH=str(fake))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("python3 >= 3.9 is required (found: unknown)", result.stderr)
+        self.assertIn("xcode-select --install", result.stderr)
+
+    # 30 (macOS) -------------------------------------------------------------------------------
+    def test_installer_warns_about_old_python_and_tmux_and_repeats_it_at_the_end(self):
+        fake = self.root / "old-tools-bin"
+        fake.mkdir()
+        # Real interpreter for everything except the version probe, so the install still works.
+        executable(fake / "python3", f"""#!/bin/sh
+case "${{1:-}}" in
+  -c) case "${{2:-}}" in
+        *version_info*) printf '3.8.0\\n'; exit 0 ;;
+      esac ;;
+esac
+exec {shlex.quote(sys.executable)} "$@"
+""")
+        executable(fake / "tmux",
+                   "#!/bin/sh\n[ \"${1:-}\" = \"-V\" ] && { printf 'tmux 3.3a\\n'; exit 0; }\nexit 0\n")
+        executable(fake / "git")
+        executable(fake / "claude")
+        path = str(fake) + os.pathsep + os.environ.get("PATH", "")
+        # The unmet versions add the dependency confirmation: install, deps, cli, completion, ...
+        installed = self.install("s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=path)
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        self.assertIn("python3 3.8 < 3.9", installed.stdout)
+        self.assertIn("tmux 3.3 < 3.4", installed.stdout)
+        # The install completes, but finish() repeats the unmet requirements: never a silent success.
+        self.assertEqual(installed.stdout.count("tmux 3.3 < 3.4"), 2)
+        self.assertEqual(installed.stdout.count("python3 3.8 < 3.9"), 2)
+
+    # 31 (macOS) -------------------------------------------------------------------------------
+    def test_darwin_without_a_package_manager_shows_homebrew_and_never_sudo(self):
+        fake = self.root / "darwin-bin"
+        fake.mkdir()
+        (fake / "python3").symlink_to(sys.executable)
+        (fake / "dirname").symlink_to(shutil.which("dirname"))
+        (fake / "readlink").symlink_to(shutil.which("readlink"))
+        result = self.install("s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=str(fake),
+                              AT_WS_PLATFORM="darwin")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("https://raw.githubusercontent.com/Homebrew/install", result.stdout)
+        self.assertIn("brew install bash tmux python", result.stdout)
+        # The text may mention sudo (it says the installer never runs it); no line may start with it.
+        self.assertFalse(any(line.strip().startswith("sudo") for line in result.stdout.splitlines()))
+
+    # 32 (macOS) -------------------------------------------------------------------------------
+    def test_bash_is_searched_in_path_before_bin_bash(self):
+        fake = self.root / "bash-bin"
+        fake.mkdir()
+        executable(fake / "bash", "#!/bin/sh\n[ \"${1:-}\" = \"--version\" ] && "
+                                  "{ printf 'GNU bash, version 5.2.15(1)-release\\n'; exit 0; }\n"
+                                  "exit 0\n")
+        code = "import sys; sys.path.insert(0, 'src'); import installer; print(installer.BASH)"
+        result = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT),
+                                env=self.env(PATH=str(fake)), capture_output=True, text=True,
+                                check=False, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()), fake / "bash")
 
 
 # Item 75: the curl install (clone to app/), `workspace update`, `workspace --help` and remove.sh taking the
