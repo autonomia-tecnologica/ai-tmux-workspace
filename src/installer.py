@@ -879,28 +879,14 @@ class Assistant:
         target = HOME / HARNESS_DIR
         self.ensure_dir(target.parent)
         self.manifest_for().record(target, tree=True)
-        remove_path(target)
         try:
-            shutil.copytree(source, target, symlinks=True)
+            warning = copy_harness(source, target)
         except OSError as error:
             self.ui.error(t("installer.harness.copy_failed", error=str(error)))
             raise Aborted()
-        if lean.is_file():
-            shutil.copy2(lean, target / "HARNESS.md")
-        shutil.copy2(ROOT / "harness" / "harness.py", target / "harness.py")
-        install_policy_files(target)
-        rendered = subprocess.run(
-            [sys.executable, str(target / "harness.py"), "render",
-             "--harness", str(target), "--out", str(target / "settings.json")],
-            capture_output=True, text=True)
-        if rendered.returncode != 0:
+        if warning:
             self.ui.warn(t("installer.harness.render_failed",
-                           path=display(target / "settings.json"),
-                           error=(rendered.stderr or "").strip() or str(rendered.returncode)))
-        self.write(target / SOURCE_FILE,
-                   json.dumps(source_record(source, target), indent=2, ensure_ascii=False) + "\n")
-        if (target / "HARNESS.md").is_file():
-            os.chmod(target / "HARNESS.md", 0o444)
+                           path=display(target / "settings.json"), error=warning))
         self.ui.ok(t("installer.harness.installed", path=display(target)))
         if not self.manage:
             self.install_harness_shim()
@@ -1106,6 +1092,33 @@ def harness_files(source):
     names.extend(destination for folder, name, destination in POLICY_SOURCES
                  if (ROOT / folder / name).is_file())
     return list(dict.fromkeys(names))
+
+
+def copy_harness(source, target):
+    """Replace `target` with a copy of the canonical harness `source`, as the install does: the lean
+    HARNESS.md, harness.py, the policy files, the rendered settings.json and source.json. Returns the
+    render error text when settings.json could not be rendered, else None. Raises OSError when the
+    copy itself fails. Shared with `workspace config update`, which refreshes the installed copy."""
+    source, target = Path(source), Path(target)
+    lean = ROOT / "harness" / "HARNESS.md"
+    remove_path(target)
+    shutil.copytree(source, target, symlinks=True)
+    if lean.is_file():
+        shutil.copy2(lean, target / "HARNESS.md")
+    shutil.copy2(ROOT / "harness" / "harness.py", target / "harness.py")
+    install_policy_files(target)
+    rendered = subprocess.run(
+        [sys.executable, str(target / "harness.py"), "render",
+         "--harness", str(target), "--out", str(target / "settings.json")],
+        capture_output=True, text=True)
+    warning = None
+    if rendered.returncode != 0:
+        warning = (rendered.stderr or "").strip() or str(rendered.returncode)
+    (target / SOURCE_FILE).write_text(
+        json.dumps(source_record(source, target), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if (target / "HARNESS.md").is_file():
+        os.chmod(target / "HARNESS.md", 0o444)
+    return warning
 
 
 def main(argv=None):

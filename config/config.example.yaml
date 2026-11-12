@@ -1,6 +1,8 @@
 # Config do workspace. Copie para ~/.config/ai-tmux-workspace/config.yaml (ou rode ./install.sh).
 # Só estrutura, sem dado pessoal. Caminhos aceitam ~. AT_WS_CONFIG troca o caminho do arquivo.
 # Sintaxe: o subconjunto de YAML de src/yaml_min.py (mapas, listas, escalares, comentários com #).
+# `workspace config update` compara este arquivo com o seu e mostra o que falta; `--apply` acrescenta
+# (nunca altera nem remove o que você tem, e não volta com o que você já removeu).
 
 notifications: true
 extra_usage: false

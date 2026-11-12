@@ -390,11 +390,9 @@ def _safe_profile_name(name):
     return "claude" if safe in ("", ".", "..") else safe
 
 
-def ensure_profile_settings(name=None):
-    """Write the profile's generated settings and return its path. None means the profile has no
-    workspace-generated settings: `manage: false` (the workspace leaves the agent options alone), a
-    legacy string profile that already owns `--settings`, or an OpenCode profile (its config comes
-    from `OPENCODE_CONFIG`). Raises SettingsError when the settings cannot be generated safely."""
+def expected_profile_settings(name=None):
+    """The settings dict a profile must carry, or None when it has no generated settings (see
+    ensure_profile_settings). Writes nothing; `workspace config update` compares it with the file."""
     name = name or agent_name()
     if not manage_enabled():
         return None
@@ -404,8 +402,46 @@ def ensure_profile_settings(name=None):
         return None
     settings = _merge_settings(harness_base_settings(), profile_settings(name) or {})
     validate_settings(settings, name)
+    return settings
+
+
+def profile_settings_path(name=None):
+    """Where the generated settings of a profile live (it may not exist yet)."""
+    return settings_dir() / f"{_safe_profile_name(name or agent_name())}.json"
+
+
+def write_config_text(text):
+    """Replace config_path() with `text`, keeping a copy of the current file as
+    `config.yaml.bak-<stamp>` (never overwritten). Returns the backup path, or None when there was no
+    file. The write goes through a temporary file and a replace, so a failure leaves the old file."""
+    path = config_path()
+    backup = None
+    if path.exists():
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = path.with_name(f"{path.name}.bak-{stamp}")
+        counter = 1
+        while backup.exists():
+            counter += 1
+            backup = path.with_name(f"{path.name}.bak-{stamp}-{counter}")
+        backup.write_bytes(path.read_bytes())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    return backup
+
+
+def ensure_profile_settings(name=None):
+    """Write the profile's generated settings and return its path. None means the profile has no
+    workspace-generated settings: `manage: false` (the workspace leaves the agent options alone), a
+    legacy string profile that already owns `--settings`, or an OpenCode profile (its config comes
+    from `OPENCODE_CONFIG`). Raises SettingsError when the settings cannot be generated safely."""
+    name = name or agent_name()
+    settings = expected_profile_settings(name)
+    if settings is None:
+        return None
     directory = settings_dir()
-    path = directory / f"{_safe_profile_name(name)}.json"
+    path = profile_settings_path(name)
     try:
         directory.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
