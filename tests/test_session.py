@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 LIB = SRC / "lib.py"
 SESSION = SRC / "session.py"
-PLUGIN = ROOT / "harness" / "opencode-policy.js"
+PLUGIN = ROOT / "security" / "opencode-policy.js"
 
 sys.path.insert(0, str(SRC))
 

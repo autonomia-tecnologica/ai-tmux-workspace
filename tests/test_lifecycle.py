@@ -193,7 +193,7 @@ class WorkspaceDispatchTests(unittest.TestCase):
         self.assertTrue((settings / "claude.json").is_file())
         plugin = settings / "opencode-plugin-opencode-claude.js"
         self.assertEqual(plugin.read_text(encoding="utf-8"),
-                         (ROOT / "harness" / "opencode-policy.js").read_text(encoding="utf-8"))
+                         (ROOT / "security" / "opencode-policy.js").read_text(encoding="utf-8"))
         config = json.loads((settings / "opencode-opencode-claude.json").read_text(encoding="utf-8"))
         self.assertEqual(config["plugin"], [plugin.as_uri()])
 

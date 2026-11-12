@@ -14,9 +14,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-HARNESS = ROOT / "harness" / "harness.py"
-REPO_SETTINGS = ROOT / "harness" / "settings.json"
-PRODUCTION_COMMAND = '"${WS_PYTHON:-python3}" "$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+HARNESS = ROOT / "security" / "gate.py"
+REPO_SETTINGS = ROOT / "security" / "settings.json"
+PRODUCTION_COMMAND = '"${WS_PYTHON:-python3}" "$HOME/.local/share/ai-tmux-workspace/security/gate.py"'
 
 CLAUDE_MD = "# Harness entry\n\nRead the rules before working.\n"
 AGENTS_MD = "# Agents\n\nOne slice at a time.\n"
@@ -284,12 +284,12 @@ class HarnessTest(unittest.TestCase):
 
 class YamlSubsetTest(unittest.TestCase):
     def test_harness_fixture_parses(self):
-        sys.path.insert(0, str(ROOT / "harness"))
+        sys.path.insert(0, str(ROOT / "security"))
         try:
-            import harness
+            import gate
         finally:
             sys.path.pop(0)
-        document = harness.yaml_loads(textwrap.dedent(HARNESS_POLICY))
+        document = gate.yaml_loads(textwrap.dedent(HARNESS_POLICY))
         self.assertEqual(document["versao"], 1)
         self.assertEqual([item["id"] for item in document["itens"]], ["F03", "F05", "F07"])
         self.assertEqual(document["itens"][1]["padrao"], ["**/.env", "**/*.pem"])

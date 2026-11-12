@@ -2,7 +2,7 @@
 
 The workspace keeps user-facing text in i18n/ and the BACKLOG.md labels as they are, but every
 identifier (function, class, method, argument, variable, attribute, constant, exception) in
-src/, harness/, demo/ and tests/, and every function name in bin/workspace, must be English. This test
+src/, harness/, security/, demo/ and tests/, and every function name in bin/workspace, must be English. This test
 splits each identifier on `_` and camelCase and rejects a Portuguese segment.
 
 Deliberate external contracts are strings, not identifiers (forcado.yaml keys such as `tipo` and
@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PYTHON_DIRS = ("src", "harness", "demo", "tests")
+PYTHON_DIRS = ("src", "harness", "security", "demo", "tests")
 
 # Portuguese content words that must not appear as an identifier segment. Ambiguous English words
 # that happen to exist in Portuguese too (data, item, total, base, config, ...) are deliberately

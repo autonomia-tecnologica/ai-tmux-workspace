@@ -5,7 +5,7 @@ The adapter knows only the OpenCode side of one headless run: the profile comman
 capability rule. The conference scope is wired as OpenCode permission rules derived from the same
 `conference.STRUCTURAL_FILES` (reads) and `conference.EDITABLE_FILES` (edits) the Claude hook
 enforces; the central policy engine stays in
-`src/policy.py` and `harness/opencode-policy.js`.
+`src/policy.py` and `security/opencode-policy.js`.
 
 The session id is the agent's: the plugin records the real id in `tabs/session-<tab>`, so a tab with
 no recorded id opens a fresh session (declared, no `--continue`) instead of adopting the repo's last
@@ -28,10 +28,10 @@ def _safe(profile):
 
 
 def plugin_source():
-    """The policy plugin shipped with this checkout (`harness/opencode-policy.js`)."""
+    """The policy plugin shipped with this checkout (`security/opencode-policy.js`)."""
     import lib
 
-    return Path(lib.BASE) / "harness" / "opencode-policy.js"
+    return Path(lib.BASE) / "security" / "opencode-policy.js"
 
 
 def plugin_path(profile):
@@ -124,7 +124,7 @@ class OpenCodeAdapter(Adapter):
         """Regenerate the plugin and the config this profile's server reads, and return the config
         path used at launch.
 
-        The plugin is a byte copy of `harness/opencode-policy.js` under `$WS_STATE/settings/`, and
+        The plugin is a byte copy of `security/opencode-policy.js` under `$WS_STATE/settings/`, and
         the generated config is the profile's declared config plus `plugin` pointing at it, as a
         `file://` URL (declared plugins are kept). `workspace restart` calls this, so the restarted
         server loads the plugin of the running code. A declared config that exists but is not plain

@@ -31,7 +31,7 @@ SOURCE_FILE = "source.json"
 # (e.g. `docs/BACKLOG.md`) that must not turn into a false drift.
 CODE_EXTENSIONS = {".py", ".js", ".yaml", ".yml", ".json", ".sh", ".conf", ".toml", ".ini",
                    ".cfg", ".bash", ".zsh"}
-CODE_DIRS = {"src", "bin", "harness", "config", "i18n", "tests"}
+CODE_DIRS = {"src", "bin", "harness", "security", "config", "i18n", "tests"}
 
 
 def harness_dir():

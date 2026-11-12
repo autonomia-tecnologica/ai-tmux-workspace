@@ -18,9 +18,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-HARNESS = ROOT / "harness"
+SECURITY = ROOT / "security"
 POLICY_CLI = SRC / "policy.py"
-PLUGIN = HARNESS / "opencode-policy.js"
+PLUGIN = SECURITY / "opencode-policy.js"
 NODE = shutil.which("node")
 
 sys.path.insert(0, str(SRC))
@@ -141,7 +141,7 @@ class PolicyTest(unittest.TestCase):
         return {"tool_name": "toolsearch", "tool_input": {"query": query}, "session_id": "sess-1"}
 
     def fixture_policy(self, **overrides):
-        document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
+        document = yaml_min.loads((SECURITY / "policy.yaml").read_text(encoding="utf-8"))
         for role, entries in overrides.items():
             document["roles"][role].update(entries)
         path = self.root / "fixture-policy.yaml"
@@ -160,7 +160,7 @@ class PolicyTest(unittest.TestCase):
 
     # --- policy file ---------------------------------------------------------------------------
     def test_policy_file_declares_default_deny_roles_and_exact_capabilities(self):
-        document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
+        document = yaml_min.loads((SECURITY / "policy.yaml").read_text(encoding="utf-8"))
         self.assertEqual(document["default"], "deny")
         self.assertEqual(set(document["roles"]), {"repo", "home", "self", "subagent"})
         self.assertEqual(set(policy.CAPABILITIES), EXPECTED_CAPABILITIES)
@@ -172,7 +172,7 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(document["roles"]["subagent"], {"inherits": "parent"})
 
     def test_policy_file_loads_through_the_engine(self):
-        document = policy.load_policy(HARNESS / "policy.yaml")
+        document = policy.load_policy(SECURITY / "policy.yaml")
         self.assertEqual(document["default"], "deny")
 
     # --- role matrix ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ class PolicyTest(unittest.TestCase):
         return code, target
 
     def test_self_role_inherits_the_repo_table(self):
-        document = policy.load_policy(HARNESS / "policy.yaml")
+        document = policy.load_policy(SECURITY / "policy.yaml")
         self.assertEqual(policy._role_table(document, "self"), policy._role_table(document, "repo"))
         self.assertEqual(policy._effective_capabilities(document, "self", False),
                          policy._effective_capabilities(document, "repo", False))
@@ -367,7 +367,7 @@ class PolicyTest(unittest.TestCase):
 
     def test_self_entry_is_only_the_repo_inheritance(self):
         # a self role that grants anything on its own is an invalid policy: fail closed
-        document = yaml_min.loads((HARNESS / "policy.yaml").read_text(encoding="utf-8"))
+        document = yaml_min.loads((SECURITY / "policy.yaml").read_text(encoding="utf-8"))
         document["roles"]["self"]["net"] = "allow"
         path = self.root / "self-policy.yaml"
         path.write_text(yaml_min.dumps(document), encoding="utf-8")
@@ -1731,17 +1731,20 @@ process.stdout.write(JSON.stringify(result));
         self.assertEqual(result["allow"]["decision"], "allow")
 
     # --- installation --------------------------------------------------------------------------
-    def test_harness_files_lists_the_policy_artifacts(self):
-        names = installer.harness_files(self.repo)
-        for name in ("policy.yaml", "opencode-policy.js", "policy.py", "yaml_min.py",
-                     "i18n/pt-BR.json"):
+    def test_security_files_lists_the_policy_artifacts(self):
+        names = installer.security_files(self.repo)
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "policy.py", "yaml_min.py",
+                     "i18n/pt-BR.json", "settings.json"):
             self.assertIn(name, names)
+        text = installer.harness_files(self.repo)
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json"):
+            self.assertNotIn(name, text)
 
     def test_policy_installation_is_idempotent_and_self_contained(self):
         target = self.root / "installed"
         first = installer.install_policy_files(target)
-        self.assertEqual(first, ["policy.yaml", "opencode-policy.js", "policy.py", "yaml_min.py",
-                                 "i18n/pt-BR.json"])
+        self.assertEqual(first, ["gate.py", "policy.yaml", "opencode-policy.js", "policy.py",
+                                 "yaml_min.py", "i18n/pt-BR.json"])
         snapshot = {name: (target / name).read_bytes() for name in first}
         second = installer.install_policy_files(target)
         self.assertEqual(first, second)

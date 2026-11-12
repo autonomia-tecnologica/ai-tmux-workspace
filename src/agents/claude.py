@@ -46,7 +46,7 @@ def conference_settings(profile, command):
     if source and source.is_file():
         settings = json.loads(source.read_text(encoding="utf-8"))
     else:
-        settings = lib.harness_base_settings()
+        settings = lib.security_base_settings()
     if not isinstance(settings, dict):
         settings = {}
     hooks = settings.setdefault("hooks", {})

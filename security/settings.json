@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/security/gate.py\"",
             "type": "command"
           }
         ],
@@ -15,7 +15,7 @@
       {
         "hooks": [
           {
-            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/security/gate.py\"",
             "type": "command"
           }
         ],
@@ -26,7 +26,7 @@
       {
         "hooks": [
           {
-            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/security/gate.py\"",
             "type": "command"
           }
         ]
@@ -36,7 +36,7 @@
       {
         "hooks": [
           {
-            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/harness/harness.py\"",
+            "command": "\"${WS_PYTHON:-python3}\" \"$HOME/.local/share/ai-tmux-workspace/security/gate.py\"",
             "type": "command"
           }
         ]

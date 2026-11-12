@@ -359,7 +359,8 @@ def _harness_step(apply):
         print(t("config.harness.failed", error=str(error)))
         return 1, True
     if warning:
-        print(t("installer.harness.render_failed", path=str(target / "settings.json"), error=warning))
+        print(t("installer.harness.render_failed",
+                path=str(target.parent / "security" / "settings.json"), error=warning))
     still = [message for level, message in drift.check() if level != "note"]
     for message in still:
         print(t("config.harness.still", message=message))

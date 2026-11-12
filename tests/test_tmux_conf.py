@@ -172,7 +172,7 @@ class MinimumTmuxVersionTest(unittest.TestCase):
 class HarnessCommandTest(unittest.TestCase):
     """The hook command must quote its script path and use the interpreter exported by the launcher."""
 
-    COMMAND = '"$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+    COMMAND = '"$HOME/.local/share/ai-tmux-workspace/security/gate.py"'
 
     def commands(self, settings):
         return [hook["command"]
@@ -181,7 +181,7 @@ class HarnessCommandTest(unittest.TestCase):
                 for hook in group["hooks"]]
 
     def test_render_uses_ws_python_and_quotes_it(self):
-        harness = ROOT / "harness" / "harness.py"
+        harness = ROOT / "security" / "gate.py"
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / "harness"
             directory.mkdir()
@@ -199,7 +199,7 @@ class HarnessCommandTest(unittest.TestCase):
                     self.assertTrue(command.endswith(" " + self.COMMAND), command)
 
     def test_static_settings_quotes_the_script_path(self):
-        settings = json.loads((ROOT / "harness" / "settings.json").read_text(encoding="utf-8"))
+        settings = json.loads((ROOT / "security" / "settings.json").read_text(encoding="utf-8"))
         for command in self.commands(settings):
             with self.subTest(command=command):
                 self.assertTrue(command.endswith(" " + self.COMMAND), command)

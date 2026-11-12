@@ -114,13 +114,15 @@ BASH = find_bash()
 # the install scripts, so a person installing gets the public repo.
 CLONE_URL = os.environ.get("AT_WS_HARNESS_URL") or "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
 HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
+SECURITY_DIR = Path(".local", "share", "ai-tmux-workspace", "security")
 SOURCE_FILE = "source.json"
 COMPLETION_DIR = Path(".local", "share", "ai-tmux-workspace", "completions")
-# Installed next to harness.py: the policy/config pair and the two adapters' shared engine. The
-# source tree (ambiente-de-trabalho) is copied first; these come from this repository.
+# Installed next to the harness text: the gate, the policy/config pair and the two adapters' shared
+# engine. The source tree (ambiente-de-trabalho) is copied first; these come from this repository.
 POLICY_SOURCES = (
-    ("harness", "policy.yaml", "policy.yaml"),
-    ("harness", "opencode-policy.js", "opencode-policy.js"),
+    ("security", "gate.py", "gate.py"),
+    ("security", "policy.yaml", "policy.yaml"),
+    ("security", "opencode-policy.js", "opencode-policy.js"),
     ("src", "policy.py", "policy.py"),
     ("src", "yaml_min.py", "yaml_min.py"),
     ("i18n", "pt-BR.json", "i18n/pt-BR.json"),
@@ -978,7 +980,8 @@ class Assistant:
                 self.ui.error(t("installer.harness.missing", path=display(candidate)))
                 raise Aborted()
         self.ui.line(t("installer.harness.source", path=display(source)))
-        self.ui.line(t("installer.harness.files", files=", ".join(harness_files(source))))
+        files = harness_files(source) + [f"security/{name}" for name in security_files(source)]
+        self.ui.line(t("installer.harness.files", files=", ".join(files)))
         lean = ROOT / "harness" / "HARNESS.md"
         entry = lean if lean.is_file() else source / "HARNESS.md"
         if not entry.is_file():
@@ -992,8 +995,10 @@ class Assistant:
         self.ui.confirm("installer.harness.confirm_want")
         self.ui.confirm("installer.harness.confirm_agree")
         target = HOME / HARNESS_DIR
+        security = HOME / SECURITY_DIR
         self.ensure_dir(target.parent)
         self.manifest_for().record(target, tree=True)
+        self.manifest_for().record(security, tree=True)
         try:
             warning = copy_harness(source, target)
         except OSError as error:
@@ -1001,8 +1006,9 @@ class Assistant:
             raise Aborted()
         if warning:
             self.ui.warn(t("installer.harness.render_failed",
-                           path=display(target / "settings.json"), error=warning))
+                           path=display(security / "settings.json"), error=warning))
         self.ui.ok(t("installer.harness.installed", path=display(target)))
+        self.ui.ok(t("installer.security.installed", path=display(security)))
         if not self.manage:
             self.install_harness_shim()
 
@@ -1146,7 +1152,7 @@ class Assistant:
 
 
 def install_policy_files(target):
-    """Copy the policy engine, its config and the OpenCode adapter into an installed harness.
+    """Copy the gate, the policy engine, its config and the OpenCode adapter into an installed `security/`.
 
     Overwrites in place, so running it again leaves byte-identical files (idempotent). Returns the
     names that were actually present in this checkout, in declaration order.
@@ -1200,6 +1206,7 @@ def source_record(source, target):
 
 
 def harness_files(source):
+    """Text files of the canonical harness: only rule and declaration, never the mechanism."""
     source = Path(source)
     names = [name for name in ("HARNESS.md", "CLAUDE.md", "forcado.yaml", "ORIGEM.md")
              if (source / name).is_file()]
@@ -1207,27 +1214,39 @@ def harness_files(source):
     if rules.is_dir():
         names.extend(f"regras/{path.name}" for path in sorted(rules.glob("*.md"))
                      if path.is_file())
-    names.extend(destination for folder, name, destination in POLICY_SOURCES
-                 if (ROOT / folder / name).is_file())
+    return list(dict.fromkeys(names))
+
+
+def security_files(source=None):
+    """Mechanism artifacts copied into the installed `security/`, plus the rendered settings.json.
+
+    `source` is accepted for symmetry with `harness_files`; the mechanism comes from this checkout,
+    not from the canonical text source.
+    """
+    names = [destination for folder, name, destination in POLICY_SOURCES
+             if (ROOT / folder / name).is_file()]
+    names.append("settings.json")
     return list(dict.fromkeys(names))
 
 
 def copy_harness(source, target):
-    """Replace `target` with a copy of the canonical harness `source`, as the install does: the lean
-    HARNESS.md, harness.py, the policy files, the rendered settings.json and source.json. Returns the
-    render error text when settings.json could not be rendered, else None. Raises OSError when the
-    copy itself fails. Shared with `workspace config update`, which refreshes the installed copy."""
+    """Replace `target` with a copy of the canonical harness `source`, as the install does: the text
+    (`HARNESS.md`, `forcado.yaml`, `regras/`, `source.json`) in `target`, and the mechanism (gate,
+    policy files and the rendered `settings.json`) in `target.parent/"security"`. Returns the render
+    error text when settings.json could not be rendered, else None. Raises OSError when the copy
+    itself fails. Shared with `workspace config update`, which refreshes the installed copy."""
     source, target = Path(source), Path(target)
+    security = target.parent / "security"
     lean = ROOT / "harness" / "HARNESS.md"
     remove_path(target)
     shutil.copytree(source, target, symlinks=True)
     if lean.is_file():
         shutil.copy2(lean, target / "HARNESS.md")
-    shutil.copy2(ROOT / "harness" / "harness.py", target / "harness.py")
-    install_policy_files(target)
+    remove_path(security)
+    install_policy_files(security)
     rendered = subprocess.run(
-        [sys.executable, str(target / "harness.py"), "render",
-         "--harness", str(target), "--out", str(target / "settings.json")],
+        [sys.executable, str(security / "gate.py"), "render",
+         "--harness", str(target), "--out", str(security / "settings.json")],
         capture_output=True, text=True)
     warning = None
     if rendered.returncode != 0:

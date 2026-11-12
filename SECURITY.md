@@ -65,6 +65,6 @@ Isso impede que o workspace se eleve. Não impede que o agente, rodando com a su
 
 ## Falha aberta conhecida: a LLM gerencia a lista de repos
 
-A sessão do repo principal (`main` no `config.yaml`) abre com o papel `home`, que pode escrever na config (`config.write: allow` em `harness/policy.yaml`). Por isso a LLM pode incluir qualquer pasta do ambiente na lista de repos. A lista de repos não é uma barreira contra a LLM. Isso corresponde a `R-SCOPE-04` e `R-SCOPE-02` no threat model, ambos não implementados.
+A sessão do repo principal (`main` no `config.yaml`) abre com o papel `home`, que pode escrever na config (`config.write: allow` em `security/policy.yaml`). Por isso a LLM pode incluir qualquer pasta do ambiente na lista de repos. A lista de repos não é uma barreira contra a LLM. Isso corresponde a `R-SCOPE-04` e `R-SCOPE-02` no threat model, ambos não implementados.
 
 A modelagem de ameaças ainda não está fechada: há decisões em aberto (`needs_decision`) e requisitos sem implementação. O ponto de partida é `docs/threat-model.md`, com o JSON como fonte da verdade. Até essa modelagem fechar, trate a config como alterável pela LLM.

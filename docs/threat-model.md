@@ -298,6 +298,6 @@ Each requirement has its own `validation` field in the JSON. The minimum suite:
   https://genai.owasp.org/2025/12/09/owasp-genai-security-project-releases-top-10-risks-and-mitigations-for-agentic-ai-security/
 - MITRE ATLAS v2026.10 —
   https://github.com/mitre-atlas/atlas-data/releases/tag/v2026.10
-- Repo references: `README.md` (Segurança), `harness/policy.yaml`, `src/policy.py`,
+- Repo references: `README.md` (Segurança), `security/policy.yaml`, `src/policy.py`,
   `src/hook.py`, `src/conference.py`, `src/conference_worker.py`,
   `src/conference_budget.py`, `bin/workspace`, `.claude/handoff.md`.

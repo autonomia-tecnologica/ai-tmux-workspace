@@ -159,7 +159,7 @@ class AgentAdapterTest(unittest.TestCase):
         path = adapter.prepare("oc")
         plugin = self.state / "settings" / "opencode-plugin-oc.js"
         self.assertEqual(plugin.read_text(encoding="utf-8"),
-                         (ROOT / "harness" / "opencode-policy.js").read_text(encoding="utf-8"))
+                         (ROOT / "security" / "opencode-policy.js").read_text(encoding="utf-8"))
         self.assertEqual(path, str(self.state / "settings" / "opencode-oc.json"))
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         self.assertEqual(config["plugin"], [plugin.as_uri()])
