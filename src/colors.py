@@ -14,9 +14,7 @@ MENU_BG = "\x1b[48;5;239m"
 
 # top tab bar of each panel (panel_tabs)
 TAB_ACTIVE = "\x1b[48;5;75;38;5;16;1m"
-TAB_NEW = "\x1b[38;5;75;1m"
 TAB_IDLE = "\x1b[48;5;238;38;5;250m"
-TAB_CURSOR = "\x1b[48;5;250;38;5;16m"
 
 
 def fg(n, dim=False):

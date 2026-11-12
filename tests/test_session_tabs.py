@@ -98,6 +98,56 @@ class PanelStateTest(unittest.TestCase):
         self.assertEqual(panel_tabs.cursor_index(["%1", "new"], "gone", "%1"), 0)
 
 
+class TabStylesTest(unittest.TestCase):
+    ITEMS = ["%1", "%2", "new"]
+
+    def test_cursor_on_the_active_tab_is_blue_and_the_plus_is_gray(self):
+        styles = panel_tabs.item_styles(self.ITEMS, "%1", "%1", focused=True)
+        self.assertEqual(styles, {"%1": "active", "%2": "idle", "new": "idle"})
+
+    def test_cursor_on_another_tab_moves_the_blue_and_the_active_turns_gray(self):
+        styles = panel_tabs.item_styles(self.ITEMS, "%1", "%2", focused=True)
+        self.assertEqual(styles, {"%1": "idle", "%2": "active", "new": "idle"})
+
+    def test_cursor_on_the_plus_is_blue_and_the_active_stays_gray(self):
+        styles = panel_tabs.item_styles(self.ITEMS, "%1", "new", focused=True)
+        self.assertEqual(styles, {"%1": "idle", "%2": "idle", "new": "active"})
+
+    def test_lost_focus_leaves_only_the_active_tab_blue(self):
+        styles = panel_tabs.item_styles(self.ITEMS, "%1", "%2", focused=False)
+        self.assertEqual(styles, {"%1": "active", "%2": "idle", "new": "idle"})
+
+    def test_losing_focus_sends_the_cursor_back_to_the_active_tab(self):
+        view = {"items": self.ITEMS, "active": "%1", "cursor": "%2", "focused": True}
+        panel_tabs.set_focus(view, False)
+        self.assertFalse(view["focused"])
+        self.assertEqual(view["cursor"], "%1")
+
+    def test_gaining_focus_starts_the_cursor_on_the_active_tab(self):
+        view = {"items": self.ITEMS, "active": "gone", "cursor": "new", "focused": False}
+        panel_tabs.set_focus(view, True)
+        self.assertTrue(view["focused"])
+        self.assertEqual(view["cursor"], "%1")
+
+    def test_activation_moves_the_cursor_to_the_new_active_tab(self):
+        view = {"cursor": "new", "follow": True}
+        with mock.patch.object(panel_tabs, "state",
+                               return_value=("%9", [("%1", "A"), ("%2", "B")], "%2")):
+            panel_tabs.load(view)
+        self.assertEqual(view["cursor"], "%2")
+        self.assertNotIn("follow", view)
+
+    def test_plus_at_rest_uses_the_idle_gray_not_the_new_tab_blue(self):
+        text, _ = panel_tabs.draw([("%1", "A")], "%1", cursor="%1", focused=False)
+        self.assertIn(f"{panel_tabs.TAB_IDLE} + {panel_tabs.R}", text)
+        self.assertIn(f"{panel_tabs.TAB_ACTIVE} A {panel_tabs.R}", text)
+
+    def test_focused_cursor_on_the_plus_paints_it_blue(self):
+        text, _ = panel_tabs.draw([("%1", "A")], "%1", cursor="new", focused=True)
+        self.assertIn(f"{panel_tabs.TAB_ACTIVE} + {panel_tabs.R}", text)
+        self.assertIn(f"{panel_tabs.TAB_IDLE} A {panel_tabs.R}", text)
+
+
 class _Out:
     def __init__(self):
         self.writes = []

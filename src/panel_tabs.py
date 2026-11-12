@@ -4,7 +4,9 @@
 In `side` mode the tabs are fixed (FILES, SESSIONS, DIFF, GITHUB) and choose what the right panel shows.
 
 Clicking a tab switches, clicking + opens a new session. With the panel focused, ←/→ move the
-cursor (lighter background) between the tabs and the +, and Enter activates. Draws once and waits;
+cursor (blue) between the tabs and the +, and Enter activates; the active tab turns gray while the
+cursor is elsewhere. Losing the focus (tmux focus events) sends the cursor back to the active tab,
+blue again, and activates nothing. Draws once and waits;
 on SIGUSR1 (`workspace` signals a tab change, without respawning the panel) or SIGWINCH (a real
 resize) it rereads the state and redraws only what changed. A quiet 60s timeout does the same, so a
 lost signal only delays the redraw.
@@ -25,10 +27,11 @@ import tty
 import i18n
 import lib
 import tmux
-from colors import R, TAB_ACTIVE, TAB_CURSOR, TAB_IDLE, TAB_NEW
+from colors import R, TAB_ACTIVE, TAB_IDLE
 from viewer import direction
 
 SGR = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
+STYLE = {"active": TAB_ACTIVE, "idle": TAB_IDLE}
 
 
 _KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("terminal", "side", "repos", "tasks", "session", "claude") else "claude"
@@ -140,20 +143,25 @@ def state():
     return win, tabs, active
 
 
-def draw(tabs, active, cursor=None):
+def item_styles(items, active, cursor, focused):
+    """Style of each item of the bar, {item: "active" | "idle"}, from the state alone (no tmux).
+
+    With the panel focused, the cursor's item is "active" (blue) and the active tab is "idle" (gray)
+    when the cursor is elsewhere; the + follows the same rule. Without focus only the active tab is
+    "active": the cursor is back on it (see `set_focus`), so nothing else is highlighted.
+    """
+    return {item: "active" if (item == cursor if focused else item == active) else "idle"
+            for item in items}
+
+
+def draw(tabs, active, cursor=None, focused=False):
     """Return (text, [(start, end, id)]) with 0-based columns."""
     out, map, x = "", [], 0
-    for p, name in tabs + ([] if KIND in NO_PLUS else [("new", "+")]):
+    items = tabs + ([] if KIND in NO_PLUS else [("new", "+")])
+    styles = item_styles([p for p, _ in items], active, cursor, focused)
+    for p, name in items:
         label = f" {name} "
-        if p == active:
-            color = TAB_ACTIVE
-        elif p == "new":
-            color = TAB_NEW
-        else:
-            color = TAB_IDLE
-        if p == cursor and p != active:   # keyboard cursor: lighter background (no underline)
-            color = TAB_CURSOR
-        out += f"{color}{label}{R} "
+        out += f"{STYLE[styles[p]]}{label}{R} "
         map.append((x, x + len(label) - 1, p))
         x += len(label) + 1
     return out.rstrip(" "), map   # no trailing space: on a full-width bar it would wrap and scroll the bar up
@@ -171,29 +179,38 @@ def cursor_index(items, active, previous=None):
     return items.index(active) if active in items else 0
 
 
+def set_focus(view, focused):
+    """Records the panel's focus. The cursor only lives while the panel is focused, so either way it
+    goes back to the active tab; nothing is activated."""
+    view["focused"] = focused
+    view["cursor"] = view["items"][cursor_index(view["items"], view["active"])]
+
+
 def load(view):
     """Rereads the strip into `view` (win, tabs, active, items, cursor), clamping the cursor.
 
     Signals arrive after a tab opened, closed or switched, so the captured state must be replaced by
     a fresh `state()`; the cursor stays on the tab the person had focused while it still exists.
+    After an activation (`follow`, set by `open`) the cursor moves to the new active tab instead.
     """
     win, tabs, active = state()
     items = view_items(tabs)
-    cursor = items[cursor_index(items, active, view.get("cursor"))]
+    previous = None if view.pop("follow", False) else view.get("cursor")
+    cursor = items[cursor_index(items, active, previous)]
     view.update(win=win, tabs=tabs, active=active, items=items, cursor=cursor)
     return view
 
 
 def paint(view, first=False):
     """Draws the bar; returns False and writes nothing when the state did not change."""
-    text, mapping = draw(view["tabs"], view["active"], view["cursor"])
+    text, mapping = draw(view["tabs"], view["active"], view["cursor"], view.get("focused", False))
     if not first and text == view.get("text"):
         return False
     view["text"], view["map"] = text, mapping
     out = "\x1b[?25l\x1b[2J" if first else "\x1b[2J"
     out += f"\x1b[{PAD + 1};1H" + text
     if first:
-        out += "\x1b[?1000h\x1b[?1006h"
+        out += "\x1b[?1000h\x1b[?1006h\x1b[?1004h"   # mouse, and focus in/out events (\x1b[I, \x1b[O)
     sys.stdout.write(out)
     sys.stdout.flush()
     return True
@@ -209,6 +226,7 @@ def main():
 
     def open(pane):
         win = view["win"]
+        view["follow"] = True   # an activation (Enter or click): the cursor follows the new active tab
         if KIND == "repos" and pane.startswith("plugin:"):
             wid = plugin_window(pane)
             if wid:
@@ -285,7 +303,17 @@ def main():
                             open(pane)
                             break
             buf = SGR.sub(b"", buf)
-            for k in re.findall(rb"\x1b[\[O][CD]|\r|\n|[hl]", buf):
+            # \x1b[I / \x1b[O are focus in/out; \x1b[O is focus out unless an SS3 arrow (\x1bO C/D) follows
+            for k in re.findall(rb"\x1b\[I|\x1b\[O(?![CD])|\x1b[\[O][CD]|\r|\n|[hl]", buf):
+                if k == b"\x1b[I":
+                    set_focus(view, True)
+                    paint(view)
+                    continue
+                if k == b"\x1b[O":
+                    set_focus(view, False)
+                    paint(view)
+                    continue
+                view["focused"] = True   # a key only reaches a focused panel
                 d = direction(k.decode("latin1"))
                 if d == "left":
                     move(-1)
@@ -296,7 +324,7 @@ def main():
             buf = b"" if len(buf) < 64 else buf[-8:]
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write("\x1b[?1006l\x1b[?1000l\x1b[?25h")
+        sys.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?25h")
 
 
 if __name__ == "__main__":
