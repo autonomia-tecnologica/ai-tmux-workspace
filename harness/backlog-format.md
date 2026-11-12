@@ -23,8 +23,9 @@ Título: `### N. Título curto`, em pt-BR. O item fica em torno de 15 linhas.
 
 Em `Refinadas` e `A refinar`:
 
-- `Categoria:` o assunto da fatia. `Segurança` (freio em código) e `HARNESS.md` (regra escrita) são
-  fixas; as demais seguem o assunto.
+- `Categoria:` o assunto da fatia. `Segurança` (freio em código), `HARNESS.md` (regra escrita) e
+  `Arquitetura` (camadas, dono único por efeito, eventos, UI, ciclo de vida e dívida de desenho; freio
+  no `tests/test_architecture.py` e no `ARCH.md`) são fixas; as demais seguem o assunto.
 - `Caminhos:` os arquivos que a fatia toca. O implementador lê só estes.
 - `Depende de:` ids dos quais a fatia depende, ou `—`.
 - `Aceite:` o que precisa ser verdade quando a fatia terminar.
