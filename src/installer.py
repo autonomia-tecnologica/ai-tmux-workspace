@@ -12,7 +12,8 @@ kept until the person closes it, and the exit code returned. Outside tmux nothin
 Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` and `privileged.*` keys).
 
 Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_STATE,
-AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE and SHELL.
+AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE, SHELL,
+AT_WS_HARNESS_URL (harness clone URL, tests only) and AT_WS_INSTALL_DIR / AT_WS_REPO_URL (install.sh).
 """
 import copy
 import hashlib
@@ -33,7 +34,9 @@ from i18n import t
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME") or Path.home())
 BASH = "/bin/bash" if os.path.exists("/bin/bash") else (shutil.which("bash") or "bash")
-CLONE_URL = "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
+# AT_WS_HARNESS_URL replaces the harness repo URL. Only for tests and offline checks: it is never set by
+# the install scripts, so a person installing gets the public repo.
+CLONE_URL = os.environ.get("AT_WS_HARNESS_URL") or "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
 HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
 SOURCE_FILE = "source.json"
 COMPLETION_DIR = Path(".local", "share", "ai-tmux-workspace", "completions")

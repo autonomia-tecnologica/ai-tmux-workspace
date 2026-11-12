@@ -22,7 +22,7 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 - Sessão de repo escreve só no próprio repo e em `/tmp`.
 - Home lê e edita qualquer repo do ambiente; não edita o código do workspace.
 - Código do workspace é protegido: só a sessão com root nele escreve.
-- Comando privilegiado: pedir ao ambiente (tela separada com `pkexec`); nunca `sudo`/`pkexec` direto.
+- Comando privilegiado: pedir ao ambiente (tela separada com `pkexec`); nunca `sudo`/`pkexec` direto. Fora do tmux, entregar um comando de uma linha pronto para colar; o código de saída volta para a sessão.
 - Não matar sessões ou janelas que não criou.
 
 ## Conversa

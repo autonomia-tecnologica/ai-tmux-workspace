@@ -634,5 +634,167 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(cfg["agent"], "deepseek")
 
 
+# Item 75: the curl install (clone to app/), `workspace update`, `workspace --help` and remove.sh taking the
+# clone away. The "public repo" is a local git repo built from this tree; nothing here touches the network.
+def git(cwd, *args):
+    # core.hooksPath=/dev/null: the test repos ignore the machine's global hooks (a commit-msg hook here
+    # would refuse the test commits); user.name/email keep commits independent of the global config.
+    return subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                           "-c", "core.hooksPath=/dev/null", *args],
+                          cwd=str(cwd), capture_output=True, text=True, check=True)
+
+
+def make_remote(root):
+    remote = root / "remote"
+    shutil.copytree(ROOT, remote, ignore=shutil.ignore_patterns(".git", "__pycache__", ".claude"))
+    git(remote, "init", "-q", "-b", "main")
+    git(remote, "add", "-A")
+    git(remote, "commit", "-q", "-m", "initial")
+    return remote
+
+
+class CurlInstallTest(unittest.TestCase):
+    ANSWERS = "s\ns\ns\ns\n1\n1\ns\ns\ns\ns\n"   # same answers as InstallerTest.install()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.home = self.root / "home"
+        self.state = self.root / "state"
+        self.bin = self.root / "bin"
+        self.source = self.root / "source"
+        self.tmux_log = self.root / "tmux.log"
+        for directory in (self.home, self.state, self.bin, self.source / "regras"):
+            directory.mkdir(parents=True)
+        (self.source / "HARNESS.md").write_text("# HARNESS\n", encoding="utf-8")
+        (self.source / "CLAUDE.md").write_text("# Harness\n", encoding="utf-8")
+        (self.source / "forcado.yaml").write_text("versao: 1\nitens: []\n", encoding="utf-8")
+        (self.source / "ORIGEM.md").write_text("origin\n", encoding="utf-8")
+        (self.source / "regras" / "agents.md").write_text("# Agents\n", encoding="utf-8")
+        # tmux and claude are stubs; tmux only logs calls so --help can prove it never opens a session.
+        executable(self.bin / "tmux", f"#!/bin/sh\necho called >> '{self.tmux_log}'\nexit 0\n")
+        executable(self.bin / "claude")
+        (self.bin / "python3").symlink_to(sys.executable)
+        (self.home / ".zshrc").write_text("# my zshrc\n", encoding="utf-8")
+        self.install_dir = self.home / ".local" / "share" / "ai-tmux-workspace" / "app"
+
+    def env(self, **overrides):
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("AT_WS_CONFIG", "AT_WS_INSTALL_STATE", "AT_HARNESS_SOURCE", "WS_STATE",
+                              "AT_WS_INSTALL_DIR", "AT_WS_REPO_URL", "AT_WS_HARNESS_URL", "TMUX",
+                              "SUDO_USER", "SUDO_UID", "PKEXEC_UID", "DOAS_USER")}
+        env.update(HOME=str(self.home), WS_STATE=str(self.state), AT_HARNESS_SOURCE=str(self.source),
+                   SHELL="/usr/bin/zsh", NO_COLOR="1", AT_WS_NO_TTY="1",
+                   PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
+        env.update(overrides)
+        return env
+
+    def run_cmd(self, argv, stdin=None, **overrides):
+        return subprocess.run(argv, input=stdin, env=self.env(**overrides), capture_output=True,
+                              text=isinstance(stdin, str) or stdin is None, check=False, timeout=120)
+
+    def clone(self, remote):
+        """What `curl ... | sh` leaves behind: the shallow clone in app/ (AT_WS_REPO_URL points at the local remote)."""
+        self.install_dir.parent.mkdir(parents=True)
+        git(self.root, "clone", "-q", "--depth", "1", remote.as_uri(), str(self.install_dir))
+
+    # 1 ---------------------------------------------------------------------------------------
+    def test_curl_run_clones_shallow_into_app_and_the_assistant_links_it(self):
+        remote = make_remote(self.root)
+        before = snapshot(self.home)
+        # `curl | sh`: the script arrives on stdin. The clone happens; the assistant then gets no answers
+        # (the script consumed stdin) and stops without touching HOME beyond the clone.
+        piped = self.run_cmd(["sh"], stdin=INSTALL.read_bytes(),
+                             AT_WS_REPO_URL=remote.as_uri(), AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertTrue((self.install_dir / ".git").is_dir(), piped.stdout + piped.stderr)
+        self.assertEqual(git(self.install_dir, "rev-parse", "--is-shallow-repository").stdout.strip(), "true")
+        self.assertNotEqual(piped.returncode, 0)
+        # The assistant from the clone, with answers: the link points into app/.
+        installed = self.run_cmd([BASH, str(self.install_dir / "install.sh")], stdin=self.ANSWERS,
+                                 AT_WS_REPO_URL=remote.as_uri(), AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        link = self.home / ".local" / "bin" / "workspace"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(Path(os.readlink(link)), self.install_dir / "bin" / "workspace")
+        self.assertTrue((self.home / ".config" / "ai-tmux-workspace" / "config.yaml").is_file())
+        self.assertFalse((self.home / ".config" / "ai-tmux-workspace" / "app").exists())
+        self.assertNotEqual(snapshot(self.home), before)
+
+    # 2 ---------------------------------------------------------------------------------------
+    def test_update_fast_forwards_a_clean_clone(self):
+        remote = make_remote(self.root)
+        self.clone(remote)
+        (remote / "NOVO.md").write_text("new\n", encoding="utf-8")
+        git(remote, "add", "-A")
+        git(remote, "commit", "-q", "-m", "next")
+        result = self.run_cmd([BASH, str(self.install_dir / "bin" / "workspace"), "update"],
+                              AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.install_dir / "NOVO.md").read_text(encoding="utf-8"), "new\n")
+
+    # 3 ---------------------------------------------------------------------------------------
+    def test_update_aborts_on_a_dirty_clone_and_changes_nothing(self):
+        remote = make_remote(self.root)
+        self.clone(remote)
+        (remote / "NOVO.md").write_text("new\n", encoding="utf-8")
+        git(remote, "add", "-A")
+        git(remote, "commit", "-q", "-m", "next")
+        (self.install_dir / "README.md").write_text("local edit\n", encoding="utf-8")
+        result = self.run_cmd([BASH, str(self.install_dir / "bin" / "workspace"), "update"],
+                              AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(i18n.t("cli.update.dirty", root=str(self.install_dir)), result.stderr)
+        self.assertFalse((self.install_dir / "NOVO.md").exists())
+        self.assertEqual((self.install_dir / "README.md").read_text(encoding="utf-8"), "local edit\n")
+
+    # 4 ---------------------------------------------------------------------------------------
+    def test_update_refuses_a_dev_checkout_and_leaves_it_alone(self):
+        remote = make_remote(self.root)          # stands in for a dev checkout (not the app clone)
+        self.clone(make_remote(self.root / "other"))
+        head = git(remote, "rev-parse", "HEAD").stdout
+        result = self.run_cmd([BASH, str(remote / "bin" / "workspace"), "update"],
+                              AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(i18n.t("cli.update.dev", root=str(remote)), result.stderr)
+        self.assertEqual(git(remote, "rev-parse", "HEAD").stdout, head)
+
+    # 5 ---------------------------------------------------------------------------------------
+    def test_help_prints_the_commands_and_never_opens_tmux(self):
+        result = self.run_cmd([BASH, str(ROOT / "bin" / "workspace"), "--help"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("update", result.stdout)
+        self.assertIn("--help", result.stdout)
+        self.assertFalse(self.tmux_log.exists(), "--help must not start or attach tmux")
+
+    # 6 ---------------------------------------------------------------------------------------
+    def test_remove_takes_the_clone_and_links_and_leaves_nothing_behind(self):
+        remote = make_remote(self.root)
+        before = snapshot(self.home)
+        self.clone(remote)
+        installed = self.run_cmd([BASH, str(self.install_dir / "install.sh")], stdin=self.ANSWERS,
+                                 AT_WS_REPO_URL=remote.as_uri(), AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        # remove.sh lives in the clone; its killswitch needs the answer "s".
+        removed = self.run_cmd([BASH, str(self.install_dir / "remove.sh")], stdin="s\n",
+                               AT_WS_REPO_URL=remote.as_uri(), AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertFalse(self.install_dir.exists())
+        self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace").exists())
+        self.assertEqual(snapshot(self.home), before)
+
+    # 7 ---------------------------------------------------------------------------------------
+    def test_remove_never_deletes_a_dev_checkout_or_a_symlink(self):
+        remote = make_remote(self.root)
+        self.install_dir.parent.mkdir(parents=True)
+        self.install_dir.symlink_to(remote, target_is_directory=True)   # a dev checkout behind a symlink
+        result = self.run_cmd([BASH, str(remote / "remove.sh")], stdin="s\n",
+                              AT_WS_REPO_URL=remote.as_uri(), AT_WS_INSTALL_DIR=str(self.install_dir))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(remote.is_dir())
+        self.assertTrue(self.install_dir.is_symlink())
+        self.assertIn("symlink", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,8 @@
 The adapter knows only the OpenCode side of one headless run: the profile command, the merged
 `OPENCODE_CONFIG` and the json event shape. It carries no Claude flag, no Claude settings and no
 capability rule. The conference scope is wired as OpenCode permission rules derived from the same
-`conference.PERMITTED_FILES` the Claude hook enforces; the central policy engine stays in
+`conference.STRUCTURAL_FILES` (reads) and `conference.EDITABLE_FILES` (edits) the Claude hook
+enforces; the central policy engine stays in
 `src/policy.py` and `harness/opencode-policy.js`.
 """
 import json
@@ -16,20 +17,23 @@ from .base import Adapter, Update, _t, clip, short_path
 
 
 def conference_permissions():
-    """OpenCode permission rules: everything denied, then the two permitted files.
+    """OpenCode permission rules: everything denied, then the structural files readable and the
+    editable ones writable.
 
     `README.md` edits ask instead of allowing: a non-interactive run cannot confirm them, so the
     direct write does not happen. The Claude path turns the same intent into a pending diff.
     """
-    readme, backlog = conference.PERMITTED_FILES
-    return [
+    readme = "README.md"
+    rules = [
         {"action": "*", "resource": "*", "effect": "deny"},
         {"action": "external_directory", "resource": "*", "effect": "deny"},
-        {"action": "read", "resource": readme, "effect": "allow"},
-        {"action": "read", "resource": backlog, "effect": "allow"},
-        {"action": "edit", "resource": readme, "effect": "ask"},
-        {"action": "edit", "resource": backlog, "effect": "allow"},
     ]
+    rules += [{"action": "read", "resource": name, "effect": "allow"}
+              for name in conference.STRUCTURAL_FILES]
+    for name in conference.EDITABLE_FILES:
+        effect = "ask" if name == readme else "allow"
+        rules.append({"action": "edit", "resource": name, "effect": effect})
+    return rules
 
 
 def conference_config(profile):

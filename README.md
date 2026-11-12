@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/autonomia-tecnologica/ai-tmux-works
 
 O script baixa o código para `~/.local/share/ai-tmux-workspace/app`, cria o comando `workspace` em `~/.local/bin` e roda o assistente: dependências, autocomplete, `config.yaml` inicial, harness e hooks do Claude Code. Ele não usa `sudo`/`pkexec`; quando falta um pacote, só mostra o comando para você rodar.
 
-Desfazer: `bash ~/.local/share/ai-tmux-workspace/app/remove.sh` (restaura o que o instalador mudou; a pasta do clone fica para reinstalar). Quem desenvolve roda `./install.sh` do próprio clone; é o mesmo assistente, sem baixar nada.
+Desfazer: `bash ~/.local/share/ai-tmux-workspace/app/remove.sh` (restaura o que o instalador mudou, apaga o clone em `app/` e o link; só remove a pasta se for um clone git deste repo, nunca um checkout de dev ou symlink). Atualizar a instalação: `workspace update` (git pull --ff-only; clone com alterações locais aborta). Quem desenvolve roda `./install.sh` do próprio clone (modo dev): é o mesmo assistente, sem baixar nada, e `workspace update` recusa esse checkout, que você atualiza com `git pull`.
 
 A filosofia do ambiente de trabalho mora em `ambiente-de-trabalho` (`docs/pt_BR/filosofia.md`) e vale sobre este repo. O manifesto da Autonomia Tecnológica mora primariamente no site (`site/i18n/pt_BR.json`).
 
@@ -219,7 +219,7 @@ Se um desses repos já estiver em outro grupo, não repita a entrada: acrescente
 já existe, porque um repo listado duas vezes aparece duas vezes no painel de repos.
 
 ## Comandos
-`workspace [perfil]` · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica) · `config` (mostra o caminho e o texto do `config.yaml`) · `config update [--apply]` (compara o `config.yaml` com `config/config.example.yaml`, o harness instalado, as settings por perfil e os hooks do Claude com este repo).
+`workspace [perfil]` · `update` (git pull --ff-only do clone instalado) · `--help` (lista os comandos; não abre o tmux) · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; só depois de mudar hooks do Claude ou plugins) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica) · `config` (mostra o caminho e o texto do `config.yaml`) · `config update [--apply]` (compara o `config.yaml` com `config/config.example.yaml`, o harness instalado, as settings por perfil e os hooks do Claude com este repo).
 
 `workspace config update` sem argumento só mostra a diferença. Com `--apply`: acrescenta ao `config.yaml` só o que falta (uma chave ou um item de lista, por texto exato), sem alterar nem remover o que você tem; antes grava um backup `config.yaml.bak-<data>`. O que você já viu ou removeu não volta: fica registrado em `~/.config/ai-tmux-workspace/state/config-offered.json`. Perfis, grupos, caminhos e relações nunca são tocados. O harness instalado, as settings geradas e os hooks são regenerados a partir da fonte e deste repo. `workspace reload` basta; hooks valem nas sessões do Claude que abrirem depois.
 

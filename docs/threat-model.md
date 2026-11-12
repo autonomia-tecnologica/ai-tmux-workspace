@@ -29,8 +29,8 @@ data, not against a secondary crosswalk.
 |---|---:|
 | `out_of_scope` | 8 |
 | `needs_decision` | 3 |
-| `implemented` | 15 |
-| `not_implemented` | 31 |
+| `implemented` | 16 |
+| `not_implemented` | 30 |
 | **total** | **57** |
 
 The only statuses are `out_of_scope`, `needs_decision`, `implemented` and
@@ -44,8 +44,9 @@ precise failure, or it is split into smaller requirements.
 2. The main folder is the main repo from `config.yaml` (today `~/Codes/home`). It is not a
    development session: it may manage all configured repos' `README.md`/`BACKLOG.md` only,
    never their code (R-SCOPE-02, R-SCOPE-05, D-005).
-3. Conference participants read and write only their own `README.md`/`BACKLOG.md`
-   (R-SCOPE-03).
+3. Conference participants read only their own structural files (`SECURITY.md`, `DESIGN.md`,
+   `ARCH.md`, `README.md`, `BACKLOG.md`), only when asked, and write only `README.md` (as a
+   proposal) and `BACKLOG.md` (R-SCOPE-03).
 4. No agent role writes the control plane (`~/.config/ai-tmux-workspace`); the workspace
    process and the installer do (R-SCOPE-04, R-POL-07).
 5. Development is strongly recommended inside each repo's own folder, for individualized
@@ -71,7 +72,7 @@ not the breadth of the role.
 |---|---|---|---|---|---|
 | `R-SCOPE-01` | A repo session handles only its own repo plus /tmp | `not_implemented` | LLM06, ASI03 | AML.T0053, AML.T0085.001 | The capability table would deny repo.outside and allow /tmp, but the launcher never sets WS_SESSION_ROLE/WS_SESSION_ROOT, so the policy is inactive and the agent keeps whatever access the OS user has. |
 | `R-SCOPE-02` | The main repo from config.yaml may manage all repos' README.md and BACKLOG.md only | `not_implemented` | LLM06, ASI03 | AML.T0053, AML.T0085.001, AML.T0081 | The main repo opens with the broad `home` role: repo.outside allow lets it read/write code anywhere, and config.write allow lets it change the control plane. There is no narrow capability limited to README.md/BACKLOG.md across configured r… |
-| `R-SCOPE-03` | A conference participant reads and writes only its own README.md and BACKLOG.md | `not_implemented` | LLM06, ASI02 | AML.T0053, AML.T0085.001, AML.T0101 | Participants can read any repo file with Read/Grep/Glob; only BACKLOG.md is protected on write; README.md is treated as read-only. The new scope (README.md + BACKLOG.md only, both readable and writable when asked) is not implemented, and n… |
+| `R-SCOPE-03` | A conference participant reads only its own structural files (SECURITY.md, DESIGN.md, ARCH.md, README.md, BACKLOG.md), only when asked, and writes only README.md (as a proposal) and BACKLOG.md | `implemented` | LLM06, ASI02 | AML.T0053, AML.T0085.001, AML.T0101 | The worker hook (Claude path) denies every tool except Read/Edit, reads outside `conference.STRUCTURAL_FILES` (HARNESS.md, sibling repos, code) and edits outside `conference.EDITABLE_FILES`. Secrets are scanned in every readable file before the prompt. The OpenCode path enforces the same scope only through its permission rules (`src/agents/opencode.py`), not yet verified against a live OpenCode run. The scope is a hook decision, not a sandbox. |
 | `R-SCOPE-04` | No agent role writes the workspace control plane | `not_implemented` | LLM06, ASI03 | AML.T0081, AML.T0053 | A home-role session can write ~/.config/ai-tmux-workspace because config.write is allow and there is no protected path that overrides the role table. The workspace process/installer are not distinguished from agent roles. |
 | `R-SCOPE-05` | The main repo from config.yaml is not a development session | `not_implemented` | LLM06, ASI03 | AML.T0053, AML.T0085.001 | The workspace opens the main repo as a normal Claude pane with the normal development toolset. There is no 'management-only' mode or profile for it. |
 | `R-POL-01` | One central policy engine, two adapters, no rules in the adapters | `implemented` | LLM06, ASI02, ASI10 | AML.T0053, AML.T0085.001 | — |

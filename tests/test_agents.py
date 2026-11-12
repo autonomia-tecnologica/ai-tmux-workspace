@@ -151,11 +151,15 @@ class AgentAdapterTest(unittest.TestCase):
         config_path = lib.profile_adapter("oc").session("oc", self.repo).settings
         config = json.loads(Path(config_path).read_text(encoding="utf-8"))
         permissions = config["permissions"]
-        readme, backlog = conference.PERMITTED_FILES
-        for name in (readme, backlog):
+        readme, backlog = "README.md", "BACKLOG.md"
+        for name in conference.STRUCTURAL_FILES:
             self.assertIn({"action": "read", "resource": name, "effect": "allow"}, permissions)
+        self.assertNotIn({"action": "read", "resource": "HARNESS.md", "effect": "allow"}, permissions)
         self.assertIn({"action": "edit", "resource": readme, "effect": "ask"}, permissions)
         self.assertIn({"action": "edit", "resource": backlog, "effect": "allow"}, permissions)
+        for name in ("SECURITY.md", "DESIGN.md", "ARCH.md"):
+            self.assertNotIn({"action": "edit", "resource": name, "effect": "allow"}, permissions)
+            self.assertNotIn({"action": "edit", "resource": name, "effect": "ask"}, permissions)
         self.assertIn({"action": "*", "resource": "*", "effect": "deny"}, permissions)
 
     # --- stream as an adapter concern -----------------------------------------------------------

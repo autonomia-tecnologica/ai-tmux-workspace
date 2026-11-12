@@ -2,6 +2,8 @@
 # workspace — tmux for the repos of config.yaml (~/.config/ai-tmux-workspace/).
 #   workspace                 opens (or reattaches) the workspace; the agent (claude, deepseek...) comes from "agent" in config.yaml (Ctrl+b o)
 #   workspace install         links `workspace` into ~/.local/bin
+#   workspace update          git pull --ff-only do clone instalado (app/); clone sujo aborta; checkout de dev é recusado
+#   workspace --help          this list; does not open tmux
 #   workspace install-hooks   registers the Claude Code hooks that light the dots
 #   workspace restart [profile] kill the tmux server and start again (Claude resumes with --continue)
 #   workspace fit [profile]    re-apply the layout once, only what changed (run by the tmux hooks on attach/resize)
@@ -990,6 +992,32 @@ install() {
   msg cli.installed
 }
 
+# Item 75: only the clone the curl install made (INSTALL_DIR, default app/) is updated, and only by a
+# fast-forward. A dev checkout (this file running from anywhere else) is refused: its owner pulls it.
+update_workspace() {
+  local app here
+  app="$(readlink -f "${AT_WS_INSTALL_DIR:-$HOME/.local/share/ai-tmux-workspace/app}" 2>/dev/null)"
+  here="$(readlink -f "$ROOT")"
+  if [ -z "$app" ] || [ "$here" != "$app" ]; then
+    msg cli.update.dev root="$ROOT" >&2
+    return 1
+  fi
+  if [ ! -d "$ROOT/.git" ]; then
+    msg cli.update.not_git root="$ROOT" >&2
+    return 1
+  fi
+  if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+    msg cli.update.dirty root="$ROOT" >&2
+    return 1
+  fi
+  if git -C "$ROOT" pull --ff-only; then
+    msg cli.update.done
+  else
+    msg cli.update.failed >&2
+    return 1
+  fi
+}
+
 install_hooks() {
   python3 - "$SRC/hook.py" "$SRC/statusline.py" "$SRC" <<'PY'
 import json, os, shutil, sys
@@ -1085,6 +1113,8 @@ case "${1:-}" in
   tab-exit) tab_exit "$2" ;;
   plugins-sync) plugin_sync "${2:-claude}" ;;
   install) install ;;
+  update) update_workspace ;;
+  -h|--help) msg cli.help ;;
   install-hooks) install_hooks ;;
   privileged) shift; python3 "$SRC/installer.py" --privileged "$@" ;;
   doctor) shift; doctor "$@" ;;
