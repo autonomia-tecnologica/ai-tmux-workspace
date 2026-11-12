@@ -46,11 +46,8 @@
   "permissions": {
     "deny": [
       "Bash(sudo:*)",
-      "Write(./**/.env)",
       "Edit(./**/.env)",
-      "Write(./**/*.pem)",
       "Edit(./**/*.pem)",
-      "Write(./**/*.key)",
       "Edit(./**/*.key)"
     ]
   }
