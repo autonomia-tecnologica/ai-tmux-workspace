@@ -221,6 +221,20 @@ com a cópia instalada e a fonte canônica, e o `reload` mostra o aviso sem abor
 `src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
 `src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os irmãos) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `docs/threat-model.md` (modelagem de ameaças) · `docs/threat-model.json` (requisitos; fonte da verdade).
 
+## Segurança: resumo
+
+O Claude executa comandos com as permissões da sua conta; o ai-tmux-workspace organiza tmux, sessões, config e hooks; a regra do ambiente mora em `ambiente-de-trabalho`.
+
+- **Forçado x recomendado:** o hook (código) é o freio que conta; o `HARNESS.md` é texto que a LLM pode ignorar. Mesmo o hook tem lacunas abertas.
+- **Sem isolamento de sistema operacional hoje:** o agente roda com a sua conta. Usuário dedicado e arquivos de outro dono são objetivo do item 35 (pausado), não garantia atual.
+- **Não instale pedindo a uma LLM:** o `install.sh` pede confirmação a cada passo; quem responde é você.
+- **Desfazer:** `remove.sh` restaura o que o instalador mudou, pelo manifesto de backup.
+- **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`.
+- **Falha aberta:** a LLM pode alterar a lista de repos do `config.yaml`.
+- **Seu `settings.json`:** o workspace só acrescenta hooks e statusLine, com backup; hooks de terceiros não são tocados.
+
+Detalhes, o que é garantia e o que é só atrito: [`SECURITY.md`](SECURITY.md).
+
 ## Segurança: modelagem de ameaças
 
 A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
