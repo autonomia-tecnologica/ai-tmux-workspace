@@ -44,6 +44,10 @@ class SettingsError(ValueError):
     """The workspace-generated settings for a profile cannot be built safely (literal key, bad shape, I/O)."""
 
 
+class RepoDisabledError(ValueError):
+    """The repo is switched off ("repos_disabled"): no agent process is built or started for it."""
+
+
 def config_path():
     """Single config.yaml; lives outside the repo (the repo holds only the structure). AT_WS_CONFIG overrides the path."""
     return Path(os.environ.get("AT_WS_CONFIG", HOME / ".config" / "ai-tmux-workspace" / "config.yaml"))
@@ -493,6 +497,8 @@ def agent_launch_command(mode="", repo=None, profile=None, tab=None):
     role table. A `tab` also adds `WS_SESSION_TAB`/`WS_STATE`, the per-tab session recording used by
     `session_command`. Without a repo (the conference worker) no box is declared on purpose. `auto` is
     never fixed here: the policy reads it from the event's `permission_mode`."""
+    if repo and not repo_enabled(repo):
+        raise RepoDisabledError(t("repo.disabled", repo=os.path.basename(expand_path(repo))))
     name = profile or agent_name()
     cmd = profile_command(name)
     if _KEY_LITERAL.search(cmd):
@@ -625,6 +631,8 @@ def session_command(profile, repo, tab=""):
     Claude flags). A SettingsError from `agent_launch_command` propagates: nothing is recorded
     before the line is built."""
     repo = expand_path(repo)
+    if not repo_enabled(repo):   # before anything is recorded for the repo
+        raise RepoDisabledError(t("repo.disabled", repo=os.path.basename(repo)))
     if is_claude_harness(profile):
         identity = agent_identity(profile)
         mode = permission_state.mode_for(repo, identity, True, profile)
@@ -692,8 +700,87 @@ def _entries(paths):
     return res
 
 
+def repos_folder():
+    """Repos folder (config "repos_folder"), expanded, or None. Every git repo directly inside it is a repo."""
+    value = read_config().get("repos_folder")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return expand_path(value.strip())
+
+
+def folder_repos(folder=None):
+    """[(name, path), ...] of the git repos directly inside the repos folder, sorted by name. [] without a folder."""
+    folder = folder or repos_folder()
+    if not folder or not os.path.isdir(folder):
+        return []
+    found = []
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if name.startswith(".") or not os.path.isdir(path) or not os.path.exists(os.path.join(path, ".git")):
+            continue
+        found.append((name, path))
+    return found
+
+
+def disabled_repos():
+    """Names of the folder repos switched off (config "repos_disabled"). Every other repo is on."""
+    value = read_config().get("repos_disabled")
+    if not isinstance(value, list):
+        return set()
+    return {name for name in value if isinstance(name, str) and name}
+
+
+def repo_enabled(path):
+    """False only for a repo directly inside the repos folder that is listed in "repos_disabled".
+
+    Paths outside the folder (the main repo, worktrees, `workspace open <path>`) are not governed by
+    the switch and stay on. Without a folder every repo is on."""
+    folder = repos_folder()
+    if not folder:
+        return True
+    target = expand_path(path)
+    if os.path.dirname(target) != folder:
+        return True
+    return os.path.basename(target) not in disabled_repos()
+
+
+def set_repo_enabled(name, enabled):
+    """Switches one folder repo on or off in config.yaml ("repos_disabled"); other keys are kept.
+
+    The previous file is copied to `<config>.bak` before the write, and the write is atomic. Raises
+    ConfigError when the config cannot be read, ValueError when `name` is not a repo of the folder."""
+    cfg = read_config()
+    if CONFIG_ERROR:
+        raise ConfigError(t("repo.config_error", path=str(config_path())))
+    if name not in {n for n, _ in folder_repos()}:
+        raise ValueError(t("repo.not_in_folder", repo=name))
+    off = disabled_repos()
+    if enabled:
+        off.discard(name)
+    else:
+        off.add(name)
+    if off:
+        cfg["repos_disabled"] = sorted(off)
+    else:
+        cfg.pop("repos_disabled", None)
+    path = config_path()
+    if path.exists():
+        path.with_name(path.name + ".bak").write_bytes(path.read_bytes())
+    text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n" if path.suffix == ".json" else yaml_min.dumps(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
 def read_repos():
-    """[(group, [(name, path), ...]), ...] from "groups" (category; each entry is a path or {path, siblings})."""
+    """[(group, [(name, path), ...]), ...]. With "repos_folder" the folder is the only source: one group named
+    after the folder holds its git repos, and "groups" entries are not read (repos outside the folder are not
+    supported). Without it: "groups" (category; each entry is a path or {path, siblings})."""
+    folder = repos_folder()
+    if folder:
+        repos = folder_repos(folder)
+        return [(os.path.basename(folder) or folder, repos)] if repos else []
     groups = []
     for group_name, paths in read_config().get("groups", {}).items():
         repos = [(os.path.basename(p) or p, p) for p in _entries(paths)]
@@ -1193,13 +1280,13 @@ if __name__ == "__main__":
                 print(launch)
             else:
                 print(agent_launch_command(repo=repo, profile=name))
-        except SettingsError as error:
+        except (SettingsError, RepoDisabledError) as error:
             print(error, file=sys.stderr)
             sys.exit(2)
     elif command == "session-command" and len(sys.argv) > 3:   # bash: session line of a profile for a repo
         try:
             print(session_command(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else ""))
-        except SettingsError as error:
+        except (SettingsError, RepoDisabledError) as error:
             print(error, file=sys.stderr)
             sys.exit(2)
     elif command == "profile-list":     # bash: every profile name, one per line, in config order
@@ -1221,8 +1308,31 @@ if __name__ == "__main__":
     elif command == "opening-command" and len(sys.argv) > 2:   # bash: command line that opens a repo
         try:
             print(opening_command(sys.argv[2]))
-        except SettingsError as error:
+        except (SettingsError, RepoDisabledError) as error:
             print(error, file=sys.stderr)
+            sys.exit(2)
+    elif command == "repo-enabled" and len(sys.argv) > 2:   # bash: exit 1 with the message when the repo is off
+        if not repo_enabled(sys.argv[2]):
+            print(t("repo.disabled", repo=os.path.basename(expand_path(sys.argv[2]))), file=sys.stderr)
+            sys.exit(1)
+    elif command == "repo":   # `workspace repo list | on <name> | off <name>` (repos folder switch)
+        action = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not repos_folder():
+            print(t("repo.no_folder"), file=sys.stderr)
+            sys.exit(2)
+        if action == "list":
+            off = disabled_repos()
+            for name, _ in folder_repos():
+                print(f"{name}\t{t('repo.state.off' if name in off else 'repo.state.on')}")
+        elif action in ("on", "off") and len(sys.argv) > 3:
+            try:
+                set_repo_enabled(sys.argv[3], action == "on")
+            except ValueError as error:      # ConfigError and not-in-folder are both ValueError
+                print(error, file=sys.stderr)
+                sys.exit(2)
+            print(t("repo.set", repo=sys.argv[3], state=t("repo.state." + action)))
+        else:
+            print(t("repo.usage"), file=sys.stderr)
             sys.exit(2)
     elif command == "initial-repo":    # bash: path of the first repo to open on a fresh start (main, else first listed)
         print((read_main() or read_repos()[0][1][0])[1])

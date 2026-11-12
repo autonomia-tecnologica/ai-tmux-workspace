@@ -106,6 +106,17 @@ options:
 # Repo principal: fica fora dos grupos, sempre no topo da lista.
 main: ~/Codes/main-repo
 
+# Pasta de repositórios (opcional, descomentar para usar): todo repo git que estiver direto nesta pasta
+# entra no painel, sem listar um por um. Com ela declarada, ela é a única fonte de repos: "groups" não
+# listam repos e repos fora dela não são suportados (o "main" continua à parte).
+# repos_folder: ~/Codes
+
+# Repos desligados da pasta de repositórios (nome da pasta). Desligado: não abre janela nem processo de
+# agente, e mensagem para ele falha com aviso. Liga/desliga pela tecla T no painel de repos (F filtra
+# ligados/desligados) ou por `workspace repo on|off <nome>`. Sem a chave, todos ficam ligados.
+# repos_disabled:
+#   - some-repo
+
 # Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
 # "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).
 # O código do próprio workspace não entra aqui: `workspace dev` abre a janela dele, com papel "self".

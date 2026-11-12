@@ -10,6 +10,7 @@
 #   workspace config [update [--apply]]  show the config; update compares config.yaml, the harness, settings and hooks with this repo (src/config_cmd.py)
 #   workspace worktree new <repo> <branch> [base] | list <repo> | remove <repo> <branch> | merge <repo> <branch>
 #   workspace privileged <cmd...>  system step: full command on a separate screen, exit code returned
+#   workspace repo list | on <nome> | off <nome>  repos of the "repos_folder" and their switch (config.yaml)
 #   workspace dev [profile]   window on the workspace's own code (role self): the only session that edits it; not in config
 #   workspace stop [profile]   kill the profile's tmux server
 #   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
@@ -307,6 +308,7 @@ open_repo() {
   local path S existing
   path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
   [ -d "$path" ] || { msg cli.not_exists path="$path" >&2; exit 1; }
+  python3 "$SRC/lib.py" repo-enabled "$path" || exit 1   # switched off: no window, no agent (message on stderr)
   existing="$(tmux list-windows -t "$S:" -F '#{window_id}|#{@ws_repo}' | awk -F'|' -v p="$path" '$2==p {print $1; exit}')"
   if [ -n "$existing" ]; then
     tmux select-window -t "$existing"
@@ -362,6 +364,7 @@ left() { # $1=repos|sessions $2=window
 # $3=0 sends without leaving the current window (used by the tasks panel).
 send_prompt() { # $1=repo path $2=message $3=focus (default 1)
   local path W pane S prev="" P i
+  python3 "$SRC/lib.py" repo-enabled "$1" || return 1   # switched off: the message is refused, not queued
   [ "${3:-1}" = 0 ] && prev="$(tmux display -p '#{window_id}' 2>/dev/null)"
   open_repo "$1"
   path="$(readlink -f "${1/#\~/$HOME}")"; S="$(env_global WS_PROFILE)"
@@ -556,6 +559,7 @@ session_new() { # $1=window $2=profile (default: the configured agent) $3=tab id
   local W="$1" profile="${2:-}" path S n P tab="${3:-}" restore="${4:-}"
   path="$(tmux show -wqv -t "$W" @ws_repo)"
   [ -n "$path" ] || return 1
+  python3 "$SRC/lib.py" repo-enabled "$path" || return 1   # switched off: no agent process
   S="$(env_global WS_PROFILE)"
   if [ -z "$profile" ]; then profile="$(python3 "$SRC/lib.py" default-profile)"; fi
   if ! python3 "$SRC/lib.py" profile-list | grep -qxF "$profile"; then
@@ -1107,6 +1111,7 @@ case "${1:-}" in
   stop) stop_workspace "${2:-claude}" ;;
   restart) shift; restart "$@" ;;
   reload) shift; reload "$@" ;;
+  repo) shift; python3 "$SRC/lib.py" repo "$@" ;;
   fit) shift; fit "$@" ;;
   mview) shift; mview "$@" ;;
   menu) menu "$2" "$3" ;;
