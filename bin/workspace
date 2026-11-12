@@ -786,8 +786,8 @@ layout_value() { # $1=list-panes dump $2=role $3=field (1 id, 2 width, 3 height,
   layout_pane "$1" "$2" | cut -d'|' -f"$3"
 }
 
-layout_apply() { # $1=window
-  local W="$1" rows w h zoomed view target active cmd=()
+layout_apply() { # $1=window $2=redraw (non-empty: reload; every client is redrawn in full, even with no geometry change)
+  local W="$1" redraw="${2:-}" rows w h zoomed view target active cmd=() c
   local role flag value cur id pw ph
   local claude_p term_p ttabs_p term_h ttabs_h delta term_target
   rows="$(tmux list-panes -t "$W" -F '#{pane_id}|#{@role}|#{pane_width}|#{pane_height}|#{pane_active}|#{window_width}|#{window_height}|#{window_zoomed_flag}')"
@@ -850,6 +850,9 @@ EOF
   fi
   if [ -z "$(tmux show -wqv -t "$W" @ws_repo)" ]; then
     # plugin windows: only the bar is ours, and they never get the phone zoom
+    if [ -n "$redraw" ]; then
+      while read -r c; do cmd+=(refresh-client -t "$c" ';'); done < <(tmux list-clients -F '#{client_name}')
+    fi
     [ "${#cmd[@]}" -gt 0 ] && tmux "${cmd[@]}" refresh-client 2>/dev/null
     return 0
   fi
@@ -865,6 +868,9 @@ EOF
     elif [ "$target" != "$active" ]; then
       cmd+=(select-pane -Z -t "$target" ';')   # already zoomed: move the zoom to the new view
     fi
+  fi
+  if [ -n "$redraw" ]; then
+    while read -r c; do cmd+=(refresh-client -t "$c" ';'); done < <(tmux list-clients -F '#{client_name}')
   fi
   [ "${#cmd[@]}" -gt 0 ] && tmux "${cmd[@]}" refresh-client 2>/dev/null
   return 0
@@ -963,6 +969,8 @@ reload() {
   done < <(tmux list-windows -t "$profile:" -F '#{window_id}|#{@ws_repo}')
   plugin_sync "$profile"
   panels "$profile"
+  # layout_apply is the only owner of the redraw: it refreshes every client once the windows are settled
+  while read -r W; do layout_apply "$W" redraw; done < <(tmux list-windows -t "$profile:" -F '#{window_id}')
   doctor --warn >&2 || true   # drift warning: never fails the reload
   msg cli.reloaded profile="$profile"
 }

@@ -161,6 +161,36 @@ class LayoutOwnerTest(unittest.TestCase):
         self.assertNotIn("refresh-client", self.functions["reload"])
 
 
+class RedrawOnReloadTest(unittest.TestCase):
+    """reload redraws the whole screen through layout_apply; fit and ensure_window stay silent."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.functions = functions(BIN.read_text(encoding="utf-8"))
+
+    def test_reload_asks_layout_apply_for_a_redraw(self):
+        self.assertIn('layout_apply "$W" redraw', self.functions["reload"])
+
+    def test_reload_redraws_after_panels_and_before_doctor(self):
+        body = self.functions["reload"]
+        panels_at = body.index('panels "$profile"')
+        redraw_at = body.index('layout_apply "$W" redraw')
+        doctor_at = body.index("doctor --warn")
+        self.assertLess(panels_at, redraw_at)
+        self.assertLess(redraw_at, doctor_at)
+
+    def test_redraw_is_only_requested_by_reload(self):
+        for name in ("fit", "ensure_window"):
+            with self.subTest(function=name):
+                self.assertNotIn("redraw", self.functions[name])
+
+    def test_layout_apply_refreshes_every_client_only_when_asked(self):
+        body = self.functions["layout_apply"]
+        self.assertIn('-n "$redraw"', body)
+        self.assertIn("list-clients", body)
+        self.assertNotIn("refresh-client -S", body)
+
+
 class BuildWindowTest(unittest.TestCase):
     """A new repo window is mounted off screen and only revealed once it is assembled, so no pane or
     placeholder respawn is seen appearing one at a time."""
