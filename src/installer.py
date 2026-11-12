@@ -13,7 +13,8 @@ Stdlib only. All end-user text comes from i18n/pt-BR.json (`installer.*` and `pr
 
 Path overrides (also used by the tests): HOME, AT_WS_CONFIG, WS_STATE,
 AT_HARNESS_SOURCE (disables the default harness search when set), AT_WS_INSTALL_STATE, SHELL,
-AT_WS_HARNESS_URL (harness clone URL, tests only) and AT_WS_INSTALL_DIR / AT_WS_REPO_URL (install.sh).
+AT_WS_HARNESS_URL (harness clone URL, tests only), AT_WS_PLATFORM (tests only: pretend to be
+another OS for the macOS hints) and AT_WS_INSTALL_DIR / AT_WS_REPO_URL (install.sh).
 """
 import copy
 import hashlib
@@ -33,7 +34,82 @@ from i18n import t
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(os.environ.get("HOME") or Path.home())
-BASH = "/bin/bash" if os.path.exists("/bin/bash") else (shutil.which("bash") or "bash")
+
+# Minimum versions checked by the dependency step. The launcher is POSIX/bash-3.2 safe, so the
+# macOS system bash is enough; tmux 3.4 is required by the status bar (range/mouse_status_range),
+# and the code uses str.removeprefix (Python 3.9).
+MIN_VERSIONS = {"python3": (3, 9), "tmux": (3, 4), "bash": (3, 2)}
+HOMEBREW_BOOTSTRAP = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+# Output pattern per probe; None means the tool has no version check here.
+VERSION_PROBES = {
+    "python3": (("-c", "import sys; print('%d.%d' % sys.version_info[:2])"), r"(\d+)\.(\d+)"),
+    "tmux": (("-V",), r"tmux\s+(?:next-)?(\d+)\.(\d+)"),
+    "bash": (("--version",), r"version\s+(\d+)\.(\d+)"),
+}
+
+
+def format_version(version):
+    return ".".join(str(part) for part in version)
+
+
+def command_version(argv, pattern):
+    """Version tuple parsed from a command's output, or None when it cannot run or parse."""
+    try:
+        result = subprocess.run(list(argv), capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(pattern, (result.stdout or "") + (result.stderr or ""))
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def tool_version(name, path):
+    probe = VERSION_PROBES.get(name)
+    if probe is None:
+        return None
+    args, pattern = probe
+    return command_version([path, *args], pattern)
+
+
+def bash_candidates():
+    """A usable bash from PATH first, then /bin/bash (never a hardcoded Homebrew path)."""
+    seen = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = Path(directory) / "bash"
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        key = os.path.realpath(str(candidate))
+        if key not in seen:
+            seen.add(key)
+            yield candidate
+    fallback = Path("/bin/bash")
+    if fallback.is_file() and os.access(fallback, os.X_OK):
+        key = os.path.realpath(str(fallback))
+        if key not in seen:
+            yield fallback
+
+
+def find_bash():
+    """First bash in PATH (then /bin/bash) that runs and meets MIN_VERSIONS['bash']."""
+    minimum = MIN_VERSIONS["bash"]
+    older = None
+    for candidate in bash_candidates():
+        version = tool_version("bash", candidate)
+        if version is None:
+            continue
+        if version >= minimum:
+            return str(candidate)
+        if older is None:
+            older = str(candidate)
+    return older or (shutil.which("bash") or "bash")
+
+
+BASH = find_bash()
 # AT_WS_HARNESS_URL replaces the harness repo URL. Only for tests and offline checks: it is never set by
 # the install scripts, so a person installing gets the public repo.
 CLONE_URL = os.environ.get("AT_WS_HARNESS_URL") or "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
@@ -98,11 +174,12 @@ LEGACY_DEEPSEEK_HOST = "deepseek.com"
 
 # Package names per manager; only shown to the person, never executed by the assistant.
 PACKAGE_NAMES = {
-    "pacman": {"tmux": "tmux", "git": "git", "python3": "python", "gh": "github-cli", "nvim": "neovim", "micro": "micro"},
-    "apt-get": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
-    "dnf": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
-    "zypper": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
-    "brew": {"tmux": "tmux", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "pacman": {"tmux": "tmux", "bash": "bash", "git": "git", "python3": "python", "gh": "github-cli", "nvim": "neovim", "micro": "micro"},
+    "apt-get": {"tmux": "tmux", "bash": "bash", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "dnf": {"tmux": "tmux", "bash": "bash", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    "zypper": {"tmux": "tmux", "bash": "bash", "git": "git", "python3": "python3", "gh": "gh", "nvim": "neovim", "micro": "micro"},
+    # The Homebrew Python formula is `python`, not `python3`.
+    "brew": {"tmux": "tmux", "bash": "bash", "git": "git", "python3": "python", "gh": "gh", "nvim": "neovim", "micro": "micro"},
 }
 CLAUDE_INSTALLER = "curl -fsSL https://claude.ai/install.sh | bash"
 
@@ -324,6 +401,11 @@ def package_manager():
         if shutil.which(name):
             return name
     return None
+
+
+def platform_name():
+    """sys.platform, overridable with AT_WS_PLATFORM (tests only) to exercise the macOS hints."""
+    return os.environ.get("AT_WS_PLATFORM") or sys.platform
 
 
 def install_command(name, manager):
@@ -636,6 +718,7 @@ class Assistant:
         self.manifest = None
         self.manage = True      # `manage: false` only when the person says the workspace does not manage
         self.harness_managed = True     # separate switch: `manage: true` always manages the harness
+        self.dependency_warnings = []   # labels repeated by finish() so success is never silent
 
     def manifest_for(self):
         if self.manifest is None:
@@ -699,17 +782,47 @@ class Assistant:
         self.finish()
         return 0
 
+    def dependency_status(self):
+        """(found labels, unmet (name, label) pairs) with the version probes the tests fake."""
+        found, unmet = [], []
+        for name in REQUIRED:
+            path = shutil.which(name)
+            if not path:
+                unmet.append((name, name))
+                continue
+            version = tool_version(name, path)
+            minimum = MIN_VERSIONS.get(name)
+            if minimum and version and version < minimum:
+                # Language-neutral label; the surrounding text comes from i18n.
+                unmet.append((name, f"{name} {format_version(version)} < {format_version(minimum)}"))
+            else:
+                found.append(f"{name} {format_version(version)}" if version else name)
+        bash_version = tool_version("bash", BASH)
+        minimum = MIN_VERSIONS["bash"]
+        if bash_version and bash_version < minimum:
+            unmet.append(("bash", f"bash {format_version(bash_version)} < {format_version(minimum)}"))
+        else:
+            found.append(f"bash {format_version(bash_version)}" if bash_version else f"bash ({BASH})")
+        return found, unmet
+
     def dependencies(self):
         self.ui.section(t("installer.deps.title"))
-        found = [name for name in REQUIRED if shutil.which(name)]
-        missing = [name for name in REQUIRED if name not in found]
+        found, unmet = self.dependency_status()
+        self.dependency_warnings = [label for _name, label in unmet]
         optional_missing = [name for name in OPTIONAL if not shutil.which(name)]
         if found:
             self.ui.line(t("installer.deps.found", names=", ".join(found)))
-        if missing:
-            self.ui.warn(t("installer.deps.missing_required", names=", ".join(missing)))
-            manager = package_manager()
-            for name in missing:
+        manager = package_manager()
+        if unmet:
+            self.ui.warn(t("installer.deps.missing_required",
+                           names=", ".join(label for _name, label in unmet)))
+            # A fresh Mac has no package manager: show Homebrew first, never sudo.
+            if platform_name() == "darwin" and manager is None:
+                self.ui.line(t("installer.deps.command", name="Homebrew",
+                               command=HOMEBREW_BOOTSTRAP))
+                self.ui.line(t("installer.deps.command", name="bash tmux python",
+                               command="brew install bash tmux python"))
+            for name, _label in unmet:
                 command = install_command(name, manager)
                 if command:
                     self.ui.line(t("installer.deps.command", name=name, command=command))
@@ -719,7 +832,6 @@ class Assistant:
             self.ui.confirm("installer.deps.confirm")
         if optional_missing:
             self.ui.line(t("installer.deps.optional", names=", ".join(optional_missing)))
-            manager = package_manager()
             for name in optional_missing:
                 command = install_command(name, manager)
                 if command:
@@ -936,9 +1048,12 @@ class Assistant:
         self.ui.ok(t("installer.hooks.done", path=display(settings)))
 
     def finish(self):
-        missing = [name for name in REQUIRED if not shutil.which(name)]
-        if missing:
-            self.ui.warn(t("installer.done.missing", names=", ".join(missing)))
+        warnings = list(self.dependency_warnings)
+        for name in REQUIRED:
+            if not shutil.which(name) and name not in warnings:
+                warnings.append(name)
+        if warnings:
+            self.ui.warn(t("installer.done.missing", names=", ".join(warnings)))
         self.ui.section(t("installer.done.title"))
         self.ui.line(t("installer.done.next") if self.manage else t("installer.done.next_unmanaged"))
 

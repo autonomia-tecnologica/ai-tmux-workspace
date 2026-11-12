@@ -12,8 +12,42 @@ set -eu
 REPO_URL="${AT_WS_REPO_URL:-https://github.com/autonomia-tecnologica/ai-tmux-workspace.git}"
 INSTALL_DIR="${AT_WS_INSTALL_DIR:-$HOME/.local/share/ai-tmux-workspace/app}"
 
+# The installer needs Python >= 3.9 (it uses str.removeprefix). On a fresh macOS
+# /usr/bin/python3 is the Xcode Command Line Tools shim: `command -v` succeeds, but running it
+# either pops the CLT installer or fails with `xcrun: error: invalid active developer path`.
+platform() {
+  uname -s 2>/dev/null || printf 'unknown'
+}
+
+python_hint() {
+  if [ "$(platform)" = "Darwin" ]; then
+    printf '  Install the Apple Command Line Tools: xcode-select --install\n' >&2
+    printf '  Or install Python with Homebrew:      brew install python\n' >&2
+  fi
+}
+
 if ! command -v python3 >/dev/null 2>&1; then
-  printf 'ai-tmux-workspace: python3 is required to run the installer.\n' >&2
+  printf 'ai-tmux-workspace: python3 >= 3.9 is required to run the installer.\n' >&2
+  python_hint
+  exit 1
+fi
+
+PYTHON_PATH="$(command -v python3)"
+# Without the Command Line Tools, macOS leaves only the shim at /usr/bin/python3; running it would
+# pop the CLT installer. Detect that before running anything.
+if [ "$(platform)" = "Darwin" ] && [ "$PYTHON_PATH" = "/usr/bin/python3" ] \
+   && ! xcode-select -p >/dev/null 2>&1; then
+  printf 'ai-tmux-workspace: python3 >= 3.9 is required; the macOS Command Line Tools are not installed.\n' >&2
+  python_hint
+  exit 1
+fi
+
+# Run the interpreter: the shim can exist and still fail, so the check is the version probe itself,
+# not `command -v`. `set -e` does not abort inside the `if` condition.
+PYTHON_VERSION="$("$PYTHON_PATH" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+if ! "$PYTHON_PATH" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+  printf 'ai-tmux-workspace: python3 >= 3.9 is required (found: %s).\n' "${PYTHON_VERSION:-unknown}" >&2
+  python_hint
   exit 1
 fi
 
@@ -46,4 +80,4 @@ if [ ! -t 0 ] && [ -z "${AT_WS_NO_TTY:-}" ] && (exec </dev/tty) 2>/dev/null; the
   exec </dev/tty
 fi
 
-exec python3 "$ROOT/src/installer.py" "$@"
+exec "$PYTHON_PATH" "$ROOT/src/installer.py" "$@"
