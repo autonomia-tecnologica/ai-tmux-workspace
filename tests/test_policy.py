@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
@@ -594,6 +595,46 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(self.decide(self.bash("cat ~/.config/gh/hosts.yml.example"))["decision"],
                          "allow")
 
+    def test_macos_secret_locations_are_secrets_in_the_home_role(self):
+        # APFS is case-insensitive: a different spelling names the same file, so the comparison is
+        # case-folded (`~/.SSH` is `~/.ssh`). The macOS credential stores are secrets too.
+        paths = (
+            self.home / ".SSH" / "id_rsa",
+            self.home / ".SSH" / "config",
+            self.home / "LIBRARY" / "Keychains" / "login.keychain-db",
+            self.home / "Library" / "Keychains" / "login.keychain-db",
+            self.home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+            self.home / "Library" / "Cookies" / "Cookies.binarycookies",
+            self.home / "Library" / "Messages" / "chat.db",
+            self.home / "Library" / "Mail" / "x.emlx",
+            self.home / "Library" / "Safari" / "History.db",
+        )
+        with mock.patch.object(policy, "_is_darwin", return_value=True):
+            with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+                for value in paths:
+                    with self.subTest(path=value):
+                        for event in (self.read(value), self.write(value)):
+                            result = policy.check_event(event)
+                            self.assertEqual((result["decision"], result["capability"]),
+                                             ("deny", "secrets"))
+                # The same files named through `~` and with a different case are secrets as well.
+                for command in ("cat ~/.SSH/id_rsa", "cat ~/.SSH/config",
+                                "cat ~/library/keychains/login.keychain-db"):
+                    with self.subTest(command=command):
+                        result = policy.check_event(self.bash(command))
+                        self.assertEqual((result["decision"], result["capability"]),
+                                         ("deny", "secrets"))
+                # The rest of `~/Library` is not a secret store.
+                result = policy.check_event(
+                    self.read(self.home / "Library" / "Preferences" / "x.plist"))
+                self.assertEqual(result["capability"], "repo.read")
+        # The case-folded form is only for comparison: the logged target keeps the given path.
+        target = self.home / "Library" / "Keychains" / "Login.KEYCHAIN-DB"
+        self.assertEqual(self.cli(self.read(target))["decision"], "deny")
+        entry = json.loads((self.state / "policy.jsonl").read_text(encoding="utf-8")
+                           .splitlines()[-1])
+        self.assertEqual(entry["target"], str(target))
+
     def test_tmpdir_outside_tmp_does_not_enlarge_the_box(self):
         outside = "/var/tmp/ai-tmux-workspace-elsewhere/x"
         with patched_env(TMPDIR="/var/tmp/elsewhere"):
@@ -604,6 +645,38 @@ class PolicyTest(unittest.TestCase):
             with patched_env(WS_POLICY=str(fixture), WS_POLICY_AUTO="1",
                              TMPDIR="/var/tmp/elsewhere"):
                 self.assertEqual(self.decide(self.write(outside))["decision"], "ask")
+
+    def test_macos_temp_root_is_tmp_only_on_darwin(self):
+        # `tempfile.gettempdir()` on macOS returns a per-session directory under `/var/folders`
+        # (real path `/private/var/folders`). Both spellings are inside the box there; on Linux
+        # they stay outside it. The roots are fixed strings, never the session's TMPDIR.
+        real = "/private/var/folders/ab/cd0x/T/policy-test.txt"
+        symlinked = "/var/folders/ab/cd0x/T/policy-test.txt"
+        with mock.patch.object(policy, "_is_darwin", return_value=False):
+            self.assertNotIn("/private/var/folders", policy._tmp_roots())
+            self.assertNotIn("/var/folders", policy._tmp_roots())
+            self.assertIn("/tmp", policy._tmp_roots())
+            for value in (real, symlinked):
+                with self.subTest(path=value, platform="linux"):
+                    result = self.decide(self.write(value))
+                    self.assertEqual((result["decision"], result["capability"]),
+                                     ("deny", "repo.outside"))
+        with mock.patch.object(policy, "_is_darwin", return_value=True):
+            self.assertIn("/private/var/folders", policy._tmp_roots())
+            self.assertIn("/var/folders", policy._tmp_roots())
+            for value in (real, symlinked):
+                with self.subTest(path=value, platform="darwin"):
+                    for event in (self.write(value), self.obash(f"echo x > {value}")):
+                        result = self.decide(event)
+                        self.assertEqual((result["decision"], result["capability"]),
+                                         ("allow", "tmp"))
+            # `/tmp` is still the temp area on macOS.
+            self.assertEqual(self.decide(self.write("/tmp/policy-test.txt"))["capability"], "tmp")
+            # TMPDIR still does not enlarge the box, on macOS either.
+            with patched_env(TMPDIR="/var/tmp/elsewhere"):
+                result = self.decide(self.write("/var/tmp/ai-tmux-workspace-elsewhere/x"))
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("deny", "repo.outside"))
 
     def test_audit_target_for_path_findings_is_the_resolved_path(self):
         self.cli(self.bash("cat /etc/passwd"))
@@ -1278,6 +1351,50 @@ class PolicyTest(unittest.TestCase):
             self.assertEqual(self.decide(self.bash("pkexec ls"))["decision"], "deny")
         self.ask_marker()
         self.assertEqual(self.decide(self.bash("doas ls"))["decision"], "deny")
+
+    def test_macos_admin_programs_are_admin_for_every_role(self):
+        # The macOS admin tools deny like sudo in every role, in command position and after a
+        # command wrapper or in a quoted script (the ambiguous path `_admin_in_text`).
+        programs = (
+            "sysadminctl", "dseditgroup", "dscl", "launchctl", "spctl", "csrutil", "fdesetup",
+            "systemsetup", "networksetup", "diskutil", "security",
+        )
+        for program in programs:
+            self.assertIn(program, policy.ADMIN_PROGRAMS)
+        for role, root in (("repo", self.repo), ("home", self.home)):
+            with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
+                for program in programs:
+                    commands = (f"{program} --help", f"/usr/sbin/{program} --help",
+                                f"/opt/homebrew/bin/{program} --help",
+                                f"xargs {program} --help", f"sh -c '{program} --help'")
+                    for command in commands:
+                        with self.subTest(program=program, role=role, command=command):
+                            result = policy.check_event(self.bash(command))
+                            self.assertEqual((result["decision"], result["capability"]),
+                                             ("deny", "admin"))
+                # A bare admin name used as an argument still defers (item 135), and so does the
+                # rest of the unknown-program matrix: the new entries only change command position.
+                for command in ("grep -r security src", "grep -r networksetup docs",
+                                "grep -r diskutil .", "dotnet --version"):
+                    with self.subTest(command=command, role=role):
+                        result = policy.check_event(self.bash(command))
+                        self.assertEqual((result["decision"], result["reason"]),
+                                         ("allow", "policy.reason.defer"))
+                self.assertEqual(policy.check_event(self.bash("cargo run"))["decision"], "allow")
+
+    def test_homebrew_program_directories_are_recognized(self):
+        for command in ("/opt/homebrew/bin/sudo ls", "/opt/homebrew/sbin/sudo ls",
+                        "/opt/homebrew/bin/security find-generic-password",
+                        "/opt/homebrew/bin/launchctl list",
+                        "xargs /opt/homebrew/bin/sudo rm",
+                        "sh -c '/opt/homebrew/sbin/sudo id'"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+        # Another directory is not a program directory: the word is a path, not the program.
+        result = self.decide(self.bash("sh -c '/usr/share/sudo id'"))
+        self.assertEqual((result["decision"], result["reason"]),
+                         ("allow", "policy.reason.defer"))
 
     def test_ask_mode_marker_turns_unknown_commands_and_tools_into_ask(self):
         self.ask_marker()
