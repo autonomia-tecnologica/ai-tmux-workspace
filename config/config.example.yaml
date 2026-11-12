@@ -135,10 +135,12 @@ main: ~/Codes/main-repo
 # com "path" e "label" (o nome mostrado). Caminhos aceitam ~. Sem esta chave, a home não tem a aba
 # PASTAS. A primeira versão só navega e abre; nada é movido, renomeado ou apagado.
 # free_folders:
-#   - ~/Documentos
-#   - path: ~/Imagens
-#     label: Imagens
-#   - ~/Vídeos
+#   - ~/Documents
+#   - path: ~/Pictures
+#     label: Pictures
+#   - ~/Movies
+# (no Linux em pt-BR os nomes costumam ser ~/Documentos, ~/Imagens e ~/Vídeos; use os que existem
+# na sua máquina, senão a aba aparece como "não encontrada".)
 
 # Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
 # "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).

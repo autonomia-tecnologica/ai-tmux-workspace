@@ -29,7 +29,10 @@ def _b64(s):
 
 
 def _applescript_str(s):
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """AppleScript string literal for `s`: backslash, quote and line/tab controls are escaped, so a
+    multi-line body neither breaks the script nor ends the literal early."""
+    return '"' + (s.replace("\\", "\\\\").replace('"', '\\"')
+                  .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")) + '"'
 
 
 def build_command(title, body, platform=None, wsl=None):

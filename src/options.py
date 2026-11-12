@@ -17,7 +17,8 @@ config["options"] appends more nodes:
   {"label": "...", "ask": "<model>"}    asks a question to `claude -p --model <model>` in the repo, shows the answer
   {"label": "...", "run": "cmd"}        runs a shell command in the repo, shows its output
   {"label": "...", "type": "text"}      types the text into the active Claude tab
-Built-in "Microfone" leaf: records the default mic until you stop talking (mic.py) and types the transcript, no Enter.
+Built-in "Microfone" leaf (Linux only): records the default mic until you stop talking (mic.py) and types the
+transcript, no Enter.
 Usage: options.py <window id>
 """
 import contextlib
@@ -72,7 +73,9 @@ def tree():
     current = lib.agent_name()
     nodes.append({"label": i18n.t("options.agent"), "children": [
         {"label": ("● " if a == current else "○ ") + a, "agent": a} for a in agents]})
-    nodes.append({"label": i18n.t("options.general"), "children": [{"label": i18n.t("options.mic"), "mic": True}]})
+    if sys.platform.startswith("linux"):     # dictation is Linux/ALSA only (src/mic.py)
+        nodes.append({"label": i18n.t("options.general"),
+                      "children": [{"label": i18n.t("options.mic"), "mic": True}]})
     custom = lib.read_config().get("options")
     if isinstance(custom, list):
         nodes += custom
