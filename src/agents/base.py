@@ -8,7 +8,7 @@ an adapter can be replaced by a real ACP client without changing the conference.
 An adapter owns only the harness side of the conversation: building the headless command, reading
 its stream and turning one event into an update. It owns no capability rule: `permission` asks the
 central engine in `src/policy.py`, the same engine the Claude hook (`src/hook.py`) and the OpenCode
-plugin (`harness/opencode-policy.js`) call.
+plugin (`security/opencode-policy.js`) call.
 
 It also declares the harness side of the session lifecycle, so no caller branches by agent:
 `prepare` builds the harness files a restart needs, `launch` is the command that starts the agent,

@@ -245,6 +245,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
         lean = ROOT / "harness" / "HARNESS.md"
         self.assertEqual((self.harness / "HARNESS.md").read_bytes(), lean.read_bytes())
+        security = self.harness.parent / "security"
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json"):
+            self.assertTrue((security / name).is_file(), f"missing security file: {name}")
 
     def test_hooks_drift_is_shown_and_registered_by_apply(self):
         claude = self.home / ".claude" / "settings.json"

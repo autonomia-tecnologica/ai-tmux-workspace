@@ -2,8 +2,9 @@
 """Central capability policy: classification, decisions and audit trail.
 
 One engine, two adapters: the Claude Code `PreToolUse` hook (`src/hook.py`) imports `check_event`
-and the OpenCode plugin (`harness/opencode-policy.js`) runs `python3 policy.py check`. Neither
-adapter owns a rule; both get the same `{decision, capability, reason}` from this file.
+and the OpenCode plugin (`security/opencode-policy.js`) runs `python3 policy.py check`. The installed
+engine and policy live in `security/`, next to the harness text in `harness/`. Neither adapter owns a
+rule; both get the same `{decision, capability, reason}` from this file.
 
 Input is one JSON object on stdin, either a Claude hook event or an OpenCode event:
 
@@ -269,7 +270,7 @@ _CACHE = {}
 
 
 def policy_path():
-    """First existing policy file: WS_POLICY, next to this module, WS_DIR, repo harness, install."""
+    """First existing policy file: WS_POLICY, next to this module, WS_DIR, repo security, install."""
     override = os.environ.get("WS_POLICY")
     if override:
         return Path(override).expanduser()
@@ -277,9 +278,9 @@ def policy_path():
     candidates = [here / "policy.yaml"]
     ws_dir = os.environ.get("WS_DIR")
     if ws_dir:
-        candidates.append(Path(ws_dir).expanduser() / "harness" / "policy.yaml")
-    candidates.append(here.parent / "harness" / "policy.yaml")
-    candidates.append(Path.home() / ".local" / "share" / "ai-tmux-workspace" / "harness" / "policy.yaml")
+        candidates.append(Path(ws_dir).expanduser() / "security" / "policy.yaml")
+    candidates.append(here.parent / "security" / "policy.yaml")
+    candidates.append(Path.home() / ".local" / "share" / "ai-tmux-workspace" / "security" / "policy.yaml")
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -399,7 +400,7 @@ def workspace_root():
 
     Public because `session.py` (the `self` role) and `lib.py` (the dev window name) use the same root.
 
-    A checkout keeps this module under `src/` and an installed harness under `harness/`; in both
+    A checkout keeps this module under `src/` and an installed engine under `security/`; in both
     the code root is the parent directory, which is the clone (dev or installed) being protected.
     """
     value = os.environ.get("WS_DIR")

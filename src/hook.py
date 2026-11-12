@@ -2,9 +2,10 @@
 """Claude Code hook: records the session state for the repo panel's dot.
 
 Reads the hook JSON from stdin and writes ~/.cache/workspace/sessions/<session>.json. On PreToolUse
-it also asks the central capability policy (`src/policy.py`) for a decision when the session has a
-declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so sessions opened before
-the launcher sets it keep working. With a role, an engine failure is a denial (fail closed)."""
+it also asks the central capability policy (`src/policy.py`, installed in `security/`) for a decision
+when the session has a declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so
+sessions opened before the launcher sets it keep working. With a role, an engine failure is a denial
+(fail closed). The deterministic gate itself lives in `security/gate.py`."""
 import contextlib
 import json
 import os

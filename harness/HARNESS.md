@@ -85,7 +85,7 @@ no harness do workspace.
 ## Agentes
 
 - Refinar: modelo forte, em conversa com a pessoa.
-- Todo pedido que altera código ou config (`src/`, `harness/`, `bin/`, `tests/`, `config/`) vira
+- Todo pedido que altera código ou config (`src/`, `harness/`, `security/`, `bin/`, `tests/`, `config/`) vira
   tarefa de subagente, uma tarefa por subagente; a sessão principal não implementa, só refina,
   despacha, confere e fecha. Backlog, handoff, commit e a conferência entre repos ficam na sessão
   principal.

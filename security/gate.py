@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Mechanism of the forced harness: the Claude Code hook and the settings renderer.
+"""Deterministic gate of the forced rules: the Claude Code hook and the settings renderer.
+
+The gate reads the harness text (HARNESS.md and forcado.yaml) but is not the harness: the text lives
+in `harness/` and this mechanism lives in `security/`.
 
 Hook mode (no arguments) reads the hook JSON from stdin and never breaks the session: any error,
 invalid input or missing session id exits 0 with no decision (fail open). Events handled:
@@ -15,9 +18,11 @@ hooks and translates every item with `tipo: deny` into a permissions.deny entry.
 uses the interpreter exported by the launcher (`WS_PYTHON`) when present, with a plain `python3`
 fallback, and quotes the script path.
 
-The harness directory comes from AT_HARNESS_DIR or --harness (render); the default is derived from
-Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_STATE (or
-~/.cache/workspace). Stdlib only, and no import from src/: this file is installed on its own.
+The harness text directory comes from AT_HARNESS_DIR or --harness (render); the default is derived
+from Path.home(). The session state comes from AT_HARNESS_STATE, defaulting under WS_STATE (or
+~/.cache/workspace). The installed mechanism directory (`security/`) is resolved by the workspace
+when it builds the hook command, not here. Stdlib only, and no import from src/: this file is
+installed on its own.
 """
 import json
 import os
@@ -30,10 +35,10 @@ from pathlib import Path
 DEFAULT_HARNESS_DIR = Path(".local", "share", "ai-tmux-workspace", "harness")
 GATE_ITEM_ID = "F07"
 DEFAULT_GATE_TOOLS = ("Write", "Edit", "NotebookEdit")
-HOOK_SCRIPT = '"$HOME/.local/share/ai-tmux-workspace/harness/harness.py"'
+HOOK_SCRIPT = '"$HOME/.local/share/ai-tmux-workspace/security/gate.py"'
 
-USAGE = """usage: harness.py [--help]
-       harness.py render [--harness DIR] [--out FILE]
+USAGE = """usage: gate.py [--help]
+       gate.py render [--harness DIR] [--out FILE]
 
 Without arguments it runs as a Claude Code hook reading JSON from stdin.
 `render` writes the settings.json derived from the harness forcado.yaml."""
@@ -262,7 +267,7 @@ def yaml_loads(text):
 # --- paths and harness data --------------------------------------------------------------------
 
 def harness_dir(override=None):
-    """Installed harness directory: argument, AT_HARNESS_DIR, or the default under Path.home()."""
+    """Installed harness text directory: argument, AT_HARNESS_DIR, or the default under Path.home()."""
     if override:
         return Path(override).expanduser()
     from_env = os.environ.get("AT_HARNESS_DIR")
@@ -393,7 +398,7 @@ def _prompt_context(item, read):
     rule = _one_line(item.get("regra"))
     text = _one_line(item.get("texto"))
     gated = _one_line(", ".join(gate_tools(item)))
-    parts = ["[harness]"]
+    parts = ["[gate]"]
     if rule:
         parts.append(rule.rstrip(".") + ".")
     if text:
@@ -406,7 +411,7 @@ def _prompt_context(item, read):
 def _deny_reason(item, tool):
     rule = _one_line(item.get("regra"))
     text = _one_line(item.get("texto"))
-    reason = "[harness]"
+    reason = "[gate]"
     if rule:
         reason += f" {rule.rstrip('.')}."
     target = f" Read {text} first." if text else ""

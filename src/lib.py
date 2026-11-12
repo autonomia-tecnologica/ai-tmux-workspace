@@ -256,14 +256,14 @@ def agent_identity(profile=None):
 
 
 # --- workspace-generated settings -------------------------------------------------------------
-# The workspace launches Claude Code with one generated settings file per profile: the harness hooks and
-# deny rules from forcado.yaml (or the committed harness/settings.json until item 33 installs the
+# The workspace launches Claude Code with one generated settings file per profile: the gate hooks and
+# deny rules from forcado.yaml (or the committed security/settings.json until item 33 installs the
 # harness), plus the profile's own `settings` map (URL, models, flags, apiKeyHelper). Access keys never
 # enter this file: an env key with a literal value is refused and the credential must come from
 # apiKeyHelper, which Claude Code runs at launch (F08 in the harness secrets rules).
 
-HARNESS_PY = BASE / "harness" / "harness.py"
-HARNESS_SETTINGS = BASE / "harness" / "settings.json"
+GATE_PY = BASE / "security" / "gate.py"
+SECURITY_SETTINGS = BASE / "security" / "settings.json"
 
 _SETTINGS_FLAG = re.compile(r"(?:^|\s)--settings(?:=|\s|$)")
 _SECRET_ENV = re.compile(
@@ -283,28 +283,40 @@ def _has_settings_flag(command):
     return bool(_SETTINGS_FLAG.search(command))
 
 
-def _harness_module():
-    """Load harness/harness.py without importing from src/ (the file is installed on its own)."""
-    spec = importlib.util.spec_from_file_location("ws_harness_render", HARNESS_PY)
+def security_dir():
+    """Installed mechanism directory: AT_SECURITY_DIR, the harness sibling, or the default."""
+    override = os.environ.get("AT_SECURITY_DIR")
+    if override:
+        return Path(override).expanduser()
+    installed = os.environ.get("AT_HARNESS_DIR")
+    if installed:
+        return Path(installed).expanduser().parent / "security"
+    return HOME / ".local" / "share" / "ai-tmux-workspace" / "security"
+
+
+def _security_module(path=None):
+    """Load security/gate.py without importing from src/ (the file is installed on its own)."""
+    script = Path(path) if path is not None else GATE_PY
+    spec = importlib.util.spec_from_file_location("ws_gate_render", script)
     if spec is None or spec.loader is None:
-        raise SettingsError(t("settings.err.base", path=str(HARNESS_PY), error="module not found"))
+        raise SettingsError(t("settings.err.base", path=str(script), error="module not found"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _harness_hook_command(installed):
-    """Script of the harness hook: the installed one when it exists, else this repo's copy. The installed
+def _gate_hook_command(installed):
+    """Script of the gate hook: the installed one when it exists, else this repo's copy. The installed
     harness is absent until item 33; pointing at a missing script would make Claude Code block every
     prompt (a non-zero hook aborts UserPromptSubmit), so the repo copy is the explicit fallback."""
-    script = Path(installed) / "harness.py"
+    script = security_dir() / "gate.py"
     # The hook runs later, through the shell: use the launcher's interpreter when the agent has it
     # (macOS may not have Homebrew's python3 in a GUI-launched PATH) and fall back to `python3`.
-    return f'"${{WS_PYTHON:-python3}}" "{script if script.is_file() else HARNESS_PY}"'
+    return f'"${{WS_PYTHON:-python3}}" "{script if script.is_file() else GATE_PY}"'
 
 
 def _set_hook_command(settings, command):
-    """Every harness hook uses the same command; rewrite it to the script that actually exists."""
+    """Every gate hook uses the same command; rewrite it to the script that actually exists."""
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return settings
@@ -321,27 +333,28 @@ def _set_hook_command(settings, command):
     return settings
 
 
-def harness_base_settings():
-    """Hooks + deny of the forced harness. The installed harness is used when it has a forcado.yaml;
-    until item 33 installs it, the committed harness/settings.json is the explicit fallback."""
+def security_base_settings():
+    """Hooks + deny of the deterministic gate. The installed harness is used when it has a forcado.yaml;
+    until item 33 installs it, the committed security/settings.json is the explicit fallback."""
     installed = Path(os.environ.get(
         "AT_HARNESS_DIR", HOME / ".local" / "share" / "ai-tmux-workspace" / "harness")).expanduser()
-    command = _harness_hook_command(installed)
+    command = _gate_hook_command(installed)
     if (installed / "forcado.yaml").is_file():
         try:
-            module = _harness_module()
+            script = security_dir() / "gate.py"
+            module = _security_module(script if script.is_file() else GATE_PY)
             return _set_hook_command(module.build_settings(module.load_rules(installed)), command)
         except SettingsError:
             raise
         except Exception as error:
             raise SettingsError(t("settings.err.render_harness", path=str(installed), error=str(error)))
     try:
-        base = json.loads(HARNESS_SETTINGS.read_text(encoding="utf-8"))
+        base = json.loads(SECURITY_SETTINGS.read_text(encoding="utf-8"))
         if not isinstance(base, dict):
             raise ValueError("settings root is not a mapping")
         return _set_hook_command(base, command)
     except (OSError, ValueError) as error:
-        raise SettingsError(t("settings.err.base", path=str(HARNESS_SETTINGS), error=str(error)))
+        raise SettingsError(t("settings.err.base", path=str(SECURITY_SETTINGS), error=str(error)))
 
 
 def _merge_settings(base, profile):
@@ -407,7 +420,7 @@ def expected_profile_settings(name=None):
         return None
     if _has_settings_flag(profile_command(name)):
         return None
-    settings = _merge_settings(harness_base_settings(), profile_settings(name) or {})
+    settings = _merge_settings(security_base_settings(), profile_settings(name) or {})
     validate_settings(settings, name)
     return settings
 

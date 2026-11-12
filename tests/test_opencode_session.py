@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN = ROOT / "harness" / "opencode-policy.js"
+PLUGIN = ROOT / "security" / "opencode-policy.js"
 NODE = shutil.which("node")
 
 NODE_SCRIPT = """

@@ -1248,7 +1248,7 @@
       ],
       "priority": "P0",
       "evidence": [
-        "harness/policy.yaml:16-31 (repo role: repo.outside deny, tmp allow)",
+        "security/policy.yaml:16-31 (repo role: repo.outside deny, tmp allow)",
         "bin/workspace:105-125 and 549-568 (windows are built per repo; no WS_SESSION_ROLE is exported)",
         "src/hook.py:396-401 (policy returns early without WS_SESSION_ROLE)",
         "src/policy.py:1166-1169 (no role -> deny) and 306-330 (_tmp_roots; /tmp is inside the box)"
@@ -1277,7 +1277,7 @@
       ],
       "priority": "P0",
       "evidence": [
-        "harness/policy.yaml:32-47 (home: repo.outside allow, config.write allow)",
+        "security/policy.yaml:32-47 (home: repo.outside allow, config.write allow)",
         "src/policy.py:43-48 (no harness.read/harness.write capability)",
         "src/policy.py:298-303 (config roots) and 375-377 (maps to config.write)",
         "D-005 (main folder = the main repo from config.yaml)"
@@ -1332,13 +1332,13 @@
       ],
       "priority": "P0",
       "evidence": [
-        "harness/policy.yaml:44 (home config.write: allow)",
+        "security/policy.yaml:44 (home config.write: allow)",
         "src/policy.py:298-303 (config roots include ~/.config)",
         "src/policy.py:375-377 (a path under a config root maps to config.write)",
         "src/policy.py:43-48 (no protected-path capability or check)"
       ],
       "failure": "A home-role session can write ~/.config/ai-tmux-workspace because config.write is allow and there is no protected path that overrides the role table. The workspace process/installer are not distinguished from agent roles.",
-      "validation": "As each agent role, attempt to read/write config.yaml, harness/policy.yaml, state/, conference/. All must be denied. The workspace process and installer must still write. Test a symlink and a relative path.",
+      "validation": "As each agent role, attempt to read/write config.yaml, security/policy.yaml, state/, conference/. All must be denied. The workspace process and installer must still write. Test a symlink and a relative path.",
       "decision": null,
       "notes": "The enforcer (hook/plugin) and installer run outside agent tool calls; denying agent access does not break them. Check the protected list before the role capabilities.",
       "decision_ids": []
@@ -1359,7 +1359,7 @@
       "priority": "P0",
       "evidence": [
         "bin/workspace:105-125 and 238-257 (any repo, including the main repo, opens as a normal window)",
-        "harness/policy.yaml:32-47 (the home role can write code and run tests)",
+        "security/policy.yaml:32-47 (the home role can write code and run tests)",
         "src/lib.py:104-144 (the global agent profile is used for the window)",
         "D-005 (main folder = the main repo from config.yaml)"
       ],
@@ -1412,7 +1412,7 @@
       "priority": "P0",
       "evidence": [
         "src/policy.py (module docstring; check_event; classify)",
-        "harness/opencode-policy.js:53-98 (decide/before call the CLI)",
+        "security/opencode-policy.js:53-98 (decide/before call the CLI)",
         "src/hook.py:393-419 (_policy_check imports policy)",
         "tests/test_policy.py:668-720 (adapter parity battery)"
       ],
@@ -1513,7 +1513,7 @@
       ],
       "priority": "P1",
       "evidence": [
-        "harness/opencode-policy.js:9-12 and 89-98 (ask/deny -> thrown error)",
+        "security/opencode-policy.js:9-12 and 89-98 (ask/deny -> thrown error)",
         "tests/test_policy.py:668-720 (adapter parity)"
       ],
       "failure": null,
@@ -1564,7 +1564,7 @@
       "evidence": [
         "src/policy.py:298-303 (config roots)",
         "src/policy.py:375-377 (config.write/read)",
-        "harness/policy.yaml:44 (home config.write allow)",
+        "security/policy.yaml:44 (home config.write allow)",
         "src/policy.py:43-48 (no protected capability)"
       ],
       "failure": "There is no protected-path check; the role table is the only decision. A home session can write the control plane and the workspace repo.",
@@ -2475,8 +2475,8 @@
       ],
       "priority": "P0",
       "evidence": [
-        "harness/policy.yaml:35 (repo.outside: allow)",
-        "harness/policy.yaml:44 (config.write: allow)",
+        "security/policy.yaml:35 (repo.outside: allow)",
+        "security/policy.yaml:44 (config.write: allow)",
         "src/policy.py:298-303 and 375-377 (config roots -> config.write)"
       ],
       "failure": "The home role's broad repo.outside and config.write allow it to write the workspace repo and the control plane; there is no protected path (R-POL-07).",
@@ -2500,7 +2500,7 @@
       ],
       "priority": "P0",
       "evidence": [
-        "harness/policy.yaml:32-47 (home is broad)",
+        "security/policy.yaml:32-47 (home is broad)",
         "src/policy.py:43-48 (no harness.read/harness.write)",
         "src/policy.py:255-258 (roles are repo/home only)",
         "D-005 (main folder = the main repo from config.yaml)"
@@ -2529,7 +2529,7 @@
       "priority": "P0",
       "evidence": [
         "~/.claude/CLAUDE.md:36 (points to /mnt/Data/Codes/home/Harness/regras-de-agente.md)",
-        "harness/policy.yaml:19 (repo role: repo.outside deny)",
+        "security/policy.yaml:19 (repo role: repo.outside deny)",
         "src/policy.py:43-48 (no read exception for the home Harness)"
       ],
       "failure": "Once the policy is active, a repo session (repo.outside deny) cannot read the file the global CLAUDE.md instructs it to read. The user decided the home Harness stays; the exception is missing.",

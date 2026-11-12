@@ -43,7 +43,7 @@ Cada repo é uma janela do tmux; clicar/Enter num repo da lista troca para ela.
 
 ## Settings gerada do agente
 
-Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `harness/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
+Ao abrir um repo, o workspace gera uma settings por perfil em `~/.cache/workspace/settings/<perfil>.json` e sobe o `claude` com `--settings <arquivo>`. O arquivo tem duas partes: a base do harness forçado (hooks e `permissions.deny` do `security/settings.json` ou do `forcado.yaml` instalado) e o mapa `settings` do perfil no `config.yaml` (URL, modelos, flags, `permissions.defaultMode`). Os hooks e o `deny` da base sempre valem: o `settings` do perfil não os substitui; use o `settings.json` da pessoa para hooks extras.
 
 `manage: false` no topo do `config.yaml` desliga essa gestão: nada de settings gerada, nenhum hook registrado pelo instalador e o `claude` sobe puro, sem `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH=false` (a retomada por aba continua). Sem a chave, o comportamento histórico vale (`manage: true`).
 
@@ -71,7 +71,7 @@ Uma linha de comando que já passa `--settings` continua como está: é o format
 
 O `settings.json` da pessoa e as settings gerenciadas da empresa continuam valendo: o `--settings` é uma camada a mais, e o workspace não controla a precedência. No teste local, uma chave repetida no `--settings` venceu a do `settings.json` da pessoa; as gerenciadas da empresa ficam acima das duas pela documentação do Claude Code (não exercitamos uma gerenciada aqui). `workspace reload` regenera os arquivos: sessões abertas depois dele usam a settings nova; o Claude Code também observa os settings e reaplica a maioria sem reiniciar (documentação dele; não testamos o hot reload aqui).
 
-Enquanto o harness instalado não existir (item 33), a base vem do `harness/settings.json` versionado neste repo e o hook aponta para o `harness/harness.py` do repo; quando o harness instalado existir, a base é montada do `forcado.yaml` instalado e o hook aponta para o script instalado quando ele existe (senão, para o do repo).
+Enquanto o harness instalado não existir (item 33), a base vem do `security/settings.json` versionado neste repo e o hook aponta para o `security/gate.py` do repo; quando o harness instalado existir, a base é montada do `forcado.yaml` instalado e o hook aponta para o script instalado quando ele existe (senão, para o do repo).
 
 ## Compatibilidade com modelos não-Claude
 

@@ -134,10 +134,19 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(Path(os.readlink(link)), ROOT / "bin" / "workspace")
         self.assertTrue((self.home / ".config" / "ai-tmux-workspace" / "config.yaml").is_file())
         harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
-        for name in ("forcado.yaml", "harness.py", "HARNESS.md", "CLAUDE.md", "regras/agents.md",
-                     "source.json"):
+        for name in ("forcado.yaml", "HARNESS.md", "CLAUDE.md", "regras/agents.md", "source.json"):
             self.assertTrue((harness / name).is_file(), f"missing harness file: {name}")
-        self.assertTrue((harness / "settings.json").is_file())
+        for name in ("harness.py", "policy.yaml", "opencode-policy.js", "settings.json"):
+            self.assertFalse((harness / name).exists(), f"mechanism must not live in harness/: {name}")
+        security = self.home / ".local" / "share" / "ai-tmux-workspace" / "security"
+        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json", "policy.py",
+                     "yaml_min.py", "i18n/pt-BR.json"):
+            self.assertTrue((security / name).is_file(), f"missing security file: {name}")
+        rendered = json.loads((security / "settings.json").read_text(encoding="utf-8"))
+        for groups in rendered["hooks"].values():
+            for group in groups:
+                for hook in group["hooks"]:
+                    self.assertIn("security/gate.py", hook["command"])
         self.assertEqual(stat.S_IMODE((harness / "HARNESS.md").stat().st_mode), 0o444)
         self.assertIn(">>> ai-tmux-workspace >>>", (self.home / ".zshrc").read_text(encoding="utf-8"))
         completions = self.home / ".local" / "share" / "ai-tmux-workspace" / "completions"
@@ -556,6 +565,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIs(cfg["manage"], False)
         self.assertIs(cfg["harness_managed"], False)
         self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace" / "harness").exists())
+        self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace" / "security").exists())
         self.assertFalse((self.home / ".claude").exists())
         self.assertIn(i18n.t("installer.harness_managed.skipped"), installed.stdout)
         removed = self.remove()

@@ -1,11 +1,12 @@
-"""Tests for the workspace-generated settings: the harness base (hooks + deny) merged with each
+"""Tests for the workspace-generated settings: the gate base (hooks + deny) merged with each
 profile's own settings, the `--settings` launch flag, and the refusal to write a literal access key.
 
 Each test runs `src/lib.py` in a child process with temporary HOME, WS_STATE, AT_WS_CONFIG and
 AT_HARNESS_DIR, so the real config, cache and installed harness are never read or written. The
-committed harness/settings.json is the explicit fallback until item 33 installs the harness."""
+committed security/settings.json is the explicit fallback until item 33 installs the harness."""
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -51,26 +52,34 @@ class SettingsTest(unittest.TestCase):
     def configure(self, config):
         self.config.write_text(json.dumps(config), encoding="utf-8")
 
-    def env(self, harness=None):
-        return dict(os.environ, HOME=str(self.home), WS_STATE=str(self.state),
-                    AT_WS_CONFIG=str(self.config),
-                    AT_HARNESS_DIR=str(harness if harness is not None else self.root / "no-harness"))
+    def env(self, harness=None, security=None):
+        env = {key: value for key, value in os.environ.items() if key != "AT_SECURITY_DIR"}
+        env.update(HOME=str(self.home), WS_STATE=str(self.state), AT_WS_CONFIG=str(self.config),
+                   AT_HARNESS_DIR=str(harness if harness is not None else self.root / "no-harness"))
+        if security is not None:
+            env["AT_SECURITY_DIR"] = str(security)
+        return env
 
-    def run_lib(self, *args, harness=None):
-        return subprocess.run([sys.executable, str(LIB), *args], env=self.env(harness),
-                              capture_output=True, text=True, check=False)
+    def run_lib(self, *args, harness=None, security=None):
+        return subprocess.run([sys.executable, str(LIB), *args],
+                              env=self.env(harness, security), capture_output=True, text=True,
+                              check=False)
 
-    def ensure(self, profile="", harness=None):
-        return self.run_lib("ensure-settings", profile, harness=harness)
+    def ensure(self, profile="", harness=None, security=None):
+        return self.run_lib("ensure-settings", profile, harness=harness, security=security)
 
     def generated(self, profile="deepseek"):
         return json.loads((self.state / "settings" / f"{profile}.json").read_text(encoding="utf-8"))
 
     def harness(self, policy=HARNESS_POLICY):
         folder = self.root / "installed-harness"
+        security = self.root / "security"
         folder.mkdir(exist_ok=True)
+        security.mkdir(exist_ok=True)
         (folder / "forcado.yaml").write_text(textwrap.dedent(policy), encoding="utf-8")
-        (folder / "harness.py").write_text("# installed hook\n", encoding="utf-8")
+        shutil.copy2(ROOT / "security" / "gate.py", security / "gate.py")
+        (security / "policy.yaml").write_text(
+            (ROOT / "security" / "policy.yaml").read_text(encoding="utf-8"), encoding="utf-8")
         return folder
 
     def mapping_profile(self, settings, agent="deepseek", name="deepseek"):
@@ -100,7 +109,7 @@ class SettingsTest(unittest.TestCase):
         # the installed harness is absent: the hook points at this repo's existing script, never a
         # missing path (a non-zero hook would block every prompt)
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-                         f'"${{WS_PYTHON:-python3}}" "{ROOT / "harness" / "harness.py"}"')
+                         f'"${{WS_PYTHON:-python3}}" "{ROOT / "security" / "gate.py"}"')
         self.assertIn("SessionStart", settings["hooks"])
         self.assertTrue(settings["hooks"]["SessionStart"])
 
@@ -126,7 +135,18 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("Bash(doas:*)", settings["permissions"]["deny"])
         self.assertNotIn("Bash(sudo:*)", settings["permissions"]["deny"])
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-                         f'"${{WS_PYTHON:-python3}}" "{folder / "harness.py"}"')
+                         f'"${{WS_PYTHON:-python3}}" "{folder.parent / "security" / "gate.py"}"')
+
+    def test_security_dir_override_points_the_hook_at_the_chosen_engine(self):
+        folder = self.harness()
+        custom = self.root / "custom-security"
+        custom.mkdir()
+        shutil.copy2(ROOT / "security" / "gate.py", custom / "gate.py")
+        self.mapping_profile({})
+        proc = self.ensure("deepseek", harness=folder, security=custom)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.generated()["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+                         f'"${{WS_PYTHON:-python3}}" "{custom / "gate.py"}"')
 
     def test_missing_installed_harness_uses_the_committed_base(self):
         self.mapping_profile({})

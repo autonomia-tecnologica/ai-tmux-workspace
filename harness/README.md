@@ -9,6 +9,10 @@ já declara.
 `harness` do AT, com os documentos dela, e o projeto não a lê nem a edita. A pasta do harness adicional
 é outra coisa, e é versionada junto com o projeto.
 
+**Texto, não motor.** Esta pasta guarda só regra e declaração. O motor e o freio determinístico
+(o hook do Claude, a política, o plugin do OpenCode e as settings renderizadas) moram em
+[`../security/`](../security/) e não fazem parte deste índice de leitura.
+
 ## Índice
 
 - [`arch-format.md`](arch-format.md) — o piso do `ARCH.md`: camadas, direção de dependência, dono
