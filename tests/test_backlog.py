@@ -146,21 +146,48 @@ class BacklogTest(unittest.TestCase):
         ids = [i["id"] for i in backlog.ordered(items)]
         self.assertLess(ids.index(1), ids.index(2))        # 1 unblocks 3, 2 unblocks nothing
 
-    def test_validate_first_in_tree(self):
-        items = self.parse("""Próximo id: 100
+    def test_legacy_validate_section_is_closed(self):
+        # old backlogs still carry "A validar": its items are not listed, and a dependency on them is met
+        doc = backlog.document(self._write("""Próximo id: 100
 
 ## Refinadas
 
 ### 1. ready high
-- Prioridade: P0
+- Categoria: X
+- Depende de: 2
 
 ## A validar
 
-### 2. validate low
-- Prioridade: P2
-""")
-        rows = backlog.tree(items)
-        self.assertEqual(rows[0][0]["id"], 2)
+### 2. delivered earlier
+- Categoria: X
+- Conferir: algo
+"""))
+        self.assertEqual([i["id"] for i in doc["items"]], [1])
+        self.assertFalse(doc["items"][0]["blocked"])
+        self.assertEqual(doc["legacy"], [2])
+        self.assertEqual(doc["gone"], list(range(3, 100)))
+
+    def test_backlog_without_validate_section_parses(self):
+        doc = backlog.document(self._write("""Próximo id: 4
+
+## Refinadas
+
+### 1. A
+- Categoria: X
+
+## A refinar
+
+### 3. C
+- Categoria: X
+"""))
+        self.assertEqual([i["id"] for i in doc["items"]], [1, 3])
+        self.assertEqual(doc["gone"], [2])                   # absent below "Próximo id": delivered by absence
+        self.assertEqual(doc["legacy"], [])
+
+    def _write(self, text):
+        path = self.root / "BACKLOG.md"
+        path.write_text(text, encoding="utf-8")
+        return path
 
     def test_cycle_last(self):
         items = self.parse("""Próximo id: 100
@@ -219,9 +246,9 @@ class BacklogTest(unittest.TestCase):
             if old is not None:
                 os.environ["TMUX_PANE"] = old
         self.assertEqual(panel_tasks.buckets(["ready", "paused", "paused", "refine"]),
-                         {"ready": 1, "refine": 1, "validate": 0, "blocked": 0, "paused": 2})
-        self.assertEqual(panel_tasks.buckets(["ready", "blocked", "cycle", "validate", "paused"]),
-                         {"ready": 1, "refine": 0, "validate": 1, "blocked": 2, "paused": 1})
+                         {"ready": 1, "refine": 1, "blocked": 0, "paused": 2})
+        self.assertEqual(panel_tasks.buckets(["ready", "blocked", "cycle", "paused"]),
+                         {"ready": 1, "refine": 0, "blocked": 2, "paused": 1})
 
 
 if __name__ == "__main__":

@@ -5,18 +5,17 @@ escrito em pt-BR, o git o ignora (`/BACKLOG.md`) e ele não tem par de idioma.
 
 ## Arquivo
 
-- Só o que está aberto. O que foi entregue e validado sai da lista.
+- Só o que está aberto. A entrega concluída sai da lista na hora de fechar; ela fica no commit/PR.
 - No topo, depois do título: `Próximo id: N`.
 - Ids são inteiros, incrementais e nunca reusados — nem quando um item é removido ou pausado.
-- As seções são, nesta ordem: `## Refinadas`, `## A refinar`, `## A validar`.
+- Id menor que `Próximo id` e ausente da lista está entregue. Por isso o id nunca é reusado.
+- As seções são, nesta ordem: `## Refinadas`, `## A refinar`.
 
 ## Seções
 
 - `## Refinadas` — item despachável: escopo fechado, caminhos, aceite e validação escritos. Refinada é
   despachável, não concluída.
 - `## A refinar` — ideia ainda ambígua; não se despacha até ser refinada.
-- `## A validar` — entrega esperando a pessoa. Não existe "pronto": a entrega vai para cá e só sai
-  quando a pessoa valida.
 
 ## Item
 
@@ -32,13 +31,6 @@ Em `Refinadas` e `A refinar`:
 - `Validação:` como se verifica o aceite — testes, comandos, o que olhar.
 
 Em `A refinar`, o item pode ainda trazer `Contexto (data)` e `Falta decidir:`.
-
-Em `A validar`, os campos mudam para a pessoa conferir:
-
-- `Categoria:` a mesma do item.
-- `Conferir:` o que deve estar de pé depois da entrega.
-- `Como:` o passo a passo para ver.
-- `Decide:` o que fica com a pessoa — escolhas, ajustes que viram item novo.
 
 ## Regras
 

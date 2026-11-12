@@ -24,7 +24,7 @@ def ci_dot(color):
 
 # --- task markers ------------------------------------------------------------------------------
 _MARK = {"ready": (GREEN, "●"), "refine": (GRAY, "○"), "paused": (DIM, "◌"),
-         "blocked": (YELLOW, "⊘"), "validate": (YELLOW, "◆"), "cycle": (RED, "✖")}
+         "blocked": (YELLOW, "⊘"), "cycle": (RED, "✖")}
 
 
 def task_mark(state):

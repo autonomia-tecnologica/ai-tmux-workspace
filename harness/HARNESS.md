@@ -46,8 +46,9 @@ em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `for
 
 - `BACKLOG.md` na raiz, pt-BR, gitignored; só o que está aberto.
 - Topo `Próximo id: N`; ids inteiros, incrementais, nunca reusados.
-- Seções: `## Refinadas`, `## A refinar`, `## A validar`.
-- Não existe "pronto"; entrega vai para `A validar` e só sai quando a pessoa valida.
+- Seções: `## Refinadas`, `## A refinar`.
+- Entrega concluída sai do `BACKLOG.md` na hora de fechar; fica no commit/PR. Validação humana é
+  opcional e acontece por PR, nunca por seção do backlog.
 - Item: `Categoria`, `Caminhos`, `Depende de`, `Aceite`, `Validação`.
 - Categorias fixas: `Segurança` (freio em código) e `HARNESS.md` (regra escrita).
 - Refinada = despachável, não concluída; item ambíguo fica em `A refinar`.

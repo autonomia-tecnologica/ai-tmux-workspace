@@ -17,7 +17,7 @@ import lib  # noqa: E402
 LEGACY = ["TODO.md", "TODOS.md", "docs/BACKLOG.md", "docs/TODO.md", "ROADMAP.md", "docs/ROADMAP.md", "TASKS.md"]
 FIELDS = {"Categoria", "Caminhos", "Depende de", "Aceite", "Validação"}
 FIELD_ALIASES = {"Arquivos": "Caminhos"}  # legacy name, accepted during the transition
-VALIDATE_FIELDS = {"Categoria", "Conferir", "Como", "Decide"}
+LEGACY_SECTION = "a validar"              # old section: tolerated, its items are closed (no fields checked)
 
 
 def git(repo, *args):
@@ -32,9 +32,9 @@ def format_problems(text):
     if not nxt:
         problems.append("missing 'Próximo id: N' at the top")
     order = [m.strip().lower() for m in re.findall(r"^## (.+)$", text, re.M)]
-    expected = [s for s in ["refinadas", "a refinar", "a validar"] if s in order]
-    if order != expected or len(order) != 3:
-        problems.append(f"sections must be exactly: Refinadas, A refinar, A validar (found {order})")
+    expected = [s for s in ["refinadas", "a refinar", LEGACY_SECTION] if s in order]
+    if order != expected or not {"refinadas", "a refinar"} <= set(order):
+        problems.append(f"sections must be: Refinadas, A refinar (found {order})")
     blocks = re.split(r"^(?=### |## )", text, flags=re.M)
     for b in blocks:
         if b.startswith("## "):
@@ -48,9 +48,8 @@ def format_problems(text):
         n = int(m.group(1))
         ids.append(n)
         have = {FIELD_ALIASES.get(f, f) for f in re.findall(r"^- ([^:\n]+):", b, re.M)}
-        need = VALIDATE_FIELDS if section == "a validar" else FIELDS
-        if have & need != need:
-            problems.append(f"item {n}: missing {sorted(need - have)}")
+        if section != LEGACY_SECTION and have & FIELDS != FIELDS:
+            problems.append(f"item {n}: missing {sorted(FIELDS - have)}")
         if len(b.strip().splitlines()) > 20:
             problems.append(f"item {n}: longer than ~15 lines")
     if len(ids) != len(set(ids)):
@@ -79,13 +78,16 @@ def audit(name, path):
         out["has_remote"] = bool(git(path, "remote")[1])
     if bl.is_file():
         text = bl.read_text(encoding="utf-8", errors="replace")
-        items = backlog.parse(bl)
+        doc = backlog.document(bl)
+        items = doc["items"] if doc else None
         out["panel_parses"] = items is not None
         out["items"] = len(items or [])
         out["problems"] = format_problems(text)
         out["cross_category"] = {i["id"]: i["cross"] for i in items or [] if i["cross"]}
         out["cycles"] = [i["id"] for i in items or [] if i["cycle"]]
         out["typo_deps"] = {i["id"]: i["typo"] for i in items or [] if i["typo"]}
+        out["gone"] = doc["gone"] if doc else []              # delivered by absence: confirm none is a lost item
+        out["legacy_validate"] = doc["legacy"] if doc else []  # old "A validar" items: closed, not listed
     out["ok"] = not out.get("error") and (not is_git or (out.get("ignored_as_root_rule") and not out.get("tracked"))) \
         and not out["legacy_files"] and (not bl.is_file() or (out["panel_parses"] and not out["problems"] and not out["cycles"] and not out["cross_category"]))
     return out

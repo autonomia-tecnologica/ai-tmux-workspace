@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 
 ITEM = re.compile(r"^###\s+(\d+)\.\s*(.*?)\s*$")
+# "a validar" is legacy: backlogs written before the section was dropped still carry it. Its items are
+# closed (not listed, their ids count as done), so the panel never shows them and no backlog turns "sem formato".
 SECTIONS = {"refinadas": "ready", "a refinar": "refine", "a validar": "validate"}
 PRIORITIES = ("P0", "P1", "P2")
 DEFAULT_PRIORITY = "P2"
@@ -20,15 +22,25 @@ def _priority(text):
 
 
 def parse(path):
-    """-> None if the file has no recognizable sections, else a list of
-    {"id", "title", "category": str ("" if missing), "status": ready|refine|validate|paused, "deps": [int],
-    "paths": [str], "priority": P0|P1|P2, "accept": str, "blocked": bool, "cycle": bool,
-    "unblocks": int, "typo": [int], "cross": [int]}."""
+    """-> None if the file has no recognizable sections, else the list of open items (see document)."""
+    doc = document(path)
+    return None if doc is None else doc["items"]
+
+
+def document(path):
+    """-> None if the file has no recognizable sections, else {"items": [...], "gone": [int],
+    "legacy": [int], "next_id": int|None}. Items: {"id", "title", "category": str ("" if missing),
+    "status": ready|refine|paused, "deps": [int], "paths": [str], "priority": P0|P1|P2, "accept": str,
+    "blocked": bool, "cycle": bool, "unblocks": int, "typo": [int], "cross": [int]}.
+    "gone": ids below "Próximo id" that the file no longer lists (taken as delivered; the skill shows
+    them so a typo or a lost item is not mistaken for a delivery). "legacy": ids under the old
+    "A validar" section (closed, not listed)."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     items, section, cur, seen, next_id = [], None, None, False, None
+    listed, legacy = set(), []
     for line in lines:
         if line.startswith("## "):
             section = SECTIONS.get(line[3:].strip().lower())
@@ -37,12 +49,17 @@ def parse(path):
             continue
         m = ITEM.match(line)
         if m and section:
+            if section == "validate":           # legacy: closed, so no item is built for it
+                legacy.append(int(m.group(1)))
+                cur = None
+                continue
             title = m.group(2)
             paused = "(PAUSADA)" in title.upper()
             cur = {"id": int(m.group(1)), "title": re.sub(r"\s*\(PAUSADA\)\s*", " ", title, flags=re.I).strip(),
-                   "status": "paused" if paused and section != "validate" else section, "deps": [],
+                   "status": "paused" if paused else section, "deps": [],
                    "paths": [], "priority": DEFAULT_PRIORITY, "accept": "", "category": ""}
             items.append(cur)
+            listed.add(cur["id"])
         elif cur is not None:
             d = re.match(r"^-\s*Depende de:\s*(.*)$", line)
             if d:
@@ -68,7 +85,9 @@ def parse(path):
     if not seen:
         return None
     resolve(items, next_id)
-    return items
+    present = listed | set(legacy)
+    gone = [n for n in range(1, next_id or 0) if n not in present]
+    return {"items": items, "gone": gone, "legacy": legacy, "next_id": next_id}
 
 
 def resolve(items, next_id):
@@ -161,9 +180,8 @@ def ordered(items):
 def tree(items):
     """Display rows in dependency-tree order: -> [(item, parent_id|None, is_last, has_children)].
     The parent is the dependency that unblocks the item last; items without a usable parent
-    (no deps, cycle, or a dependency that comes later) are roots. Items to validate come first
-    and cycle members stay last."""
-    out = sorted(ordered(items), key=lambda i: (bool(i.get("cycle")), i["status"] != "validate"))
+    (no deps, cycle, or a dependency that comes later) are roots. Cycle members stay last."""
+    out = sorted(ordered(items), key=lambda i: bool(i.get("cycle")))
     pos = {i["id"]: n for n, i in enumerate(out)}
     parent, kids = {}, {}
     for i in out:
