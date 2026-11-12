@@ -191,8 +191,8 @@ class PolicyTest(unittest.TestCase):
             (self.bash("git config --global user.name"), "config.read", "allow"),
             (self.bash("git config --global user.name Someone"), "config.write", "deny"),
             (self.bash("python3 -m unittest discover -s tests"), "test.run", "allow"),
-            (self.bash("curl https://example.com"), "net", "deny"),
-            (self.bash("pip install requests"), "install", "deny"),
+            (self.bash("curl https://example.com"), "net", "allow"),
+            (self.bash("pip install requests"), "install", "allow"),
             (self.bash("sudo ls"), "admin", "deny"),
             ({"tool_name": "send_message", "tool_input": {}, "session_id": "s"},
              "session.external", "ask"),
@@ -339,22 +339,34 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual(result["decision"], "allow")
                 self.assertEqual(result["capability"], "repo.read")
 
-    def test_sed_awk_and_pagers_are_denied(self):
+    def test_unknown_programs_with_scripts_or_expansions_stay_denied(self):
+        # Item 135: no command list, but a script with an embedded path or an expansion is not
+        # resolvable, so it is ambiguous and denied whatever the program is.
         commands = [
-            "sed -e 's/x/y/' a.txt",
             "sed -e 's/x/y/w /etc/foo' a.txt",
             "awk 'BEGIN{print \"x\" > \"/etc/foo\"}'",
             "awk '{print $1}' file.txt",
             "gawk '{print}' file.txt",
             "mawk '{print}' file.txt",
-            "less file.txt",
-            "more file.txt",
         ]
         for command in commands:
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
                 self.assertEqual(result["decision"], "deny")
                 self.assertIsNone(result["capability"])
+
+    def test_unknown_programs_defer_and_keep_the_path_barrier_on_their_arguments(self):
+        # Inside the box: no path escape, so the session mode decides (allow, defer).
+        for command in ("sed -e 's/x/y/' a.txt", "less file.txt", "more file.txt"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(self.bash(command))["decision"], "allow")
+        # Outside the box or in a secret: the argument's own barrier applies.
+        for command, capability in (("less /etc/passwd", "repo.outside"),
+                                    ("more .env", "secrets"),
+                                    ("less --file=/etc/passwd", "repo.outside")):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
 
     def test_tilde_expands_instead_of_being_rejected(self):
         result = self.decide(self.bash("cat ~"))
@@ -605,7 +617,8 @@ class PolicyTest(unittest.TestCase):
             "vcs.remote": self.bash("git push", agent_id="a1"),
             "repo.read": self.read(self.repo / "a.py", agent_id="a1"),
         }
-        self.assertEqual(self.decide(parent_repo["net"])["decision"], "deny")
+        # the parent repo allows net (item 135): the subagent inherits the allow
+        self.assertEqual(self.decide(parent_repo["net"])["decision"], "allow")
         self.assertEqual(self.decide(parent_repo["vcs.remote"])["decision"], "ask")
         self.assertEqual(self.decide(parent_repo["repo.read"])["decision"], "allow")
 
@@ -625,11 +638,11 @@ class PolicyTest(unittest.TestCase):
     def test_subagent_entries_can_only_tighten_the_parent(self):
         fixture = self.fixture_policy(subagent={
             "inherits": "parent",
-            "net": "allow",           # parent repo denies net: ignored
+            "admin": "allow",         # parent repo denies admin: ignored
             "repo.write": "deny",     # parent repo allows: accepted (stricter)
         })
         with patched_env(WS_POLICY=str(fixture)):
-            self.assertEqual(self.decide(self.bash("curl https://x", agent_id="a1"))["decision"], "deny")
+            self.assertEqual(self.decide(self.bash("sudo ls", agent_id="a1"))["decision"], "deny")
             self.assertEqual(self.decide(self.write(self.repo / "a.py", agent_id="a1"))["decision"],
                              "deny")
             self.assertEqual(self.decide(self.write(self.repo / "a.py"))["decision"], "allow")
@@ -652,7 +665,7 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual(result["reason"], "policy.reason.inert")
 
         # Loading a tool is not the same as calling it: the loaded tool is classified one by one.
-        self.assertEqual(self.decide(self.bash("curl https://example.com"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "deny")
         self.assertEqual(self.decide(self.bash("git push"))["decision"], "ask")
 
     def test_tool_search_other_queries_and_names_outside_the_list_fail_closed(self):
@@ -874,7 +887,7 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual((result["decision"], result["capability"]),
                                  ("allow", "test.run"))
         result = self.decide(self.bash("python3 -I -m pip install requests"))
-        self.assertEqual((result["decision"], result["capability"]), ("deny", "install"))
+        self.assertEqual((result["decision"], result["capability"]), ("allow", "install"))
         for command in ("python3 -c 'print(1)'", "python3 -I -c 'print(1)'",
                         "python3 -I -m unknown_module", "python3 -I -",
                         "python3 -I tests/run.py", "python3 -v -m unittest",
@@ -882,6 +895,19 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
                 self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+
+    def test_python_venv_is_install_in_repo_and_ask_in_home(self):
+        # `python -m venv` creates an environment and installs nothing; it is classified like
+        # `pip install` (capability `install`, no target path), so the role table decides.
+        for command in ("python3 -m venv .venv", "python -m venv .venv", "python3 -I -m venv .venv"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("allow", "install"))
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+            for command in ("python3 -m venv .venv", "python3 -I -m venv .venv"):
+                with self.subTest(command=command, role="home"):
+                    result = self.decide(self.bash(command))
+                    self.assertEqual((result["decision"], result["capability"]), ("ask", "install"))
 
     def test_godot_requires_headless_and_paths_inside_the_box(self):
         commands = (
@@ -949,23 +975,129 @@ class PolicyTest(unittest.TestCase):
         return marker
 
     def test_ask_mode_is_off_without_the_marker_or_env(self):
-        events = (
-            self.bash("some-unknown-command --flag"),
-            self.obash("other-unknown-command"),
-            {"tool_name": "UnknownTool", "tool_input": {}, "session_id": "sess-1"},
-        )
-        for event in events:
+        # Item 135: an unknown command defers to the session mode (allow, no reason of its own).
+        for event in (self.bash("some-unknown-command --flag"), self.obash("other-unknown-command")):
             with self.subTest(event=event):
                 result = self.decide(event)
-                self.assertEqual((result["decision"], result["capability"]), ("deny", None))
-                self.assertEqual(result["reason"], "policy.reason.unknown")
+                self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+                self.assertEqual(result["reason"], "policy.reason.defer")
+        # An unknown tool (not a shell command) is still outside the list: fail closed.
+        unknown_tool = {"tool_name": "UnknownTool", "tool_input": {}, "session_id": "sess-1"}
+        result = self.decide(unknown_tool)
+        self.assertEqual((result["decision"], result["capability"]), ("deny", None))
+        self.assertEqual(result["reason"], "policy.reason.unknown")
         with patched_env(WS_POLICY_ASK="0"):
-            self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+            self.assertEqual(self.decide(self.bash("some-unknown-command"))["reason"],
+                             "policy.reason.defer")
         # A marker outside the declared state directory is not the person's marker.
         elsewhere = self.home / ".cache" / "workspace" / "policy.ask"
         elsewhere.parent.mkdir(parents=True)
         elsewhere.write_text("", encoding="utf-8")
-        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "allow")
+
+    def test_unknown_program_defers_but_the_rest_of_the_command_is_still_classified(self):
+        # A known segment in the same line keeps its own decision: `&&` and redirects are not
+        # hidden by an unknown program (item 135).
+        cases = (
+            ("dotnet --version", "allow", "policy.reason.defer"),
+            ("dotnet build && cat .env", "deny", "policy.reason.deny"),
+            ("dotnet build && rm -rf ~/.config/ai-tmux-workspace", "deny", "policy.reason.deny"),
+            ("dotnet build > ~/.config/ai-tmux-workspace/out", "deny", "policy.reason.deny"),
+            ("dotnet build && sudo ls", "deny", "policy.reason.deny"),
+            ("git status && dotnet --version", "allow", "policy.reason.allow"),
+        )
+        for command, decision, reason in cases:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]), (decision, reason))
+
+    def test_toolchain_forms_it_does_not_know_defer_and_keep_the_path_barrier(self):
+        # Item 135: `cargo run`, `go run`, `make` without a target or with `-C`, `npm run` and the
+        # other toolchains defer to the session mode; their path arguments still meet the barrier.
+        defer = (
+            "cargo run", "cargo run --bin app", "cargo run -- --port 8080", "go run main.go",
+            "go run ./cmd/app", "make", "make deploy", "make -C sub", "make -Csub test",
+            "make --directory=sub deploy", "npm run build", "pnpm run dev", "yarn run lint",
+            "bun run start", "dotnet build", "mvn package", "gradle build",
+        )
+        for command in defer:
+            with self.subTest(command=command):
+                # A positional word is a relative path too (`build`, `deploy`): its repo.write
+                # finding can rank first, so only the decision is fixed here.
+                self.assertEqual(self.decide(self.bash(command))["decision"], "allow")
+        # With no positional word the form is only DEFER: the reason names the session mode.
+        for command in ("make --version", "dotnet --version", "cargo --version"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
+        # Known forms of the same toolchains keep their own capability.
+        for command, capability in (("cargo test", "test.run"), ("make test", "test.run"),
+                                    ("go vet ./...", "test.run"), ("npm test", "test.run")):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("allow", capability))
+        # The path barrier applies to the arguments of a deferred form, inline values included.
+        barrier = (
+            ("cargo run --manifest-path=/etc/x", "repo.outside"),
+            ("go run /etc/x.go", "repo.outside"),
+            ("make -C /etc deploy", "repo.outside"),
+            ("make -C/etc deploy", "repo.outside"),
+            ("make --directory=/etc deploy", "repo.outside"),
+            ("npm run build --prefix=.env", "secrets"),
+        )
+        for command, capability in barrier:
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
+        # Arbitrary code forms and admin keep their denies; so does a segment with a bad part.
+        for command, capabilities in (
+                ("sh -c 'cargo run'", (None,)), ("bash -c ls", (None,)), ("eval ls", (None,)),
+                ("python3 -c 'print(1)'", (None,)), ("go run ./x 'a b/c'", (None,)),
+                ("cargo run && cat .env", ("secrets",)), ("sudo cargo run", ("admin",)),
+                # two denies in one line: the first one found is reported
+                ("make -C /etc && sudo ls", ("repo.outside", "admin"))):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual(result["decision"], "deny")
+                self.assertIn(result["capability"], capabilities)
+        # `ask` mode (opt-in marker) asks about a deferred form instead of allowing it.
+        self.ask_marker()
+        for command in ("cargo run", "make", "npm run build"):
+            with self.subTest(command=command, ask=True):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("ask", "policy.reason.ask_mode"))
+
+    def test_item_135_acceptance_battery(self):
+        # Unknown programs and the install/net tools of a repo session pass; admin, secrets, the
+        # config directory and the workspace code stay denied.
+        cases = (
+            (self.bash("dotnet --version"), "allow"),
+            (self.bash("python3 -m venv .venv"), "allow"),
+            (self.bash("pip install -e ."), "allow"),
+            (self.bash("sudo ls"), "deny"),
+            (self.bash("pkexec ls"), "deny"),
+            (self.bash("cp a.txt ~/.config/ai-tmux-workspace/config.yaml"), "deny"),
+            (self.write(ROOT / "src" / "policy.py"), "deny"),
+            (self.bash("cat .env"), "deny"),
+        )
+        for event, decision in cases:
+            with self.subTest(event=event):
+                self.assertEqual(self.decide(event)["decision"], decision)
+
+    def test_admin_stays_denied_for_every_role_and_mode(self):
+        # sudo, pkexec, su and doas are the admin barrier: no mode and no role lifts them.
+        for command in ("sudo ls", "pkexec ls", "su -c ls", "doas ls"):
+            with self.subTest(command=command):
+                result = self.decide(self.bash(command))
+                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+        with patched_env(WS_POLICY_AUTO="1"):
+            self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "deny")
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+            self.assertEqual(self.decide(self.bash("pkexec ls"))["decision"], "deny")
+        self.ask_marker()
+        self.assertEqual(self.decide(self.bash("doas ls"))["decision"], "deny")
 
     def test_ask_mode_marker_turns_unknown_commands_and_tools_into_ask(self):
         self.ask_marker()
@@ -1003,7 +1135,7 @@ class PolicyTest(unittest.TestCase):
             self.assertEqual(policy.check_event(self.bash("some-unknown-command"))["decision"],
                              "ask")
         # With WS_STATE declared the cache marker is not read: the test state is the only one.
-        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("some-unknown-command"))["decision"], "allow")
 
     def test_ask_mode_keeps_secrets_admin_outside_config_and_workspace_denied(self):
         self.ask_marker()
@@ -1028,25 +1160,22 @@ class PolicyTest(unittest.TestCase):
         result = self.decide(self.write(self.state / "policy.ask"))
         self.assertEqual((result["decision"], result["capability"]), ("deny", "repo.outside"))
 
-    def test_ask_mode_turns_net_and_install_into_ask(self):
+    def test_ask_mode_leaves_repo_net_and_install_allowed_and_asks_the_rest(self):
         self.ask_marker()
+        # The repo role allows net and install (item 135): ask mode only turns the denied ones into ask.
         cases = (
             ("curl https://example.com", "net"),
             ("pip install requests", "install"),
             ("python3 -m pip install requests", "install"),
-            ("git pull", "vcs.remote"),
         )
         for command, capability in cases:
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                if capability == "vcs.remote":
-                    # Already `ask` in the table: the reason does not change.
-                    self.assertEqual((result["decision"], result["reason"]),
-                                     ("ask", "policy.reason.ask"))
-                else:
-                    self.assertEqual((result["decision"], result["capability"]),
-                                     ("ask", capability))
-                    self.assertEqual(result["reason"], "policy.reason.ask_mode")
+                self.assertEqual((result["decision"], result["capability"]),
+                                 ("allow", capability))
+        # Already `ask` in the table: the reason does not change.
+        result = self.decide(self.bash("git pull"))
+        self.assertEqual((result["decision"], result["reason"]), ("ask", "policy.reason.ask"))
         external = {"tool_name": "send_message", "tool_input": {}, "session_id": "sess-1"}
         self.assertEqual(self.decide(external)["reason"], "policy.reason.ask")
         with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
@@ -1089,15 +1218,14 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(entries[0]["target"], "Bash")
         self.assertNotIn(secret, text)
         self.assertEqual((entries[1]["decision"], entries[1]["capability"]),
-                         ("ask", "net"))
-        self.assertEqual((entries[1]["reason"], entries[1]["target"]),
-                         ("policy.reason.ask_mode", "curl"))
+                         ("allow", "net"))
+        self.assertEqual(entries[1]["target"], "curl")
 
-    def test_cli_without_the_marker_keeps_fail_closed(self):
+    def test_cli_without_the_marker_defers_unknown_commands(self):
         result = self.cli(self.bash("some-unknown-command"))
-        self.assertEqual(result, {"decision": "deny", "capability": None,
-                                  "reason": "policy.reason.unknown"})
-        self.assertEqual(self.cli(self.bash("curl https://example.com"))["decision"], "deny")
+        self.assertEqual(result, {"decision": "allow", "capability": None,
+                                  "reason": "policy.reason.defer"})
+        self.assertEqual(self.cli(self.bash("curl https://example.com"))["decision"], "allow")
 
     def test_cli_covers_the_item_119_acceptance_battery(self):
         self.ask_marker()
@@ -1109,8 +1237,8 @@ class PolicyTest(unittest.TestCase):
             (self.bash("sudo ls"), "deny", "admin"),
             (self.bash("ls ~/Desktop"), "deny", "repo.outside"),
             (self.write(ROOT / "src" / "policy.py"), "deny", "workspace.write"),
-            (self.bash("curl https://example.com"), "ask", "net"),
-            (self.bash("pip install requests"), "ask", "install"),
+            (self.bash("curl https://example.com"), "allow", "net"),
+            (self.bash("pip install requests"), "allow", "install"),
             (self.bash("git status"), "allow", "vcs.read"),
         )
         for event, decision, capability in cases:

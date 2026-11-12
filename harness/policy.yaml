@@ -17,6 +17,10 @@
 # Decisions: allow runs without asking; ask waits for the person; deny never runs. `auto` (read
 # from WS_POLICY_AUTO or the event permission_mode) only turns `ask` into `allow` for path-scoped
 # capabilities whose target is inside the box, and never touches `deny`.
+#
+# A shell program no table knows is not classified here: it defers to the session's mode (item 135),
+# so the table has nothing to list for it. `deny` stays for what is known to be serious: admin
+# (sudo, pkexec, su, doas), secrets, paths outside the box and the workspace code.
 version: 1
 default: deny
 roles:
@@ -30,8 +34,8 @@ roles:
     vcs.write: allow
     vcs.remote: ask
     test.run: allow
-    net: deny
-    install: deny
+    net: allow
+    install: allow
     admin: deny
     config.read: allow
     config.write: deny

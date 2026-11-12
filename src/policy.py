@@ -28,6 +28,14 @@ over everything, including the session root.
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
+A shell program that no table knows (`dotnet`, `cargo --version`, ...) is not a deny (item 135):
+the engine answers `allow` with `policy.reason.defer`, which the hooks turn into no answer, so the
+session's own mode decides. The same holds for a known toolchain's form it does not know (`cargo run`,
+`go run`, `make -C dir`, `npm run`): it defers, and its path arguments still meet the barriers.
+The rest of the same command is still classified. Arbitrary code forms (`python -c`, `sh -c`,
+`eval`) stay denied. Denied for every role, with no list to maintain: `admin` (`sudo`, `pkexec`,
+`su`, `doas`), secrets, the box and the workspace code.
+
 `ask` mode (item 119) is opt-in by the person: `WS_POLICY_ASK`/`WS_POLICY_OPEN` or the marker
 `policy.ask`/`policy.open` in `$WS_STATE`. In it an action the engine cannot classify becomes `ask`
 (`policy.reason.ask_mode`) instead of a blind `deny`, and `net`/`install` denied by the table become
@@ -68,6 +76,11 @@ _RANK = {"deny": 0, "ask": 1, "allow": 2}
 
 # Path-scoped capabilities are the only ones `auto` may upgrade, and only inside the box.
 BOX_CAPABILITIES = {"repo.read", "repo.write", "repo.outside", "config.read", "config.write", "tmp"}
+
+# Internal marker for a shell program no table knows (item 135). It is not a capability: it decides
+# nothing by itself, so the session's mode decides (`allow` with `policy.reason.defer`, which the
+# hooks answer by staying silent). Other findings of the same command still apply.
+DEFER = "defer"
 
 MAX_TARGET = 300
 MAX_SESSION = 100
@@ -1030,6 +1043,8 @@ def _classify_python(arguments):
             return [Finding("install", "python3 -m pip " + action, None)]
         if action in ("list", "show", "freeze", "check"):
             return [Finding("test.run", "python3 -m pip " + action, None)]
+    if module == "venv":
+        return [Finding("install", "python3 -m venv", None)]    # same target rule as pip: none
     return None                         # arbitrary module, script or -c: fail closed
 
 
@@ -1121,15 +1136,14 @@ def _classify_go(arguments):
         return [Finding("repo.write", "go " + action, None)]
     if action in ("install", "get", "mod"):
         return [Finding("install", "go " + action, None)]
-    if action in ("run",):
-        return None                         # arbitrary code
-    return None
+    return None                             # `go run` and other forms: see _toolchain_findings
 
 
 def _classify_make(arguments):
     if not arguments:
         return None
-    if any(argument in ("-C", "--directory") or argument.startswith("--directory=")
+    # `-C dir`, `-Cdir` and `--directory` change the directory the make runs in: not a known form.
+    if any(argument.startswith("-C") or argument.startswith("--directory")
            for argument in arguments):
         return None
     targets = [argument for argument in arguments if not argument.startswith("-")]
@@ -1175,13 +1189,18 @@ def _classify_tokens_impl(tokens, root, anchor=None):
     if program in GODOT_PROGRAMS:
         return _classify_godot(arguments, root, anchor)
     if program in ("npm", "yarn", "pnpm", "bun"):
-        return _classify_node(arguments, program)
+        return _toolchain_findings(_classify_node(arguments, program), program, arguments,
+                                   root, anchor)
     if program == "cargo":
-        return _classify_rust(arguments)
+        return _toolchain_findings(_classify_rust(arguments), program, arguments, root, anchor)
     if program == "go":
-        return _classify_go(arguments)
+        return _toolchain_findings(_classify_go(arguments), program, arguments, root, anchor)
     if program == "make":
-        return _classify_make(arguments)
+        # The directory of `-C dir` / `-Cdir` is a path too: it meets the path barrier.
+        attached = [argument[2:] for argument in arguments
+                    if argument.startswith("-C") and len(argument) > 2]
+        return _toolchain_findings(_classify_make(arguments), program, arguments, root, anchor,
+                                   attached)
     if program in ("sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh"):
         return None
     if program in ("eval", "exec", "source", "."):
@@ -1229,7 +1248,44 @@ def _classify_tokens_impl(tokens, root, anchor=None):
         if findings is None and writes is None:
             return [Finding("repo.read", root, root)] if root else None
         return (findings or []) + (writes or [])
-    return None
+    # A program no table knows: not a fail-closed case any more (item 135). Sub-classifiers that
+    # return None (arbitrary code such as `python -c`, `sh -c`, `eval`) still fail closed above.
+    return _unknown_program_findings(program, arguments, root, anchor)
+
+
+def _toolchain_findings(known, program, arguments, root, anchor, attached=()):
+    """A toolchain's known subcommands keep their capability; any other form defers (item 135).
+
+    `known` is what the toolchain's sub-classifier returned; None means a form it does not know
+    (`cargo run`, `npm run`, `make -C dir`, ...), which is not a deny: it is classified like an
+    unknown program, with the path barriers on its arguments and `DEFER` for the session mode.
+    """
+    if known is not None:
+        return known
+    return _unknown_program_findings(program, arguments, root, anchor, attached)
+
+
+def _unknown_program_findings(program, arguments, root, anchor, attached=()):
+    """Findings for a program no table knows (item 135): no command list, but no path escape either.
+
+    Its path-like values still meet the path barriers: positional words, the value of
+    `--opt=value` and the `attached` values the caller extracts (make's `-Cdir`). A value that
+    cannot be resolved (glob, expansion) raises `_Ambiguous` and the segment is denied. The `DEFER`
+    finding is always added, so the session mode (or the `ask` mode marker) decides the rest.
+    Other attached short-option values (`-o/path`) are not checked.
+    """
+    values = list(attached)
+    for argument in arguments:
+        if argument.startswith("-"):
+            if "=" not in argument:
+                continue
+            argument = argument.split("=", 1)[1]
+        # A script passed as one word (`'s/x/y/w /etc/foo'`) hides paths inside it: ambiguous.
+        if re.search(r"\s", argument) and ("/" in argument or "~" in argument):
+            raise _Ambiguous(argument)
+        values.append(argument)
+    findings = _classify_paths(values, root, True, anchor=anchor) or []
+    return findings + [Finding(DEFER, program, None)]
 
 
 def _classify_tokens(tokens, root, anchor=None):
@@ -1455,6 +1511,11 @@ def check_event(event):
     for finding in findings:
         if finding.capability is None:
             decision, reason = "allow", "policy.reason.inert"
+        elif finding.capability == DEFER:
+            # Unknown program: the workspace does not decide; the session mode does (item 135).
+            # `ask` mode (opt-in marker) keeps asking the person about the unknown.
+            decision, reason = (("ask", "policy.reason.ask_mode") if ask_mode
+                                else ("allow", "policy.reason.defer"))
         elif finding.capability in ("workspace.read", "workspace.write"):
             decision, reason = _protected_decision(finding.capability, root, root_declared)
         else:
@@ -1469,6 +1530,11 @@ def check_event(event):
             best = (decision, finding, reason)
 
     decision, finding, reason = best
+    if finding.capability == DEFER:
+        # The log names the tool, never the program's arguments, like the ask-mode path did.
+        tool = event.get("tool_name")
+        return _finish(decision, None, reason, event, role="subagent" if subagent else parent,
+                       target=tool if isinstance(tool, str) else None)
     return _finish(decision, finding.capability, reason, event,
                    role="subagent" if subagent else parent, target=finding.target)
 
