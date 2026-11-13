@@ -1054,14 +1054,21 @@ class Assistant:
             self.install_harness_shim()
 
     def install_harness_shim(self):
-        """Without the SessionStart hook, point ~/.claude/CLAUDE.md at the installed HARNESS.md."""
+        """Without the SessionStart hook, ~/.claude/CLAUDE.md imports the installed HARNESS.md (`@path`,
+        one line). Created or updated in place between the markers; the person's text is kept."""
         path = HOME / ".claude" / "CLAUDE.md"
-        block = "\n".join((
-            ">>> ai-tmux-workspace harness >>>",
-            t("installer.harness.shim"),
-            "<<< ai-tmux-workspace harness <<<",
-        ))
-        self.append_block(path, block, marker=">>> ai-tmux-workspace harness >>>")
+        block = shim_block("@" + display(layout_root() / "harness" / "HARNESS.md"))
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        try:
+            merged = merge_shim(existing, block)
+        except ShimError as error:
+            # Provisional pt-BR text: the key for this message lives in i18n/pt-BR.json (not in scope).
+            self.ui.warn(f"Bloco do harness em {display(path)} está quebrado ({error}); não mexi no arquivo.")
+            return
+        if merged != existing:
+            self.ensure_dir(path.parent)
+            self.manifest_for().record(path)
+            path.write_text(merged, encoding="utf-8")
         self.ui.ok(t("installer.harness.shim_ok", path=display(path)))
 
     def install_hooks(self):
@@ -1268,6 +1275,39 @@ def security_files(source=None):
              if (ROOT / folder / name).is_file()]
     names.append("settings.json")
     return list(dict.fromkeys(names))
+
+
+# Claude shim: one import line between two markers the installation owns. Text outside the markers is
+# the person's and is never rewritten; the block itself is replaced in place, so a second run is a no-op.
+SHIM_START = ">>> ai-tmux-workspace harness >>>"
+SHIM_END = "<<< ai-tmux-workspace harness <<<"
+
+
+class ShimError(ValueError):
+    """The managed block is damaged (repeated or unpaired markers): the file is left untouched."""
+
+
+def shim_block(import_line):
+    return "\n".join((SHIM_START, import_line, SHIM_END))
+
+
+def merge_shim(existing, block):
+    """`existing` with the managed block set to `block`: replaced where the block is, appended when
+    there is none. Every byte outside the markers is kept as it was."""
+    if SHIM_START not in existing and SHIM_END not in existing:
+        prefix = "" if not existing or existing.endswith("\n") else "\n"
+        return existing + prefix + block + "\n"
+    if existing.count(SHIM_START) != 1 or existing.count(SHIM_END) != 1:
+        raise ShimError("markers repeated or unpaired")
+    start = existing.index(SHIM_START)
+    end = existing.index(SHIM_END)
+    if end < start:
+        raise ShimError("end marker before start marker")
+    line_start = existing.rfind("\n", 0, start) + 1
+    line_end = existing.find("\n", end)
+    if line_end == -1:
+        line_end = len(existing)
+    return existing[:line_start] + block + existing[line_end:]
 
 
 def copy_harness(source, target):
