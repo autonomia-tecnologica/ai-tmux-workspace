@@ -6,6 +6,7 @@ The install+remove test snapshots the temporary HOME before and after and compar
 the item's validation: the killswitch leaves the previous state exactly as it was.
 """
 import hashlib
+import io
 import json
 import os
 import re
@@ -15,12 +16,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 import i18n  # noqa: E402  (path set above)
+import installer_tui  # noqa: E402
 import yaml_min  # noqa: E402
 
 BASH = shutil.which("bash") or "/bin/bash"
@@ -117,7 +120,7 @@ class InstallerTest(unittest.TestCase):
 
     # install, cli, completion, manage (yes), providers (only claude), default (claude), config,
     # harness x2, hooks
-    def install(self, stdin="s\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", **overrides):
+    def install(self, stdin="s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", **overrides):
         return self.run_script(INSTALL, stdin, **overrides)
 
     def run_lib(self, *args, **overrides):
@@ -220,7 +223,7 @@ class InstallerTest(unittest.TestCase):
     def test_missing_harness_offers_the_clone_command_and_declining_aborts(self):
         missing = self.root / "missing-harness"
         before = snapshot(self.home)
-        result = self.install("s\ns\ns\ns\n1\n1\ns\nn\n", AT_HARNESS_SOURCE=str(missing))
+        result = self.install("s\ns\ns\ns\ns\n1\n1\ns\nn\n", AT_HARNESS_SOURCE=str(missing))
         self.assertEqual(result.returncode, 1)
         self.assertIn("git clone --depth 1", result.stdout)
         self.assertIn(CLONE_URL, result.stdout)
@@ -271,7 +274,7 @@ class InstallerTest(unittest.TestCase):
         (missing_bin / "dirname").symlink_to(shutil.which("dirname"))
         (missing_bin / "readlink").symlink_to(shutil.which("readlink"))
         executable(missing_bin / "pacman")
-        result = self.install("s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=str(missing_bin))
+        result = self.install("s\ns\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=str(missing_bin))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("faltando (obrigatórias): tmux, git, claude", result.stdout)
         self.assertIn("pkexec pacman -S --needed tmux", result.stdout)
@@ -465,7 +468,7 @@ class InstallerTest(unittest.TestCase):
     def test_install_with_all_providers_writes_the_five_profiles_without_bypass(self):
         # install, cli, completion, manage (yes), all five providers, default (claude), config,
         # harness x2, hooks
-        installed = self.install("s\ns\ns\ns\n1 2 3 4 5\n1\ns\ns\ns\ns\n")
+        installed = self.install("s\ns\ns\ns\ns\n1 2 3 4 5\n1\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, path = self.config()
         self.assertIs(cfg["manage"], True)
@@ -508,7 +511,7 @@ class InstallerTest(unittest.TestCase):
     def test_default_profile_is_the_first_marked_when_the_answer_is_empty(self):
         # install, cli, completion, manage, providers (openrouter then claude-harness),
         # default (empty), config, harness x2, hooks
-        installed = self.install("s\ns\ns\ns\n4 2\n\ns\ns\ns\ns\n")
+        installed = self.install("s\ns\ns\ns\ns\n4 2\n\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
         self.assertEqual(cfg["agent"], "opencode-claude")
@@ -518,7 +521,7 @@ class InstallerTest(unittest.TestCase):
     def test_default_profile_accepts_an_explicit_choice(self):
         # install, cli, completion, manage, providers (deepseek then free), default (2), config,
         # harness x2, hooks
-        installed = self.install("s\ns\ns\ns\n3 5\n2\ns\ns\ns\ns\n")
+        installed = self.install("s\ns\ns\ns\ns\n3 5\n2\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
         self.assertEqual(cfg["agent"], "opencode-free")
@@ -707,7 +710,7 @@ exec {shlex.quote(sys.executable)} "$@"
         executable(fake / "claude")
         path = str(fake) + os.pathsep + os.environ.get("PATH", "")
         # The unmet versions add the dependency confirmation: install, deps, cli, completion, ...
-        installed = self.install("s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=path)
+        installed = self.install("s\ns\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=path)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         self.assertIn("python3 3.8 < 3.9", installed.stdout)
         self.assertIn("tmux 3.3 < 3.4", installed.stdout)
@@ -722,7 +725,7 @@ exec {shlex.quote(sys.executable)} "$@"
         (fake / "python3").symlink_to(sys.executable)
         (fake / "dirname").symlink_to(shutil.which("dirname"))
         (fake / "readlink").symlink_to(shutil.which("readlink"))
-        result = self.install("s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=str(fake),
+        result = self.install("s\ns\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n", PATH=str(fake),
                               AT_WS_PLATFORM="darwin")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("https://raw.githubusercontent.com/Homebrew/install", result.stdout)
@@ -765,7 +768,7 @@ def make_remote(root):
 
 
 class CurlInstallTest(unittest.TestCase):
-    ANSWERS = "s\ns\ns\ns\n1\n1\ns\ns\ns\ns\n"   # same answers as InstallerTest.install()
+    ANSWERS = "s\ns\ns\ns\ns\n1\n1\ns\ns\ns\ns\n"   # same answers as InstallerTest.install()
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1010,6 +1013,416 @@ class ShimRefreshTest(unittest.TestCase):
     def test_reload_leaves_the_shim_alone_when_the_workspace_manages_the_harness(self):
         self.assertEqual(self.refresh(manage=True).returncode, 0)
         self.assertFalse(self.claude.exists())
+
+
+# --- full-screen wizard (item 152) -----------------------------------------------------------
+
+PROVIDER_NAMES = ["claude", "opencode-claude", "opencode-deepseek", "opencode-openrouter", "opencode-free"]
+
+
+def make_plan(**overrides):
+    values = dict(providers=list(PROVIDER_NAMES), dependency_lines=["encontradas: tmux"],
+                  cli_link="~/.local/bin/workspace", config_path="~/.config/ai-tmux-workspace/config.yaml",
+                  harness_path="~/.local/share/ai-tmux-workspace/harness",
+                  settings_path="~/.claude/settings.json", shim_path="~/.claude/CLAUDE.md",
+                  clone_url="https://example.invalid/harness.git", harness_missing=False)
+    values.update(overrides)
+    return installer_tui.Plan(**values)
+
+
+def drive(keys, plan=None):
+    """Feeds key names to a Wizard the way the drawing loop does; returns (wizard, action)."""
+    wizard = installer_tui.Wizard(plan or make_plan())
+    action = None
+    for key in keys:
+        action = wizard.handle_key(key)
+        if action is not None:
+            break
+    return wizard, action
+
+
+class CursesError(Exception):
+    pass
+
+
+FAKE_CURSES = types.SimpleNamespace(error=CursesError, A_BOLD=1, A_REVERSE=2, A_DIM=4,
+                                    KEY_UP=259, KEY_DOWN=258, KEY_LEFT=260, KEY_BACKSPACE=263,
+                                    KEY_ENTER=343)
+
+
+class FakeWindow:
+    """Records what the drawing layer writes; rows outside the terminal raise like curses does."""
+
+    def __init__(self, height, width):
+        self.height, self.width = height, width
+        self.rows, self.refreshed = {}, 0
+
+    def erase(self):
+        self.rows = {}
+
+    def getmaxyx(self):
+        return (self.height, self.width)
+
+    def addnstr(self, y, x, text, n, attr=0):
+        if y >= self.height:
+            raise CursesError("outside the terminal")
+        self.rows[y] = (text[:n], attr)
+
+    def refresh(self):
+        self.refreshed += 1
+
+
+class TuiWizardTest(unittest.TestCase):
+    """Screen logic only: no terminal, no install. The keys are the names the drawing layer sends."""
+
+    def test_the_harness_question_is_asked_whatever_manage_says(self):
+        for keys in (["enter", "enter", "enter"], ["enter", "enter", "down", "enter"]):
+            with self.subTest(keys=keys):
+                wizard, _ = drive(keys)
+                self.assertEqual(wizard.screen, installer_tui.HARNESS)
+                self.assertIn(installer_tui.HARNESS, wizard.screens())
+
+    def test_manage_yes_still_asks_the_harness_and_marks_providers(self):
+        wizard, action = drive(["enter", "enter", "enter", "enter", "space", "down", "space", "enter",
+                                "enter"])
+        self.assertIsNone(action)
+        self.assertEqual(wizard.screen, installer_tui.SUMMARY)
+        self.assertEqual(wizard.answers, {"manage": True, "harness_managed": True,
+                                          "providers": ["claude", "opencode-claude"],
+                                          "default": "claude"})
+
+    def test_manage_no_asks_the_harness_and_skips_default_without_providers(self):
+        wizard, _ = drive(["enter", "enter", "down", "enter", "down", "enter", "enter"])
+        self.assertEqual(wizard.screen, installer_tui.SUMMARY)
+        self.assertEqual(wizard.answers, {"manage": False, "harness_managed": False,
+                                          "providers": [], "default": None})
+        self.assertNotIn(installer_tui.DEFAULT, wizard.screens())
+
+    def test_harness_yes_with_manage_no_keeps_the_harness(self):
+        wizard, _ = drive(["enter", "enter", "down", "enter", "enter", "space", "enter"])
+        self.assertIs(wizard.answers["manage"], False)
+        self.assertIs(wizard.answers["harness_managed"], True)
+        self.assertEqual(wizard.answers["providers"], ["claude"])
+        self.assertEqual(wizard.answers["default"], "claude")
+
+    def test_the_harness_answer_is_kept_when_manage_is_yes(self):
+        wizard, _ = drive(["enter", "enter", "enter", "down", "enter"])
+        self.assertIs(wizard.answers["manage"], True)
+        self.assertIs(wizard.answers["harness_managed"], False)
+        wizard.goto(installer_tui.MANAGE)
+        wizard.handle_key("enter")
+        self.assertIs(wizard.answers["harness_managed"], False, "manage must not overwrite the answer")
+
+    def test_default_is_always_one_of_the_marked_providers(self):
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "down", "down", "space", "enter"])
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-deepseek"])
+        wizard.handle_key("down")
+        wizard.handle_key("space")
+        self.assertEqual(wizard.answers["default"], "opencode-deepseek")
+        wizard.handle_key("b")
+        self.assertEqual(wizard.screen, installer_tui.PROVIDERS)
+        wizard.handle_key("up")
+        wizard.handle_key("space")
+        self.assertEqual(wizard.answers["providers"], ["opencode-deepseek"])
+        self.assertEqual(wizard.answers["default"], "opencode-deepseek")
+
+    def test_back_returns_to_the_previous_screen_and_welcome_has_none(self):
+        wizard = installer_tui.Wizard(make_plan())
+        wizard.handle_key("b")
+        self.assertEqual(wizard.screen, installer_tui.WELCOME)
+        wizard.handle_key("enter")
+        wizard.handle_key("enter")
+        self.assertEqual(wizard.screen, installer_tui.MANAGE)
+        wizard.handle_key("left")
+        self.assertEqual(wizard.screen, installer_tui.DEPS)
+
+    def test_q_cancels_before_any_install_and_changes_no_answer(self):
+        wizard, action = drive(["enter", "enter", "down", "q"])
+        self.assertEqual(action, installer_tui.QUIT)
+        self.assertEqual(wizard.answers, {"manage": True, "harness_managed": True,
+                                          "providers": [], "default": None})
+
+    def test_only_the_summary_starts_the_install_and_the_final_screen_closes(self):
+        wizard, action = drive(["enter", "enter", "enter", "enter", "enter"])
+        self.assertEqual(wizard.screen, installer_tui.SUMMARY)
+        self.assertIsNone(action)
+        self.assertEqual(wizard.handle_key("enter"), installer_tui.INSTALL)
+        wizard.goto(installer_tui.PROGRESS)
+        self.assertIsNone(wizard.handle_key("q"), "keys are ignored while the install runs")
+        wizard.goto(installer_tui.DONE)
+        self.assertEqual(wizard.handle_key("enter"), installer_tui.CLOSE)
+
+    def test_old_config_skips_every_question(self):
+        plan = make_plan(legacy_config="~/.config/ai-tmux-workspace/config.yaml")
+        self.assertEqual(installer_tui.Wizard(plan).screens(),
+                         [installer_tui.WELCOME, installer_tui.DEPS, installer_tui.SUMMARY,
+                          installer_tui.PROGRESS, installer_tui.DONE])
+
+    def test_summary_says_what_will_change_for_each_answer(self):
+        def summary(keys):
+            wizard, _ = drive(keys)
+            return "\n".join(installer_tui.summary_lines(wizard))
+
+        managed = summary(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
+        self.assertIn(i18n.t("installer.tui.summary.hooks", path="~/.claude/settings.json"), managed)
+        self.assertNotIn(i18n.t("installer.tui.summary.shim", path="~/.claude/CLAUDE.md"), managed)
+        unmanaged = summary(["enter", "enter", "down", "enter", "enter", "space", "enter", "enter"])
+        self.assertIn(i18n.t("installer.tui.summary.shim", path="~/.claude/CLAUDE.md"), unmanaged)
+        self.assertIn(i18n.t("installer.tui.summary.nothing_hooks"), unmanaged)
+        none = summary(["enter", "enter", "down", "enter", "down", "enter", "enter"])
+        self.assertIn(i18n.t("installer.tui.summary.nothing_harness"), none)
+        self.assertIn(i18n.t("installer.tui.summary.nothing_hooks"), none)
+
+    def test_summary_announces_the_clone_only_when_no_harness_copy_exists(self):
+        wizard = installer_tui.Wizard(make_plan(harness_missing=True))
+        self.assertTrue(any("example.invalid" in line for line in installer_tui.summary_lines(wizard)))
+        wizard = installer_tui.Wizard(make_plan(harness_missing=False))
+        self.assertFalse(any("example.invalid" in line for line in installer_tui.summary_lines(wizard)))
+
+    def test_view_marks_the_radio_and_the_checkbox_rows(self):
+        wizard, _ = drive(["enter", "enter"])
+        options = installer_tui.view(wizard, installer_tui.Progress())["options"]
+        self.assertEqual([label for label, _mark, _focus in options], [i18n.t("installer.tui.yes"),
+                                                                     i18n.t("installer.tui.no")])
+        self.assertEqual(options[0][1], "(*)")
+        self.assertTrue(options[0][2], "the cursor starts on the marked answer")
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space"])
+        marks = [mark for _label, mark, _focus in installer_tui.view(wizard, installer_tui.Progress())["options"]]
+        self.assertEqual(marks[0], "[x]")
+        self.assertEqual(marks[1], "[ ]")
+
+    def test_layout_fits_the_terminal_and_keeps_the_footer(self):
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
+        rows = installer_tui.layout(installer_tui.view(wizard, installer_tui.Progress()), 40, 8)
+        self.assertLessEqual(len(rows), 8)
+        self.assertIn(i18n.t("installer.tui.btn.install"), rows[-1][0])
+        self.assertEqual(installer_tui.layout({"title": "x", "lines": [], "options": [], "hint": "",
+                                               "buttons": [], "tail": False}, 40, 0), [])
+
+    def test_final_screen_titles_follow_the_install_result(self):
+        wizard = installer_tui.Wizard(make_plan())
+        wizard.goto(installer_tui.DONE)
+        progress = installer_tui.Progress()
+        progress.finish(0)
+        ok = installer_tui.view(wizard, progress)
+        self.assertEqual(ok["title"], i18n.t("installer.tui.title.done_ok"))
+        self.assertEqual(ok["buttons"], [i18n.t("installer.tui.btn.finish")])
+        progress.finish(1)
+        failed = installer_tui.view(wizard, progress)
+        self.assertEqual(failed["title"], i18n.t("installer.tui.title.done_failed"))
+        self.assertEqual(failed["hint"], i18n.t("installer.tui.hint.failed"))
+
+    def test_every_screen_renders_without_a_key_error(self):
+        plan = make_plan(dependency_lines=["faltando (obrigatórias): tmux"])
+        for keys in ([], ["enter"], ["enter", "enter"], ["enter", "enter", "down", "enter"],
+                     ["enter", "enter", "enter", "enter", "space", "enter"],
+                     ["enter", "enter", "enter", "enter", "space", "enter", "enter"],
+                     ["enter", "enter", "enter", "enter", "space", "enter", "enter", "enter"]):
+            wizard, _ = drive(keys, plan)
+            with self.subTest(screen=wizard.screen):
+                self.assertTrue(installer_tui.view(wizard, installer_tui.Progress())["title"])
+        wizard = installer_tui.Wizard(plan)
+        for screen in (installer_tui.PROGRESS, installer_tui.DONE):
+            wizard.goto(screen)
+            with self.subTest(screen=screen):
+                self.assertTrue(installer_tui.view(wizard, installer_tui.Progress())["hint"])
+
+    def test_progress_tail_keeps_the_latest_lines(self):
+        progress = installer_tui.Progress()
+        progress.add_section("passo")
+        for index in range(30):
+            progress.add_line(f"linha {index}")
+        wizard = installer_tui.Wizard(make_plan())
+        wizard.goto(installer_tui.PROGRESS)
+        rows = installer_tui.layout(installer_tui.view(wizard, progress), 60, 10)
+        self.assertEqual(rows[-3][0], "   linha 29")
+
+    def test_progress_redraws_on_every_change_and_keeps_multiline_text(self):
+        progress = installer_tui.Progress()
+        calls = []
+        progress.listener = lambda: calls.append(1)
+        progress.add_section("A")
+        progress.add_line("um\ndois")
+        progress.finish(0)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(progress.rows(), ["A", "   um", "   dois"])
+        self.assertEqual(progress.code, 0)
+
+    def test_key_names_come_from_curses_codes_and_printable_keys(self):
+        names = {code: installer_tui.key_name(FAKE_CURSES, code)
+                 for code in (259, 258, 260, 263, 343, 10, 27, 32, 127, 66, 9999)}
+        self.assertEqual(names, {259: "up", 258: "down", 260: "left", 263: "backspace", 343: "enter",
+                                 10: "enter", 27: None, 32: "space", 127: "backspace", 66: "b",
+                                 9999: None})
+
+    def test_esc_alone_never_cancels_the_wizard(self):
+        wizard, action = drive(["enter", "enter", "esc"])
+        self.assertIsNone(action)
+        self.assertEqual(wizard.screen, installer_tui.MANAGE)
+
+    def test_draw_clips_to_a_small_terminal_and_never_raises(self):
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
+        window = FakeWindow(6, 30)
+        installer_tui.draw(FAKE_CURSES, window, installer_tui.view(wizard, installer_tui.Progress()))
+        self.assertLessEqual(len(window.rows), 6)
+        self.assertEqual(window.refreshed, 1)
+        self.assertIn(i18n.t("installer.tui.btn.install"), window.rows[5][0])
+        tiny = FakeWindow(1, 4)
+        installer_tui.draw(FAKE_CURSES, tiny, installer_tui.view(wizard, installer_tui.Progress()))
+
+    def test_run_refuses_without_curses_so_the_text_mode_takes_over(self):
+        original = installer_tui._curses
+        installer_tui._curses = lambda: None
+        try:
+            self.assertIsNone(installer_tui.run(make_plan(), lambda answers, progress: 0))
+            self.assertFalse(installer_tui.can_run(io.StringIO(), io.StringIO(), {"TERM": "xterm"}))
+        finally:
+            installer_tui._curses = original
+
+    def test_can_run_needs_a_terminal_both_ways_and_a_real_term(self):
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        original = installer_tui._curses
+        installer_tui._curses = lambda: FAKE_CURSES
+        try:
+            self.assertTrue(installer_tui.can_run(Tty(), Tty(), {"TERM": "xterm-256color"}))
+            self.assertFalse(installer_tui.can_run(io.StringIO(), Tty(), {"TERM": "xterm"}))
+            self.assertFalse(installer_tui.can_run(Tty(), io.StringIO(), {"TERM": "xterm"}))
+            self.assertFalse(installer_tui.can_run(Tty(), Tty(), {"TERM": "dumb"}))
+            self.assertFalse(installer_tui.can_run(Tty(), Tty(), {}))
+        finally:
+            installer_tui._curses = original
+
+    def test_every_literal_tui_key_exists_in_pt_br(self):
+        source = (ROOT / "src" / "installer_tui.py").read_text(encoding="utf-8")
+        strings = json.loads((ROOT / "i18n" / "pt-BR.json").read_text(encoding="utf-8"))
+        # Literal keys, plus the ones built at run time (title per screen, help per question) and the
+        # branches of a conditional expression, which the literal scan reads only in part.
+        keys = set(re.findall(r'\bt\(\s*"(installer\.tui[^"]*)"', source))
+        keys.update(f"installer.tui.title.{name}" for name in
+                    ("welcome", "deps", "manage", "harness", "providers", "default", "summary",
+                     "progress", "done_ok", "done_failed"))
+        keys.update(f"installer.tui.{name}.help" for name in ("manage", "harness", "providers", "default"))
+        keys.update(f"installer.tui.hint.{name}" for name in ("radio", "providers", "failed", "done"))
+        keys = {key for key in keys if not key.endswith(".")}
+        self.assertTrue(keys)
+        self.assertEqual(sorted(key for key in keys if key not in strings), [])
+
+
+class TuiInstallTest(unittest.TestCase):
+    """The wizard's answers drive the same Assistant as the text mode: config and manifest are checked."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.home, self.state = self.root / "home", self.root / "state"
+        self.bin, self.source = self.root / "bin", self.root / "source"
+        for directory in (self.home, self.state, self.bin, self.source / "regras"):
+            directory.mkdir(parents=True)
+        (self.source / "HARNESS.md").write_text("# HARNESS\n", encoding="utf-8")
+        (self.source / "CLAUDE.md").write_text("# Harness\n", encoding="utf-8")
+        (self.source / "forcado.yaml").write_text("versao: 1\nitens: []\n", encoding="utf-8")
+        (self.source / "regras" / "agents.md").write_text("# Agents\n", encoding="utf-8")
+        for name in ("tmux", "git", "claude"):
+            executable(self.bin / name)
+        (self.bin / "python3").symlink_to(sys.executable)
+        (self.home / ".zshrc").write_text("# my zshrc\n", encoding="utf-8")
+
+    def env(self):
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("AT_WS_CONFIG", "AT_WS_INSTALL_STATE", "AT_HARNESS_SOURCE",
+                              "AT_WS_PLATFORM", "WS_STATE", "SUDO_USER", "SUDO_UID",
+                              "PKEXEC_UID", "DOAS_USER", "TERM")}
+        env.update(HOME=str(self.home), WS_STATE=str(self.state), AT_HARNESS_SOURCE=str(self.source),
+                   SHELL="/usr/bin/zsh", NO_COLOR="1", TERM="dumb",
+                   PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
+        return env
+
+    def run_wizard(self, keys):
+        """Walks the wizard with `keys`, then runs the wizard's install in a child process (HOME is the
+        temporary one; the module reads it at import)."""
+        wizard, action = drive(keys, make_plan(providers=PROVIDER_NAMES))
+        self.assertEqual(action, installer_tui.INSTALL, "the keys must reach the summary and install")
+        script = (
+            "import json, sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+            "import installer, installer_tui\n"
+            "answers = json.loads(sys.argv[1])\n"
+            "progress = installer_tui.Progress()\n"
+            "code = installer.perform_tui(answers, progress)\n"
+            "print(json.dumps({'code': code, 'steps': [title for title, _lines in progress.steps]}))\n"
+        )
+        result = subprocess.run([sys.executable, "-c", script, json.dumps(wizard.answers)],
+                                env=self.env(), capture_output=True, text=True, check=False, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout.strip().splitlines()[-1]), result
+
+    def config(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        return yaml_min.loads(path.read_text(encoding="utf-8")), path
+
+    def manifest(self):
+        return json.loads((self.state / "installer" / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_manage_yes_and_harness_yes_write_config_harness_hooks_and_manifest(self):
+        outcome, _ = self.run_wizard(["enter", "enter", "enter", "enter", "space", "enter", "enter", "enter"])
+        self.assertEqual(outcome["code"], 0)
+        self.assertIn(i18n.t("installer.title"), outcome["steps"])
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], True)
+        self.assertIs(cfg["harness_managed"], True)
+        self.assertEqual(cfg["profiles"], {"claude": "claude"})
+        self.assertEqual(cfg["agent"], "claude")
+        harness = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
+        self.assertTrue((harness / "HARNESS.md").is_file())
+        self.assertTrue((self.home / ".claude" / "settings.json").is_file())
+        self.assertTrue(any(entry["path"].endswith("config.yaml") for entry in self.manifest()["entries"]))
+
+    def test_manage_yes_and_harness_no_writes_the_answer_and_no_harness_copy(self):
+        outcome, _ = self.run_wizard(["enter", "enter", "enter", "down", "enter", "enter", "enter"])
+        self.assertEqual(outcome["code"], 0)
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], True)
+        self.assertIs(cfg["harness_managed"], False)
+        self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace" / "harness").exists())
+        self.assertTrue((self.home / ".claude" / "settings.json").is_file(), "manage still registers hooks")
+
+    def test_manage_no_and_harness_no_install_no_harness_and_no_hooks(self):
+        outcome, _ = self.run_wizard(["enter", "enter", "down", "enter", "down", "enter", "enter", "enter"])
+        self.assertEqual(outcome["code"], 0)
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], False)
+        self.assertIs(cfg["harness_managed"], False)
+        self.assertFalse((self.home / ".local" / "share" / "ai-tmux-workspace" / "harness").exists())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertTrue(self.manifest()["entries"], "the manifest records what was touched")
+
+    def test_manage_no_and_harness_yes_imports_the_harness_without_hooks(self):
+        outcome, _ = self.run_wizard(["enter", "enter", "down", "enter", "enter", "space", "enter",
+                                      "enter", "enter"])
+        self.assertEqual(outcome["code"], 0)
+        cfg, _path = self.config()
+        self.assertIs(cfg["manage"], False)
+        self.assertIs(cfg["harness_managed"], True)
+        shim = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertEqual(shim.count(">>> ai-tmux-workspace harness >>>"), 1)
+        self.assertFalse((self.home / ".claude" / "settings.json").exists())
+        self.assertFalse((self.state / "settings").exists())
+
+    def test_the_text_mode_runs_with_text_flag_and_when_stdin_is_not_a_terminal(self):
+        for args, extra in ((["--text"], {"TERM": "xterm-256color"}), ([], {"TERM": "dumb"}),
+                            ([], {"TERM": "xterm-256color"})):
+            with self.subTest(args=args, extra=extra):
+                env = self.env()
+                env.update(extra)
+                result = subprocess.run([sys.executable, str(INSTALLER), *args], input="n\n",
+                                        env=env, capture_output=True, text=True, check=False, timeout=60)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(i18n.t("installer.install.confirm"), result.stdout)
+                self.assertNotIn("\x1b[?1049h", result.stdout)
 
 
 if __name__ == "__main__":

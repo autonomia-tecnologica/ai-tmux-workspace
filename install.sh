@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installs the workspace: checks the basics and hands over to the step-by-step Python assistant.
+# Installs the workspace: checks the basics and hands over to the Python assistant (a full-screen
+# wizard on a capable terminal, the step-by-step text mode otherwise or with --text).
 # The assistant installs the CLI, the autocomplete, the initial harness and the Claude Code hooks,
 # and only shows the OS dependency commands (it never runs sudo/pkexec). Undo with ./remove.sh.
 #

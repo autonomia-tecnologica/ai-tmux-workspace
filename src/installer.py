@@ -2,8 +2,11 @@
 """Interactive installer for ai-tmux-workspace, and its killswitch.
 
 `install.sh` checks python3 and calls this assistant; `remove.sh` calls it with `--remove`.
-Every step asks for explicit confirmation, every path it touches is recorded in a manifest
-with a backup, and privileged commands are only shown: the system steps that ask for sudo
+On a terminal that can take it, the assistant is a full-screen wizard (`installer_tui`, curses):
+it collects every answer on its screens and installs once, at the summary. Otherwise (no TTY,
+TERM=dumb, no curses, or `--text`) it is the step-by-step text mode, where every step asks for
+explicit confirmation. Both run the same `Assistant`. Every path it touches is recorded in a
+manifest with a backup, and privileged commands are only shown: the system steps that ask for sudo
 belong to backlog item 35, so this installer never runs sudo/pkexec or installs packages.
 When a system step does run one (`--privileged`, also `workspace privileged`), it goes through
 tmux.privileged (item 61): a separate tmux screen with the full command visible first, the output
@@ -18,6 +21,7 @@ another OS for the macOS hints) and AT_WS_INSTALL_DIR / AT_WS_REPO_URL (install.
 """
 import copy
 import hashlib
+import io
 import json
 import os
 import re
@@ -31,6 +35,7 @@ import colors
 import tmux
 import yaml_min
 import paths
+import installer_tui
 from i18n import t
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -529,6 +534,42 @@ class UI:
         raise Aborted()
 
 
+YES_NO_ANSWERS = {"installer.manage.question": "manage",
+                  "installer.harness_managed.question": "harness_managed"}
+
+
+class CollectedUI(UI):
+    """The UI of the full-screen wizard (`installer_tui`): every answer was collected on its screens,
+    so nothing prompts here. Output goes to `progress` (`add_section` starts a step, `add_line`)."""
+
+    def __init__(self, answers, progress):
+        super().__init__(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO())
+        self.color = False
+        self.answers = answers
+        self.progress = progress
+
+    def line(self, text=""):
+        self.progress.add_line(text)
+
+    def section(self, text):
+        self.progress.add_section(text)
+
+    def error(self, text):
+        self.progress.add_line(t("installer.status.error") + text)
+
+    def confirm(self, key, **kw):
+        """Nothing to ask: the person accepted this on the wizard's summary."""
+
+    def yes_no(self, key, **kw):
+        return bool(self.answers[YES_NO_ANSWERS[key]])
+
+    def providers(self, key):
+        return list(self.answers["providers"])
+
+    def default_profile(self, key, names):
+        return self.answers["default"] or names[0]
+
+
 # --- manifest and backup -----------------------------------------------------------------------
 
 class Manifest:
@@ -720,7 +761,7 @@ class Assistant:
         self.ui = ui
         self.manifest = None
         self.manage = True      # `manage: false` only when the person says the workspace does not manage
-        self.harness_managed = True     # separate switch: `manage: true` always manages the harness
+        self.harness_managed = True     # separate switch, asked whatever `manage` says
         self.dependency_warnings = []   # labels repeated by finish() so success is never silent
 
     def manifest_for(self):
@@ -941,10 +982,7 @@ class Assistant:
             self.ui.warn(t("installer.config.legacy", legacy=display(legacy), config=display(path)))
             return
         self.manage = self.ui.yes_no("installer.manage.question")
-        if self.manage:
-            self.harness_managed = True
-        else:
-            self.harness_managed = self.ui.yes_no("installer.harness_managed.question")
+        self.harness_managed = self.ui.yes_no("installer.harness_managed.question")
         selected = self.ui.providers("installer.providers.question")
         default = (self.ui.default_profile("installer.default.question", selected)
                    if selected else None)
@@ -1463,6 +1501,61 @@ def _render_and_record(source, target, security):
     return warning
 
 
+def tui_plan():
+    """What the wizard shows before anything is written: the dependency lines (never run) and the paths."""
+    found, unmet = Assistant(UI()).dependency_status()
+    manager = package_manager()
+    lines = []
+    if found:
+        lines.append(t("installer.deps.found", names=", ".join(found)))
+    if unmet:
+        lines.append(t("installer.deps.missing_required", names=", ".join(label for _n, label in unmet)))
+        if platform_name() == "darwin" and manager is None:
+            lines.append(t("installer.deps.command", name="Homebrew", command=HOMEBREW_BOOTSTRAP))
+            lines.append(t("installer.deps.command", name="bash tmux python",
+                           command="brew install bash tmux python"))
+        for name, _label in unmet:
+            command = install_command(name, manager)
+            lines.append(t("installer.deps.command", name=name, command=command) if command
+                         else t("installer.deps.unknown_manager", name=name))
+        lines.append(t("installer.deps.no_privilege"))
+    optional_missing = [name for name in OPTIONAL if not shutil.which(name)]
+    if optional_missing:
+        lines.append(t("installer.deps.optional", names=", ".join(optional_missing)))
+        for name in optional_missing:
+            command = install_command(name, manager)
+            if command:
+                lines.append(t("installer.deps.optional_command", name=name, command=command))
+    config = config_path()
+    legacy = legacy_config_path()
+    legacy_used = not (config.exists() or config.is_symlink()) and (legacy.exists() or legacy.is_symlink())
+    return installer_tui.Plan(
+        providers=list(PROVIDERS),
+        dependency_lines=lines,
+        cli_link=display(HOME / CLI_DIR / "workspace"),
+        config_path=display(config),
+        harness_path=display(layout_root() / "harness"),
+        settings_path=display(HOME / ".claude" / "settings.json"),
+        shim_path=display(shim_path()),
+        clone_url=CLONE_URL,
+        harness_missing=harness_source() is None,
+        legacy_config=display(legacy) if legacy_used else "",
+    )
+
+
+def perform_tui(answers, progress):
+    """The wizard's install: the same Assistant as the text mode, answered by the wizard's answers."""
+    return Assistant(CollectedUI(answers, progress)).install()
+
+
+def run_tui():
+    """The full-screen wizard, or None when this terminal cannot run it (the caller then uses the text
+    mode). As root the text mode is used too, so its refusal is the one the person sees."""
+    if is_root() or not installer_tui.can_run(sys.stdin, sys.stdout):
+        return None
+    return installer_tui.run(tui_plan(), perform_tui)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     ui = UI()
@@ -1478,6 +1571,10 @@ def main(argv=None):
     if unknown:
         ui.error(t("installer.error", error=t("installer.unknown_arg", arg=unknown[0])))
         return 2
+    if "--text" not in argv:
+        code = run_tui()
+        if code is not None:
+            return code
     return assistant.install()
 
 

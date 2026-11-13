@@ -14,10 +14,11 @@ icons: true
 manage: true
 
 # O workspace gerencia o HARNESS.md instalado em ~/.local/share/ai-tmux-workspace/harness.
-# `manage: true` implica `harness_managed: true` (o hook SessionStart já injeta o HARNESS.md).
-# Com `manage: false` e `harness_managed: true`, o instalador copia o harness e aponta para ele em
-# ~/.claude/CLAUDE.md: é o `claude` bruto com o HARNESS.md apontado, sem settings nem hooks.
-# `harness_managed: false`: nada é instalado em nenhum dos dois lugares. Sem a chave, o padrão é true.
+# O instalador pergunta essa chave com `manage: true` ou `false`. Com `harness_managed: true`, o
+# harness é copiado para lá e o hook SessionStart injeta o HARNESS.md. Com `manage: false`, o
+# instalador também aponta para ele em ~/.claude/CLAUDE.md: é o `claude` bruto com o HARNESS.md
+# apontado, sem settings nem hooks. Com `harness_managed: false`, nada do harness é copiado nem
+# apontado (o hook registrado com `manage: true` não encontra o HARNESS.md instalado). Sem a chave, o padrão é true.
 harness_managed: true
 
 # Perfil padrão das novas sessões (usado quando uma sessão é aberta sem escolha, ex.: prompt de
