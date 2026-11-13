@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tasks panel: open BACKLOG.md items of the repo of this tmux window only.
 
-  ● green ready   ○ dim needs refinement   ◌ paused   ⊘ blocked by an open dependency   ✖ cycle
+  ● green ready   ○ dim needs refinement   ⊘ blocked (open dependency or pending decision)   ✖ cycle
 A BACKLOG.md outside the unified format shows as "no format"; Enter on an item sends it to Claude; Right/Left expands/collapses its description (▸/▾).
 """
 import os
@@ -32,12 +32,11 @@ def effective(i):
 
 
 def buckets(eff):
-    """Counter buckets for the header; paused items get their own bucket (not "refine")."""
+    """Counter buckets for the header: ready, refine (everything else open), blocked (incl. cycle)."""
     ready = eff.count("ready")
     blocked = sum(e in ("blocked", "cycle") for e in eff)
-    paused = eff.count("paused")
-    refine = len(eff) - ready - blocked - paused
-    return {"ready": ready, "refine": refine, "blocked": blocked, "paused": paused}
+    refine = len(eff) - ready - blocked
+    return {"ready": ready, "refine": refine, "blocked": blocked}
 
 
 CURRENT = lib.current_repo()
@@ -58,11 +57,10 @@ def collect(v):
         eff = [effective(i) for i in items]
         c = buckets(eff)
         cols = shutil.get_terminal_size((80, 24))[0]
-        parts = [(GREEN, c["ready"], "ready"), (GRAY, c["paused"], "paused"), (GRAY, c["refine"], "refine"),
-                 (YELLOW, c["blocked"], "blocked")]
+        parts = [(GREEN, c["ready"], "ready"), (GRAY, c["refine"], "refine"), (YELLOW, c["blocked"], "blocked")]
         row, used = "", 0                                   # pack the counters, wrapping when they don't fit
         for color, n, key in parts:
-            if key in ("paused", "blocked") and not n:
+            if key == "blocked" and not n:
                 continue
             plain = f"{n} {t(key)}"
             if used and used + 2 + len(plain) + 1 > cols:
@@ -102,6 +100,9 @@ def collect(v):
             rail[i["id"]] = base + (("   " if last else "│  ") if parent is not None else "")
             deps = ", ".join(map(str, i["deps"]))
             dep = f" ←{deps}" if len(i["deps"]) > 1 or (i["deps"] and parent is None) else ""
+            decision = st == "blocked" and i["status"] == "blocked"     # Status: blocked: <motivo>
+            if decision:                                # short here; the reason shows when expanded
+                dep += f" {t('pending')}"
             if i["typo"] or i["cross"]:
                 dep += f" {glyphs.warn()}"
             pad = len(lead) + 5 + len(str(i["id"]))   # "<lead>▸ ● 12 "
@@ -137,6 +138,8 @@ def collect(v):
                 body.append(Row(f"{ind}{B}{ln}{R}", cont=True))
             if i["deps"]:
                 body.append(Row(f"{ind}{DIM}←{deps}{R}", cont=True))
+            if decision:
+                body.append(Row(f"{ind}{glyphs.task_mark('blocked')} {t('decision', reason=i['status_reason'])}", cont=True))
             if i["cycle"]:
                 body.append(Row(f"{ind}{glyphs.cross()} {t('cycle')}{R}", cont=True))
             if i["cross"]:
@@ -167,10 +170,16 @@ def enter(v, key, k):
         return
     if key[3] == "cycle":      # invalid until the cycle is undone
         return
-    # ready -> implement; blocked -> implement its open dependencies first; anything else (to refine,
-    # paused) -> refine
-    kinds = {"ready": "ready", "blocked": "blocked"}
-    msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
+    items = backlog.parse(os.path.join(CURRENT, "BACKLOG.md")) or []
+    item = next((i for i in items if i["id"] == key[2]), {})
+    if key[3] == "blocked" and item.get("status") == "blocked":
+        # pending decision (Status: blocked: <motivo>): ask the user about it, never implement
+        msg = i18n.t("prompt.tasks.decision", id=key[2], reason=item.get("status_reason", ""))
+    else:
+        # ready -> implement; blocked by dependency -> implement its open dependencies first;
+        # anything else (to refine) -> refine
+        kinds = {"ready": "ready", "blocked": "blocked"}
+        msg = i18n.t("prompt.tasks." + kinds.get(key[3], "refine"), id=key[2])
     tmux.confirm_then(t("confirm", msg=msg), [lib.WS, "send", path, msg])
 
 
