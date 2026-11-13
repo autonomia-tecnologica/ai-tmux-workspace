@@ -76,3 +76,51 @@ roles:
     inherits: repo
   subagent:
     inherits: parent
+
+# Descrição para a pessoa. Só comentário: as chaves e os valores acima não mudam por causa dele.
+# Papéis: `self` tem a tabela de `repo`; `subagent` herda o papel pai e só pode apertar uma entrada.
+# Decisões: allow roda sem perguntar; ask espera a pessoa; deny nunca roda. `auto` só troca ask por
+# allow em capacidade de caminho dentro da caixa, nunca mexe em deny. Protegidos antes da tabela, para
+# todo papel: escrita na pasta de controle (config.yaml, state/, conference/) e escrita no código do
+# workspace, salvo quando a caixa da sessão está dentro dele; leitura do código do workspace é allow.
+#
+# Capacidades (uma linha cada; a ordem segue a tabela):
+# capacidade repo.read: ler arquivos dentro da caixa da sessão; allow nos dois papéis. Motivo: é o que o agente precisa para trabalhar.
+# capacidade repo.write: escrever dentro da caixa da sessão; allow nos dois papéis. Motivo: é o trabalho. Fora da caixa vale repo.outside.
+# capacidade repo.outside: ler ou escrever fora da caixa da sessão. repo: deny, a caixa do repo é o limite. home: allow, porque a sessão da casa enxerga o resto da home; escrita em config, segredos e código do workspace continua negada por outras regras.
+# capacidade workspace.read: ler o código do workspace (WS_DIR); allow nos dois papéis. Motivo: o agente pode inspecionar o código que roda.
+# capacidade workspace.write: escrever no código do workspace; deny nos dois papéis por padrão. O motor libera só quando a raiz da sessão está dentro desse código (worktree deste repo, sessão `workspace dev`). Motivo: o agente não altera a ferramenta que o governa.
+# capacidade vcs.read: git que só lê (status, log, diff, show, blame...); allow nos dois papéis. Motivo: não altera nada.
+# capacidade vcs.write: git que altera o repo local (add, commit, checkout, merge, rebase, reset...); allow nos dois papéis. Motivo: é o trabalho, e não sai da máquina.
+# capacidade vcs.remote: git que fala com o remoto (push, pull, fetch, clone, remote update); ask nos dois papéis. Motivo: o código sai da máquina, a pessoa decide.
+# capacidade test.run: rodar testes e checagens (pytest, unittest, make test, go test...); allow nos dois papéis. Motivo: validar faz parte do trabalho.
+# capacidade net: acesso à rede (curl, gh, ssh, ...); repo: allow, porque o trabalho com GitHub passa por gh; home: ask, porque a sessão da casa enxerga arquivos de vários projetos.
+# capacidade install: instalar software (pip install, apt, brew, npm install...); repo: allow, para as dependências do projeto; home: ask, porque instalar fora de um projeto muda o ambiente todo.
+# capacidade admin: administração do sistema e de contêiner (sudo, systemctl, docker...); deny nos dois papéis, sem exceção. Motivo: root ou um daemon de contêiner fura a caixa. A lista está em `programs.admin`.
+# capacidade config.read: ler configuração (config.yaml, ~/.config, ~/.claude, a instalação); allow nos dois papéis. Motivo: o agente lê o ambiente para trabalhar. A pasta de controle só é lida, nunca escrita.
+# capacidade config.write: escrever fora da caixa em ~/.config, ~/.claude e na instalação; repo: deny; home: allow, porque a sessão da casa ajusta o ambiente da pessoa. A pasta de controle é negada para todo papel por regra própria.
+# capacidade tmp: escrever na área temporária (/tmp e, no macOS, a pasta temporária); allow nos dois papéis. Motivo: não guarda nada de projeto e faz parte da caixa.
+# capacidade secrets: arquivos de credencial (.env, chaves privadas, .ssh, .aws, .npmrc, tokens do gh...); deny nos dois papéis, mesmo dentro da caixa. Motivo: segredo não deve ser lido nem escrito pelo agente.
+# capacidade session.external: mensagem ou pedido a outra sessão (send_message, conference); ask nos dois papéis. Motivo: uma sessão não fala com outra sem a pessoa saber.
+#
+# Classes de programa: o motor classifica pelo nome do programa. Cada lista abaixo é espelhada em
+# `src/policy.py` e conferida por `tests/test_policy_programs.py`: mudar uma exige mudar a outra.
+# A linha `# programs.<classe>: ...` tem o formato fixo que o teste lê; o porquê vem na linha seguinte.
+# programs.admin: sudo, doas, pkexec, su, systemctl, service, mount, umount, swapon, swapoff, modprobe, insmod, rmmod, iptables, ip6tables, nft, ufw, firewall-cmd, useradd, userdel, usermod, groupadd, groupdel, passwd, visudo, docker, podman, nerdctl, kubectl, helm, sysadminctl, dseditgroup, dscl, launchctl, spctl, csrutil, fdesetup, systemsetup, networksetup, diskutil, security
+#   Porquê: administração do sistema e de contêiner, sempre negada. sudo, doas, pkexec e su elevam privilégio. systemctl, service, mount, modprobe, iptables, nft, ufw e firewall-cmd mudam serviços, discos e rede. useradd e afins mexem em contas. docker, podman, nerdctl, kubectl e helm dão controle de contêiner e de cluster: o daemon equivale a root e fura a caixa (um contêiner com pasta do host montada escreve fora do que o motor vê). No macOS: sysadminctl, dseditgroup e dscl mexem em contas; launchctl em serviços; spctl, csrutil e fdesetup em Gatekeeper, SIP e FileVault; systemsetup e networksetup no sistema e na rede; diskutil nos discos; security no chaveiro.
+# programs.net: curl, wget, http, https, ssh, scp, sftp, ftp, telnet, nc, netcat, ncat, socat, ping, ping6, traceroute, dig, nslookup, host, gh, rsync
+#   Porquê: rede ou transferência para fora da máquina. A decisão vem da capacidade `net`, por papel. gh fala com o GitHub.
+# programs.install: apt, apt-get, aptitude, pacman, yay, paru, dnf, yum, zypper, brew, pip, pip3, gem, composer, snap, flatpak
+#   Porquê: instalam software no sistema ou no ambiente. pip e pip3 só entram aqui na forma install, uninstall ou download; list, show, freeze e check são test.run. npm, cargo e go entram pela forma do subcomando.
+# programs.test: pytest, tox, nox, unittest
+#   Porquê: rodam testes ou checagens, com efeito dentro do projeto. `python3 -m` com um desses módulos também entra aqui.
+# programs.godot: godot, godot4
+#   Porquê: a engine só conta como teste com --headless. Sem a flag, ou com --export, a forma é ambígua e vai ao modo da sessão.
+# programs.read: cat, head, tail, ls, stat, wc, cut, sort, uniq, diff, file, tree, pwd, date, which, whereis, type, basename, dirname, realpath, readlink, true, false, sleep, echo, printf, test, [, :, id, whoami
+#   Porquê: leem ou mostram, sem efeito fora do que apontam. Ficam de fora sed e awk, cuja linguagem escreve arquivo e roda comando; less e more, cujo pager roda comandos. Opções que escrevem ou leem arquivo arbitrário saem da classe (sort -o, file -C).
+# programs.write: rm, rmdir, mkdir, touch, truncate, cp, mv, ln, install, tee, chmod, chown, chgrp, setfacl
+#   Porquê: alteram arquivos ou permissões. Cada caminho passa pela barreira de caminho (caixa, código do workspace, segredo); fora da caixa vira repo.outside. install cai antes na classe install.
+# programs.target_directory: cp, mv, ln, install
+#   Porquê: a opção -t/--target-directory também escreve na pasta dada, e esse valor passa pela barreira de caminho.
+# programs.write_option: sort, tree
+#   Porquê: são de leitura, mas -o/--output escreve no arquivo dado; o valor vira escrita e passa pela barreira de caminho.
