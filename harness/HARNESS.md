@@ -32,6 +32,10 @@ no harness do workspace.
 - Guardar só regra estável; não guardar log, medição, diário nem estado da máquina.
 - Mecanismo não mora no harness de inferência; `forcado.yaml` declara o bloqueio.
 - Regra geral sobe para cá; repo que contrariar diz o motivo.
+- `CLAUDE.md` (global e de repo) aponta só para este arquivo, sem regra própria.
+- Mudança de harness só fecha quando a instância usa: a sessão entrega à pessoa um comando de uma linha
+  que leva o harness do repo à cópia instalada (`workspace config update --apply` hoje; `workspace
+  update` quando o item 139 entregar). A sessão nunca escreve nessa cópia.
 
 ## Ambiente
 
@@ -52,9 +56,15 @@ no harness do workspace.
 
 ## Conversa
 
-- Um item por vez.
-- Dúvida vai como enquete: opções objetivas, recomendada primeiro, uma dúvida por pergunta.
-- Comando para a pessoa: um comando, numa linha, pronto para colar.
+- Autonomia por padrão: a sessão decide e segue.
+- Pergunta à pessoa só no caso grande: o que toca `ARCH.md` (regra dura de desenho) ou quebra o
+  harness, ou irreversível/externa (push, apagar dado). Fora disso, a sessão segue sozinha.
+- Pergunta grande vai como enquete: opções objetivas, recomendada primeiro, uma dúvida por enquete.
+- Dúvida menor: escolhe o padrão recomendado, registra `Decidido (pela sessão, por padrão)` no item ou
+  no commit e segue; a pessoa veta no PR.
+- Comando para a pessoa: um comando, numa linha, pronto para colar. O que só ela edita (home,
+  `config.yaml`, repo de que a sessão não é dona) não vira item: a sessão entrega esse comando ou
+  patch e segue.
 - Decidir pelo conjunto, não por "não foi esta sessão".
 
 ## Código
@@ -77,17 +87,26 @@ no harness do workspace.
 - Item: `Categoria`, `Caminhos`, `Depende de`, `Aceite`, `Validação`.
 - Categorias fixas: `Segurança` (freio em código), `HARNESS.md` (regra escrita) e `Arquitetura`
   (camadas, dono único, eventos, UI, ciclo de vida e dívida de desenho; freio em `tests/test_architecture.py`).
-- Refinada = despachável, não concluída; item ambíguo fica em `A refinar`.
+- Status explícito do item: `ready`, `blocked` ou `done`; só `ready` despacha.
+- `blocked: decisão X` quando a decisão é grande; a sessão pergunta e, respondida, volta para `ready`.
+- Refinada = despachável, não concluída; item que depende de decisão grande fica em `A refinar`, com a
+  pergunta.
+- Regra dura de desenho mora em `ARCH.md`; `BACKLOG.md` é controle do agente. Decisão que não conflita
+  com `ARCH.md` nem com o harness, a sessão toma sozinha.
 - Tarefa que a pessoa pede entra já refinada (`Caminhos`, `Depende de`, `Aceite`, `Validação`); o leve
   se decide sozinho.
-- Refinamento que exige decisão pesada: uma enquete só — salvar já refinada (e então perguntar uma por
-  vez) ou sem refinar em `A refinar`; "salva sem refinar" vale a qualquer momento, sem enquete.
+- Refinar só com pedido da pessoa ("não refinar sem pedido"); o pedido vale para tudo de `A refinar`:
+  refina tudo na mesma rodada, decidindo pelo padrão. `A refinar` termina vazia, salvo item com decisão
+  grande (aí pergunta).
+- Refinamento com decisão grande: uma enquete, recomendada primeiro: salvar já refinada (e perguntar uma
+  por enquete) ou salvar sem refinar em `A refinar`. "Salva sem refinar" vale a qualquer momento, sem
+  enquete.
 - A pergunta não interrompe o processo em curso: o item é salvo na hora com o que se sabe; o
   refinamento pesado vem depois.
 - Decisão da pessoa vai para o `Decidido` do item na hora em que ela responde, antes da próxima pergunta; nunca em lote no fim.
 - Item com `Decidido` não é perguntado de novo; pergunta só o que está em `Falta decidir`.
 - Trabalho entregue por subagente vai para o `Estado` do item (branch, validação, o que falta) antes de encerrar a sessão.
-- Fatia de até 65k de contexto; item em torno de 15 linhas; `(PAUSADA)` tira do despacho.
+- Fatia de até 65k de contexto; item em torno de 15 linhas.
 - Mecânica (ciclo, `Depende de`, bloqueio, fio da meada): `harness/regras/backlog.md`; leia antes de criar, refinar ou despachar item.
 
 ## Agentes
@@ -100,6 +119,8 @@ no harness do workspace.
 - Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita; fecha com
   `SubagentHandback` — arquivos alterados, validação rodada e resultado; entrega sem handback não conta.
 - Fechar e commitar: sessão que despachou.
+- Sem item despachável, a sessão principal refina o próximo e despacha: laço refinar → despachar →
+  conferir → fechar, até esvaziar `Refinadas`. `Faz o 17` não entra no laço.
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
 - Worktree não é sandbox; só remover o que o próprio agente criou.
 - Registrar tokens e retrabalho no commit quando disponível.

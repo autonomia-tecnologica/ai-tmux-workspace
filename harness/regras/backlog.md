@@ -13,6 +13,34 @@ fica a mecânica que precisa de contexto.
 - `A refinar` → `Refinadas` → despacho → `Estado` → conferência e fecho.
 - Refinar fecha o escopo; despachar implementa. São passos separados.
 
+## Decisão grande ou pequena
+
+- Grande (pergunta à pessoa, em enquete): o que toca `ARCH.md` (regra dura de desenho, que mora lá) ou
+  quebra o harness; irreversível ou externo: push, apagar dado, ação em repo alheio.
+- `BACKLOG.md` é controle do agente: não é lugar de regra dura. Decisão que não conflita com `ARCH.md`
+  nem com o harness é da sessão.
+- Pequena: a sessão escolhe o padrão recomendado e registra no item ou no commit:
+  `Decidido (pela sessão, por padrão): <decisão>, <motivo curto>`. A pessoa veta no PR.
+
+## Status
+
+- Campo `Status` do item: `ready`, `blocked` ou `done`. Só `ready` despacha.
+- `blocked: decisão X` quando depende de decisão grande; a sessão pergunta em enquete. Respondida a
+  decisão, o item vai para `ready` (o `Decidido` registra a resposta).
+- `done` é transitório: o item sai do `BACKLOG.md` na hora de fechar.
+
+## Refinamento em lote
+
+- Pedido de refinar vale para tudo de `A refinar`, numa rodada só.
+- Cada item sai com `Caminhos`, `Depende de`, `Aceite` e `Validação`, decidindo pelo padrão.
+- Só o item com decisão grande fica em `A refinar`, com `Falta decidir:` e uma enquete por decisão.
+
+## Só a pessoa edita
+
+- Home, `config.yaml` e repo que a sessão não é dona não viram item de backlog.
+- A sessão entrega um comando ou patch pronto para colar, numa linha quando der, e segue o que não
+  depende dele.
+
 ## Depende de
 
 - Lista de ids separados por vírgula e espaço, ou `—`.

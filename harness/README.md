@@ -28,8 +28,8 @@ já declara.
     antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
   - [`regras/agent-rules.md`](regras/agent-rules.md) — mapa das regras de agente que moram no
     `HARNESS.md` (Backlog, Agentes, Commits); leia só para localizar essas seções.
-  - [`regras/dispatch.md`](regras/dispatch.md) — modo de despacho e worktree; leia antes de despachar
-    subagente, abrir worktree ou paralelizar fatias.
+  - [`regras/dispatch.md`](regras/dispatch.md) — modo de despacho, laço e worktree; leia antes de
+    despachar subagente, abrir worktree ou paralelizar fatias.
   - [`regras/secrets.md`](regras/secrets.md) — varredura, onde um segredo mora e canal seguro; leia
     antes de commit, de criar chave ou de decidir onde um segredo mora.
 
