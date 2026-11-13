@@ -558,8 +558,10 @@ def _protected_decision(capability, root, declared):
 
     Reading the workspace code is always allowed (the agent may inspect the code it runs). Writing
     it is allowed only when a declared session box (`WS_SESSION_ROOT`) is inside the protected
-    root, which is the dev session that edits the workspace; repo, home and sibling sessions are
-    denied. Without a declared box the allow has no anchor, so writes fail closed.
+    root, whatever the role: the dev session of `workspace dev`, and a repo or home session whose
+    root is the workspace code (such as this repo's worktrees), write it. A session rooted outside
+    that code, sibling repos and home included, is denied. No `self` role is required. Without a
+    declared box the allow has no anchor, so writes fail closed.
     """
     if capability == "workspace.read":
         return "allow", "policy.reason.workspace_read"
