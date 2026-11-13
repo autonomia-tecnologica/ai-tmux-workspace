@@ -155,6 +155,22 @@ class DriftTest(unittest.TestCase):
         self.assertEqual(sorted(key for key in keys if key not in strings), [])
 
     # 12 (item 95) ---------------------------------------------------------------------------
+    def test_install_dir_override_at_the_clone_resolves_the_harness_outside_app(self):
+        """AT_WS_INSTALL_DIR=.../app (install.sh's clone) must not send drift into .../app/harness."""
+        layout = self.home / ".local" / "share" / "ai-tmux-workspace"
+        probe = ("import sys; sys.path.insert(0, sys.argv[1]); import drift; "
+                 "print(drift.harness_dir())")
+        for override, expected in ((layout / "app", layout / "harness"),
+                                   (layout, layout / "harness")):
+            env = {key: value for key, value in os.environ.items()
+                   if key not in ("AT_HARNESS_DIR", "WS_DIR", "WS_STATE", "AT_WS_CONFIG",
+                                  "AT_WS_INSTALL_DIR")}
+            env.update(HOME=str(self.home), AT_WS_INSTALL_DIR=str(override), NO_COLOR="1")
+            result = subprocess.run([sys.executable, "-c", probe, str(ROOT / "src")],
+                                    capture_output=True, text=True, env=env, cwd=str(self.root))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(result.stdout.strip()), expected, override)
+
     def test_harness_managed_false_reports_a_note_and_exits_zero(self):
         config = self.root / "config.yaml"
         config.write_text("harness_managed: false\n", encoding="utf-8")

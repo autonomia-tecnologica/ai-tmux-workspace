@@ -80,12 +80,22 @@ def conference_dir():
     return config_dir() / "conference"
 
 
-def install_dir():
-    """Installed copy: AT_WS_INSTALL_DIR, or ~/.local/share/ai-tmux-workspace."""
+def layout_root():
+    """Root of the installed layout (`app/`, `harness/`, `security/`), the one rule for it.
+
+    AT_WS_INSTALL_DIR, or ~/.local/share/ai-tmux-workspace. `install.sh` points AT_WS_INSTALL_DIR at
+    the clone (`.../app`), while the layout root is its parent: the harness and the mechanism are
+    siblings of the clone, never inside it. `installer`, `drift` and the path helpers use this rule.
+    """
     override = _env_path("AT_WS_INSTALL_DIR")
     if override is not None:
-        return override
+        return override.parent if override.name == "app" else override
     return home().joinpath(*INSTALL_DIRNAME)
+
+
+def install_dir():
+    """Installed layout root (see `layout_root`): the parent of `app/`, `harness/` and `security/`."""
+    return layout_root()
 
 
 def harness_dir():

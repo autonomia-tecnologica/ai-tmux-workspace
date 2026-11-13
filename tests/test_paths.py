@@ -95,6 +95,18 @@ class PathsTest(unittest.TestCase):
             self.assertEqual(paths.config_path(), config)
             self.assertEqual(paths.legacy_config_path(), config.with_suffix(".json"))
 
+    def test_install_dir_pointing_at_the_clone_resolves_to_the_layout_root(self):
+        root = self.root / "layout"
+        clone = root / "app"
+        for override in (root, clone):
+            with self.env(AT_WS_INSTALL_DIR=str(override)):
+                self.assertEqual(paths.layout_root(), root, override)
+                self.assertEqual(paths.install_dir(), root, override)
+                self.assertEqual(paths.harness_dir(), root / "harness", override)
+                self.assertEqual(paths.security_dir(), root / "security", override)
+        with self.env(AT_WS_INSTALL_DIR=str(self.root / "elsewhere" / "copy")):
+            self.assertEqual(paths.layout_root(), self.root / "elsewhere" / "copy")
+
     def test_config_dir_is_the_parent_of_at_ws_config(self):
         config = self.root / "custom" / "config.yaml"
         with self.env(AT_WS_CONFIG=str(config)):

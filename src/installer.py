@@ -329,13 +329,8 @@ def completion_dir():
 
 
 def layout_root():
-    """Root of the installed layout (`app/`, `harness/`, `security/`).
-
-    `install.sh` historically points AT_WS_INSTALL_DIR at the clone (`.../app`), while the layout
-    root is its parent: the harness and the mechanism are siblings of the clone, never inside it.
-    """
-    root = paths.install_dir()
-    return root.parent if root.name == "app" else root
+    """Root of the installed layout: the rule lives in `paths.layout_root()`."""
+    return paths.layout_root()
 
 
 def harness_candidates():

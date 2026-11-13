@@ -34,7 +34,11 @@ CODE_DIRS = {"src", "bin", "harness", "security", "config", "i18n", "tests"}
 
 
 def harness_dir():
-    """The installed harness directory: AT_HARNESS_DIR overrides it, as in lib.py."""
+    """The installed harness directory: AT_HARNESS_DIR overrides it, as in lib.py.
+
+    Without that override it is `<layout root>/harness` (`paths.layout_root()`), also when
+    AT_WS_INSTALL_DIR points at the clone (`.../app`).
+    """
     return paths.harness_dir()
 
 
