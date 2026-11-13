@@ -20,6 +20,7 @@ from pathlib import Path
 
 import conference
 import paths
+from session_state import BLOCKED, DONE, IDLE, WORKING
 from .base import SESSION_ID_AGENT, Adapter, Update, _t, clip, short_path
 
 
@@ -245,3 +246,27 @@ class OpenCodeAdapter(Adapter):
         if kind == "tool_use":
             return Update(status=self.status_label(repo, part), reset=True)
         return Update()
+
+    def state_of(self, event, current=""):
+        """Agent state declared by one OpenCode plugin event: `{"event": <OpenCode event type>,
+        "status": <session status type, when the event is session.status>}`.
+
+        The plugin sends the event names it hears (`tool.execute.before/after`, `permission.*`,
+        `session.*`); the mapping is the one place that reads them. A permission request is blocked,
+        a finished turn (`session.idle`, `session.error`, status `idle`) is done, and a tool step or a
+        busy session is working. Other events return None."""
+        if not isinstance(event, dict):
+            return None
+        kind = str(event.get("event") or "")
+        status = str(event.get("status") or "")
+        if kind == "session.status":
+            return {"busy": WORKING, "idle": DONE}.get(status)
+        if kind in ("permission.asked", "permission.updated"):
+            return BLOCKED
+        if kind in ("permission.replied", "tool.execute.before", "tool.execute.after"):
+            return WORKING
+        if kind in ("session.idle", "session.error"):
+            return DONE
+        if kind == "session.created":
+            return IDLE
+        return None

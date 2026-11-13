@@ -1148,6 +1148,7 @@ case "${1:-}" in
   mview) shift; mview "$@" ;;
   view) shift; "$PYTHON" "$SRC/opener.py" "$@" ;;
   menu) menu "$2" "$3" ;;
+  status) shift; "$PYTHON" "$SRC/session_state.py" status "$@" ;;
   ""|-*) start_workspace claude ;;
   *) msg cli.unknown_command command="$1" >&2; exit 2 ;;
 esac

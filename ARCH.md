@@ -96,6 +96,7 @@ O sinal só acorda. O estado não viaja no sinal: o consumidor relê o estado do
 | estado de abas mudou | `bin/workspace` (`panel_signal`) | `SIGUSR1` a `panel_tabs.py` | `src/panel_tabs.py` relê `session_state` e redesenha | `src/session_state.py` |
 | sessão do Claude mudou | hook do Claude (hooks do `settings.json` gerado) | comando do hook | `src/hook.py` | `src/hook.py` (ficha) e `src/session_state.py` (aba) |
 | sessão do OpenCode mudou | `security/opencode-policy.js` | arquivo `tabs/session-<aba>` | `session_state.session_for` | `src/session_state.py` (dívida: três escritores) |
+| estado do agente mudou (Claude e OpenCode) | hook do Claude (`src/hook.py`) e `security/opencode-policy.js`, que chama `hook.py agent` | comando do hook; spawn do plugin com o evento no stdin | `src/hook.py` traduz pelo adaptador (`agents/*.state_of`) e grava pela `session_state` | `src/session_state.py` (estado da aba em `tabs/<sha1>.json`) |
 | pedido de conferência | `src/conference.py` | arquivo em `$WS_STATE/requests` | `conference_worker` e tela da conferência | `src/conference.py` (dívida: estado na camada de desenho) |
 | barra de status | `bin/workspace`, pelas opções `@ws_*` | `#(...)` em `config/tmux.conf` | tmux pinta a barra | `src/statusbar.py` (texto) |
 
@@ -120,7 +121,9 @@ do workspace não vai para `set-environment -g`.
 
 Cache reconstruível de `session_state`: `$WS_STATE/tabs/<sha1>.json` é cópia da ordem e da ativa de
 `@ws_tabs`/`@ws_active`. `state_sync_window` (`bin/workspace`) grava a partir das janelas vivas, e
-`session_state.read` lê arquivo ausente como "sem abas". Pode ser refeito das janelas vivas. O id da
+`session_state.read` lê arquivo ausente como "sem abas". Pode ser refeito das janelas vivas. Os campos de estado do agente (`state`, `pid`, `harness`, `ts`) não são
+refeitos das janelas: `session_state.save` os preserva nas abas que continuam, e voltam no próximo evento
+do agente. O id da
 sessão de cada aba (`tabs/session-<aba>`) não é refeito assim: volta pelo hook ou pelo plugin na próxima
 sessão.
 
@@ -203,7 +206,7 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 |---|---|---|
 | `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/paths.py` (`config_path`); `src/lib.py` lê e grava | a pessoa, editando; `lib` (edição textual mínima, com backup) |
 | `~/.config/ai-tmux-workspace/state/` (`WS_STATE`) | `src/paths.py` (`state_dir`, `settings_dir`) | os donos de cada arquivo abaixo |
-| `$WS_STATE/tabs/<sha1>.json` (abas por repo) | `src/session_state.py` | `session_state`; `bin/workspace` pede por `state_sync_window` |
+| `$WS_STATE/tabs/<sha1>.json` (abas por repo e estado do agente de cada aba: `state`, `pid`, `harness`, `ts`) | `src/session_state.py` | `session_state` (`record_agent`, `save`); `bin/workspace` pede por `state_sync_window`; `hook.py` e `hook.py agent` (OpenCode) pedem por `record_agent` |
 | `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `security/opencode-policy.js` e `session_state` (dívida) |
 | `$WS_STATE/permission.json` (último modo de permissão) | `src/permission_state.py` (`path`, `record_mode`) | `permission_state` |
 | `$WS_STATE/policy.jsonl` (decisões da política) | `src/policy.py` | `policy` (anexa) |

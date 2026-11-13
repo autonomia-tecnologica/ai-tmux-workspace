@@ -141,8 +141,43 @@ function recordSession(input, env) {
   }
 }
 
+function hookPath(env) {
+  env = env || process.env;
+  if (env.WS_DIR) return path.join(env.WS_DIR, "src", "hook.py");
+  return path.resolve(__dirname, "..", "src", "hook.py");
+}
+
+/**
+ * Reports one OpenCode event to the workspace tab state (`src/hook.py agent opencode`). The Python
+ * adapter (`src/agents/opencode.py`, `state_of`) translates the event name into the state; this file
+ * only forwards what OpenCode said. The pid is this process, the agent itself: when it dies the tab
+ * reads as `unknown`. Without the launcher's tab and root nothing is reported.
+ */
+function reportState(event, options) {
+  options = options || {};
+  const env = options.env || process.env;
+  if (!env.WS_SESSION_TAB || !env.WS_SESSION_ROOT) return;
+  const python = options.python || env.WS_PYTHON || "python3";
+  spawnSync(python, [hookPath(env), "agent", "opencode", env.WS_SESSION_TAB, String(process.pid)], {
+    input: JSON.stringify(event || {}),
+    encoding: "utf8",
+    env,
+    timeout: options.timeout || 5000,
+    maxBuffer: 64 * 1024,
+  });
+}
+
+/** OpenCode bus event reduced to what the adapter reads: its type and the session status type. */
+function stateEvent(event) {
+  const properties = (event && event.properties) || {};
+  const status = properties.status && typeof properties.status === "object"
+    ? properties.status.type : properties.status;
+  return { event: event && event.type, status: typeof status === "string" ? status : "" };
+}
+
 function before(input, output, options) {
   recordSession(input, (options && options.env) || process.env);
+  reportState({ event: "tool.execute.before" }, options);
   const result = decide(opencodeEvent(input, output), options);
   if (result.decision === "deny" || result.decision === "ask") {
     const env = (options && options.env) || process.env;
@@ -156,6 +191,12 @@ function before(input, output, options) {
 async function plugin(_context) {
   return {
     "tool.execute.before": async (input, output) => before(input, output),
+    "tool.execute.after": async () => {
+      reportState({ event: "tool.execute.after" });
+    },
+    event: async ({ event }) => {
+      reportState(stateEvent(event));
+    },
   };
 }
 
@@ -165,6 +206,8 @@ module.exports.decideMany = decideMany;
 module.exports.permission = permission;
 module.exports.before = before;
 module.exports.recordSession = recordSession;
+module.exports.reportState = reportState;
+module.exports.stateEvent = stateEvent;
 module.exports.stateDir = stateDir;
 module.exports.resolveCli = resolveCli;
 module.exports.translate = translate;

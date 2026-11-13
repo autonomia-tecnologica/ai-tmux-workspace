@@ -26,12 +26,10 @@ WS = os.path.join(os.environ.get("WS_DIR", str(BASE)), "bin", "workspace")   # t
 HOME = Path.home()
 STATE = paths.state_dir()
 SESSIONS = STATE / "sessions"
-WAIT_S = 8                 # a tool open for longer than this = "waiting for things to happen"
-WAIT_CAP_S = 30 * 60       # no event for this long: the wait on a tool turns idle
-NO_EVENT_S = 10 * 60       # working with no open tool and no event for this long = idle
-IDLE_AFTER_S = 6 * 3600    # no event for this long = idle (a Stop red also ages out)
+NO_EVENT_S = 10 * 60       # working with no open tool and no event for this long = idle (session file)
+IDLE_AFTER_S = 6 * 3600    # no event for this long = idle (session file)
 ORPHAN_AGE_S = 24 * 3600   # a dead session file older than this is deleted
-PRIORITY = {"idle": 0, "working": 1, "waiting": 2, "question": 3}
+PRIORITY = session_state.PRIORITY   # the one worst-state order: blocked > working > done > unknown > idle
 
 
 def expand_path(p):
@@ -1463,25 +1461,19 @@ def current_repo():
 
 
 def _color(d, now):
-    state, ts = d.get("state", "idle"), d.get("ts", 0)
-    # error: true keeps the red state until the next event; other red states age out like the rest.
-    if now - ts > IDLE_AFTER_S and not (state == "question" and d.get("error") is True):
-        return "idle"
-    if state == "working":
-        f = d.get("tool")
-        if f and f not in ("Task", "Agent"):
-            if now - ts > WAIT_CAP_S:  # no event for 30 min: the tool is not coming back
-                return "idle"
-            if now - d.get("tool_ts", ts) > WAIT_S:
-                return "waiting"
-        if not f and now - ts > NO_EVENT_S:     # no event for 10 min: the session died without notice
-            return "idle"
+    """Displayed state of one Claude session file: its declared state (`session_state.STATES`), aged
+    out to idle when the file has been silent for too long. Liveness is the file's pid, not this."""
+    state, ts = d.get("state", session_state.IDLE), d.get("ts", 0)
+    if now - ts > IDLE_AFTER_S:
+        return session_state.IDLE
+    if state == session_state.WORKING and not d.get("tool") and now - ts > NO_EVENT_S:
+        return session_state.IDLE     # working with no open tool and no event for 10 min
     return state
 
 
 def session_color(d, now):
     """Displayed state of one session file. `agents` is informational only: the hook keeps the state
-    at "working" while background tasks run, so nothing here masks a red state."""
+    at "working" while background tasks run, so nothing here masks a blocked state."""
     return _color(d, now)
 
 
@@ -1652,14 +1644,14 @@ def live_sessions(paths, now=None):
     return res
 
 
-def states_by_repo(repos, now=None):
-    """{repo_path: 'idle'|'working'|'waiting'|'question'} — the worst session of the repo wins."""
-    paths = [p for _, rs in repos for _, p in rs]
+def states_by_repo(repos):
+    """{repo_path: blocked|working|done|unknown|idle}: the worst state of the repo's tabs, read from
+    the tab state files (`session_state.repo_state`). `repos` is [(group, [(name, path)])]; a repo
+    with no tab reads as idle, and a tab whose agent died reads as unknown."""
     res = {}
-    for repo, sessions in live_sessions(paths, now).items():
-        for _, _, c in sessions:
-            if PRIORITY[c] >= PRIORITY[res.get(repo, "idle")]:
-                res[repo] = c
+    for _, rs in repos:
+        for _, p in rs:
+            res[p] = session_state.repo_state(p)
     return res
 
 
