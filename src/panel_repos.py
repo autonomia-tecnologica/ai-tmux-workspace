@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Repos panel: config.yaml groups, each repo with the agent state dot.
 
-  ○ empty    session with no text            ● green   agent (or subagent) working
-  ● yellow   stopped, but running something  ● red     stopped with text / question
+  ● red      blocked: the agent waits for an approval or an answer
+  ● green    working: the agent (or a subagent) is running
+  ● blue     done: the agent ended its turn
+  ○ empty    idle: nothing to do
+  ◌ dim      unknown: the agent process is gone
+
+A repo shows the worst state of its tabs (blocked > working > done > unknown > idle).
 
 Next to the name, two icons always present:
   branch  = local git: dim without git · normal clean · yellow with uncommitted work

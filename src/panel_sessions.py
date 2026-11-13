@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Active sessions (open Claudes) of every workspace repo, grouped by repo: title, state, last answer, message count,
-model, context and cost. Running subagents become a row inside the parent session. Enter focuses the session pane.
+"""Active sessions of every workspace repo, grouped by repo: one row per tab, with its agent state
+(blocked, working, done, unknown, idle), title, last answer, message count, model, context and cost.
+Running subagents become a row inside the parent session. Enter focuses the session pane.
+
+The state of each row is the tab's (`session_state.tab_states`), so Claude and OpenCode tabs read the
+same way. A tab with no Claude transcript (an OpenCode tab, or one still starting) shows its profile.
+A live Claude session that belongs to no tab (opened by hand) is listed after the tabs.
 
 Transcripts are read incrementally (only what was appended since the last read); model, context and cost
 come from the <sid>.status.json written by statusline.py."""
@@ -14,6 +19,7 @@ from pathlib import Path
 import glyphs
 import i18n
 import lib
+import session_state
 import statusbar
 import tmux
 from viewer import YELLOW, B, GRAY, DIM, R, GREEN, RED, Row, Viewer
@@ -108,36 +114,54 @@ def transcript_of(entry, sid):
     return folder(entry["cwd"]) / f"{sid}.jsonl"
 
 
-def collect(v):
-    now = time.time()
-    main = lib.read_main()
-    repos = ([main] if main else []) + [r for _, rs in lib.read_repos() for r in rs]
-    by_repo = lib.live_sessions([p for _, p in repos], now)
-    total = sum(len(x) for x in by_repo.values())
-    header = [Row(f" {GRAY}{i18n.t('sessions.header', n=total)}{R}"), Row("")]
+def _details(entry, sid):
+    """(title, last answer, message count, model) of a live Claude session with a transcript."""
+    path = transcript_of(entry, sid)
+    try:
+        d = read(path)
+    except Exception:
+        d = {"title": i18n.t("sessions.untitled"), "last": "", "n": 0, "model": ""}
+    st = statusbar.status_of(sid)
+    last = " ".join((statusbar.clean_text(entry.get("last_assistant_message")) or d["last"]).split())
+    model = statusbar.clean_text(st.get("model")) or d["model"]
+    return d, st, last, model, str(path)
+
+
+def _rows_of_repo(repo_name, rpath, tabs, sessions, used):
+    """Body rows of one repo: each tab with its state, then the live sessions that no tab owns."""
+    rows = []
+    by_sid = {sid: (entry, color) for sid, entry, color in sessions}
+    owned = set()
+    for tab in tabs:
+        sid = session_state.session_for(rpath, tab["id"])
+        hit = by_sid.get(sid) if sid else None
+        if hit:
+            owned.add(sid)
+        rows.append((tab["state"], tab["profile"], sid, hit))
+    for sid, entry, color in sessions:
+        if sid not in owned:
+            rows.append((color, entry.get("profile") or "", sid, (entry, color)))
     body = []
-    used = set()
-    for repo_name, rpath in repos:
-        for sid, e, color in by_repo.get(rpath, []):
-            path = transcript_of(e, sid)
-            used.add(str(path))
-            try:
-                d = read(path)
-            except Exception:
-                d = {"title": i18n.t("sessions.untitled"), "last": "", "n": 0, "model": ""}
-            st = statusbar.status_of(sid)
-            last = " ".join((statusbar.clean_text(e.get("last_assistant_message")) or d["last"]).split())
-            model = statusbar.clean_text(st.get("model")) or d["model"]
-            if repo_name:
-                body.append(Row(f" {GRAY}{repo_name.upper()}{R}"))
-                repo_name = None
-            k = (e["pane"], rpath)
-            body.append(Row(f" {glyphs.dot(color)} {B}{d['title']}{R}", k))
+    for state, profile, sid, hit in rows:
+        if hit:
+            entry = hit[0]
+            d, st, last, model, path = _details(entry, sid)
+            used.add(path)
+            title = d["title"]
+        else:
+            entry, st, last, model, d = None, {}, "", "", {"n": 0}
+            title = profile or i18n.t("sessions.untitled")
+        if repo_name:
+            body.append(Row(f" {GRAY}{repo_name.upper()}{R}"))
+            repo_name = None
+        key = (entry["pane"], rpath) if entry and entry.get("pane") else None
+        body.append(Row(f" {glyphs.dot(state)} {B}{title}{R}", key))
+        if entry:
             body.append(Row(f"   {GRAY}{i18n.t('sessions.agent')}{R} {DIM}{last}{R}", cont=True))
             parts = [i18n.t("sessions.msgs", n=d["n"])] + ([model] if model else [])
-            profile = e.get("profile")
-            if isinstance(profile, str) and profile.strip() and profile.strip() != "claude":
-                parts.append(profile.strip())
+            entry_profile = entry.get("profile")
+            if isinstance(entry_profile, str) and entry_profile.strip() and entry_profile.strip() != "claude":
+                parts.append(entry_profile.strip())
             pct = statusbar.as_number(st.get("context_pct"))
             if pct is not None:
                 parts.append(i18n.t("status.context", pct=f"{pct:.0f}"))
@@ -145,23 +169,40 @@ def collect(v):
             if cost is not None:
                 parts.append(i18n.t("sessions.cost", v=f"{cost:.2f}".replace(".", ",")))
             body.append(Row(f"   {GRAY}{' · '.join(parts)}{R}", cont=True))
-            types = e.get("agent_types") or {}
-            for a in e.get("agents") or []:
+            types = entry.get("agent_types") or {}
+            for a in entry.get("agents") or []:
                 body.append(Row(f"   {GREEN}↳{R} {GRAY}{types.get(a, 'agent')}{R}", cont=True))
-            body.append(Row(""))
+        else:
+            body.append(Row(f"   {GRAY}{i18n.t('sessions.no_transcript')}{R}", cont=True))
+        body.append(Row(""))
+    return body, len(rows)
+
+
+def collect(v):
+    now = time.time()
+    main = lib.read_main()
+    repos = ([main] if main else []) + [r for _, rs in lib.read_repos() for r in rs]
+    by_repo = lib.live_sessions([p for _, p in repos], now)
+    tabs_of = {rpath: session_state.tab_states(rpath) for _, rpath in repos}
+    body = []
+    used = set()
+    total = 0
+    for repo_name, rpath in repos:
+        rows, count = _rows_of_repo(repo_name, rpath, tabs_of[rpath], by_repo.get(rpath, []), used)
+        body += rows
+        total += count
+    header = [Row(f" {GRAY}{i18n.t('sessions.header', n=total)}{R}"), Row("")]
     for key in [c for c in CACHE if c not in used]:      # session left the list: release the read state
         del CACHE[key]
     if total == 0:
         body.append(Row(f" {GRAY}{i18n.t('sessions.empty')}{R}"))
-        pane = os.environ.get("TMUX_PANE", "")
-        profile = tmux.run("show", "-wqv", "-t", pane, "@ws_session_profile") if pane else ""
-        if profile and profile != "claude" and not lib.is_claude_harness(profile):
-            body.append(Row(f" {DIM}{i18n.t('sessions.opencode_note')}{R}"))
     return header, body
 
 
 def enter(v, key, _pressed):
     """Focus the session's pane: bring it forward in its repo window (it may be a hidden tab)."""
+    if not key:     # a tab whose agent has no live pane (an OpenCode tab) has nothing to focus
+        return
     pane, repo = key
     session = tmux.run("display", "-p", "-t", pane, "#{session_name}")
     win = ""

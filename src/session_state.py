@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Persistent session tabs per repo: which tabs exist, their profiles and their session ids.
+"""Persistent session tabs per repo: which tabs exist, their profiles, their session ids and their
+agent state.
 
 Each repo has one JSON file under `$WS_STATE/tabs/`, named after the sha1 of its real path:
 
     {"repo": "<realpath>", "active": "<tab id>",
-     "tabs": [{"id": "<stable id>", "profile": "<name>", "session": "<id>"}]}
+     "tabs": [{"id": "<stable id>", "profile": "<name>", "session": "<id>",
+               "state": "working", "pid": 1234, "harness": "claude", "ts": 1700000000.0}]}
 
 The list order is the tab order in the strip. The id is stable across a tmux server restart, so it
 is also the `WS_SESSION_TAB` value exported to the session and the suffix of
 `$WS_STATE/tabs/session-<tab>`, where the Claude hook and the OpenCode plugin record the real
 session id. `session_for` prefers that file (the live id) and falls back to the JSON value.
+
+The agent state (`state`, `pid`, `harness`, `ts`) is written only here, by `record_agent`, from what
+the agent declares: the adapters in `src/agents/` translate the hook or plugin event, and this module
+stores the result. `tab_states` reads it back and turns it into one of `STATES`: a tab whose agent
+process died (its `pid` is gone) reads as `unknown`, so a tab never stays `working` forever.
 
 A missing or corrupt state file reads as no tabs, so one bad write never hides the repo's tabs.
 This module is stdlib-only and also runs as a small CLI (see `main`), which `bin/workspace` uses
@@ -19,7 +26,9 @@ import contextlib
 import hashlib
 import json
 import os
+import subprocess
 import sys
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -30,6 +39,22 @@ try:
     import fcntl
 except ImportError:     # no fcntl (Windows): updates are not serialized
     fcntl = None
+
+# The one vocabulary of an agent's state, shared by the Claude hook, the OpenCode plugin, the panels
+# and `workspace status`. `blocked`: the agent declared it waits for an approval or an answer.
+# `done`: the agent ended its turn. `working`: the agent is running. `idle`: nothing to do yet.
+# `unknown`: the agent process died (or cannot be tested); it is derived, never stored.
+BLOCKED = "blocked"
+WORKING = "working"
+DONE = "done"
+IDLE = "idle"
+UNKNOWN = "unknown"
+STATES = (BLOCKED, WORKING, DONE, IDLE, UNKNOWN)
+DECLARED = (BLOCKED, WORKING, DONE, IDLE)   # what an adapter may store; `unknown` is only derived
+# The worst state of a repo wins: blocked, then working, then done, then unknown, then idle.
+PRIORITY = {IDLE: 0, UNKNOWN: 1, DONE: 2, WORKING: 3, BLOCKED: 4}
+# The states whose process must be alive: without a live pid they read as unknown.
+LIVE_STATES = (BLOCKED, WORKING)
 
 
 def _is_darwin():
@@ -52,6 +77,35 @@ def path_key(path):
 def _real(repo):
     """Normalized real path of a repo, so the same directory always maps to the same file."""
     return os.path.realpath(os.path.expanduser(str(repo)))
+
+
+def pid_alive(pid):
+    """True when `pid` is a running process (not a zombie); False when it died or cannot be seen."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:     # it exists, but belongs to another user
+        pass
+    except OSError:
+        return False
+    if _is_darwin():
+        try:
+            proc = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True,
+                                  text=True, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        stat = proc.stdout.strip()
+        return proc.returncode == 0 and bool(stat) and not stat.startswith("Z")
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return not os.path.isdir("/proc/self")     # no /proc to ask: trust the signal test
 
 
 def state_dir():
@@ -92,6 +146,23 @@ def read(repo):
     return data
 
 
+def _agent_fields(tab):
+    """The agent keys of a stored tab that are valid; anything else is dropped."""
+    out = {}
+    if tab.get("state") in DECLARED:
+        out["state"] = tab["state"]
+        try:
+            out["pid"] = max(0, int(tab.get("pid") or 0))
+        except (TypeError, ValueError):
+            out["pid"] = 0
+        out["harness"] = str(tab.get("harness", ""))
+        try:
+            out["ts"] = float(tab.get("ts") or 0)
+        except (TypeError, ValueError):
+            out["ts"] = 0.0
+    return out
+
+
 def _normalize_tabs(tabs):
     """Tabs with a non-empty id, as fresh dicts; duplicate ids keep their first position."""
     result, seen = [], set()
@@ -102,11 +173,13 @@ def _normalize_tabs(tabs):
         if not tab_id or tab_id in seen:
             continue
         seen.add(tab_id)
-        result.append({
+        entry = {
             "id": tab_id,
             "profile": str(tab.get("profile", "")),
             "session": str(tab.get("session", "")),
-        })
+        }
+        entry.update(_agent_fields(tab))
+        result.append(entry)
     return result
 
 
@@ -241,8 +314,79 @@ def reset_session(repo, tab_id, session=""):
             tab["session"] = str(session)
 
 
+def record_agent(repo, tab_id, state, pid=0, harness="", ts=None):
+    """Stores the agent state a tab declared (`state` is one of `DECLARED`) with the agent's pid.
+
+    Returns False, storing nothing, when the tab is not in the repo's state (a session opened by
+    hand, or a tab already closed). Raises ValueError for a state outside `DECLARED`: `unknown` is
+    derived from a dead pid by `tab_states`, never declared."""
+    if state not in DECLARED:
+        raise ValueError(f"not a declarable agent state: {state!r}")
+    tab_id = str(tab_id)
+    with _update(repo) as data:
+        tab = _tab_of(data, tab_id)
+        if tab is None:
+            return False
+        tab["state"] = state
+        try:
+            tab["pid"] = max(0, int(pid or 0))
+        except (TypeError, ValueError):
+            tab["pid"] = 0
+        tab["harness"] = str(harness or "")
+        tab["ts"] = float(time.time() if ts is None else ts)
+    return True
+
+
+def _resolve(tab, alive=pid_alive):
+    """The state a tab reads as now: its declared state, or `unknown` when its agent process is gone.
+
+    A tab with no declared state is `idle`. A dead pid turns any declared state into `unknown`, and
+    so does a working or blocked state without a pid (there is nothing to watch it by)."""
+    state = tab.get("state")
+    if state not in DECLARED:
+        return IDLE
+    pid = tab.get("pid") or 0
+    if pid > 0 and not alive(pid):
+        return UNKNOWN
+    if pid <= 0 and state in LIVE_STATES:
+        return UNKNOWN
+    return state
+
+
+def tab_states(repo, alive=pid_alive):
+    """Tabs of a repo in strip order, each as {"id", "profile", "state", "declared", "pid", "harness",
+    "ts"}: `state` is the resolved one (see `_resolve`), `declared` is what the agent last said."""
+    out = []
+    for tab in read(repo)["tabs"]:
+        out.append({
+            "id": tab["id"],
+            "profile": tab["profile"],
+            "state": _resolve(tab, alive),
+            "declared": tab.get("state", ""),
+            "pid": tab.get("pid", 0),
+            "harness": tab.get("harness", ""),
+            "ts": tab.get("ts", 0.0),
+        })
+    return out
+
+
+def repo_state(repo, alive=pid_alive):
+    """Worst resolved state of a repo's tabs (`PRIORITY`), or `idle` when it has no tab."""
+    states = [tab["state"] for tab in tab_states(repo, alive)]
+    return max(states, key=PRIORITY.get, default=IDLE)
+
+
+def all_repo_files():
+    """Paths of every repo state file under `tabs/` (the per-tab session files are not JSON)."""
+    try:
+        return sorted(p for p in state_dir().glob("*.json") if not p.name.startswith("."))
+    except OSError:
+        return []
+
+
 def save(repo, tabs, active=""):
-    """Replaces the whole tab list with `(id, profile)` pairs, preserving known session ids.
+    """Replaces the whole tab list with `(id, profile)` pairs, preserving known session ids and the
+    agent state of the tabs that stay.
 
     Used to sync the state with the live panes before a tmux server restart; the order of `tabs` is
     the order of the strip."""
@@ -255,8 +399,26 @@ def save(repo, tabs, active=""):
             if not session:
                 session = known.get(tab["id"], {}).get("session", "")
             tab["session"] = session
+            tab.update(_agent_fields(known.get(tab["id"], {})))
         data["tabs"] = normalized
         data["active"] = str(active)
+
+
+def status_lines():
+    """One line per tab of every repo: `state<TAB>repo<TAB>tab<TAB>profile<TAB>harness`, in repo order.
+
+    `state` is the resolved one, so a dead agent shows as `unknown`. `workspace status` prints this."""
+    lines = []
+    for path in all_repo_files():
+        try:
+            repo = json.loads(path.read_text(encoding="utf-8")).get("repo", "")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if not isinstance(repo, str) or not repo:
+            continue
+        for tab in tab_states(repo):
+            lines.append("\t".join([tab["state"], repo, tab["id"], tab["profile"], tab["harness"]]))
+    return lines
 
 
 def main(argv):
@@ -296,9 +458,12 @@ def main(argv):
         print(f"active\t{data['active']}")
         for tab in data["tabs"]:
             print(f"id\t{tab['id']}\t{tab['profile']}\t{_effective_session(data, tab['id'])}")
+    elif command == "status" and not args:
+        for line in status_lines():
+            print(line)
     else:
         print("usage: session_state.py {new-id|add|remove|active|session|set-session|"
-              "reset-session|save|list} ...", file=sys.stderr)
+              "reset-session|save|list|status} ...", file=sys.stderr)
         return 2
     return 0
 

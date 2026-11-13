@@ -120,7 +120,7 @@
   "sessions.cost": "US$ {v}",
   "sessions.empty": "(nenhuma sessão ativa)",
   "sessions.opencode": "Sessões OpenCode não aparecem aqui.",
-  "sessions.opencode_note": "Sessões OpenCode não aparecem aqui.",
+  "sessions.no_transcript": "(sem transcrição: agente ainda não respondeu ou é OpenCode)",
   "github.no_repo": "sem repositório GitHub aqui",
   "github.failed": "gh falhou",
   "github.private": "privado",

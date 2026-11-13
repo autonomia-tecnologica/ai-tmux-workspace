@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import yaml_min  # noqa: E402  (stdlib-only, no lib import)
 import paths  # noqa: E402  (stdlib-only, same reason)
+import session_state  # noqa: E402  (stdlib-only: the tab state file has its owner there)
 
 try:
     import permission_state  # noqa: E402  (stdlib-only, same reason)
@@ -282,12 +283,12 @@ def _write_state(path, state):
 
 # --- state machine -------------------------------------------------------------------------
 
-def _has_background_work(d):
-    return bool(d.get("background_tasks")) or bool(d.get("session_crons"))
-
-
 def _apply(e, ev, d, ctx):
-    """Applies one event to the session state `e`, in place. Returns False when nothing is written."""
+    """Applies one Claude hook event to the session file `e`, in place. The state the event declares
+    is translated by the Claude adapter (`ClaudeAdapter.state_of`); this keeps the bookkeeping only
+    (subagents, the tool in progress, the last answer). Returns the declared state, or None."""
+    from agents.claude import ClaudeAdapter   # lazy: the hook stays light on every other event
+
     e.update(cwd=d.get("cwd", e.get("cwd", "")), ts=ctx["now"], pane=ctx["pane"],
              tmux_socket=ctx["socket"], claude_pid=ctx["claude_pid"],
              profile=os.environ.get("WS_SESSION_PROFILE", ""))
@@ -305,51 +306,22 @@ def _apply(e, ev, d, ctx):
         elif ev == "SubagentStop":
             e["agents"] = [a for a in e["agents"] if a != agent_id]
         e["agent_types"] = {k: v for k, v in e["agent_types"].items() if k in e["agents"]}
-        return True
-    if ev == "SessionStart":
-        if d.get("source") != "compact":     # compact keeps the session: only ts and context fields move
-            e.update(state="idle", tool=None, agents=[], agent_types={})
-        return True
+        return None
+    if ev == "SessionStart" and d.get("source") != "compact":   # compact keeps the session
+        e.update(tool=None, agents=[], agent_types={})
     if ev == "UserPromptSubmit":     # a new prompt starts clean: a lost SubagentStop cannot stick
-        e.update(state="working", tool=None, stopped=False, error=False, agents=[], agent_types={})
-        return True
-    if ev in ("Stop", "StopFailure"):
-        if _has_background_work(d):    # background tasks or crons keep the session working
-            e.update(state="working", tool=None, stopped=False)
-        else:                          # turn ended with text in the session: red until the next prompt
-            e.update(state="question", tool=None, stopped=True)
-        e["error"] = ev == "StopFailure"
-        if "last_assistant_message" in d:
-            e["last_assistant_message"] = str(d["last_assistant_message"] or "")[:MAX_LAST_MESSAGE]
-        return True
-    if ev in ("PostModelSwitch", "CwdChanged"):    # only ts (and cwd, set above) move
-        return True
-    if ev == "PermissionDenied":
-        e.update(state="working", tool=None, stopped=False)
-        return True
-    if ev == "Elicitation":          # the session waits on the person: the existing "question" state
-        e.update(state="question", stopped=False)
-        return True
-    if ev == "PreToolUse" and d.get("tool_name") in ("AskUserQuestion", "ExitPlanMode"):
-        e.update(state="question", tool=None, stopped=False)    # poll/plan approval: waiting on the person
-        return True
-    if d.get("agent_id") and ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
-        # subagent tools share the parent's session id: the session is waiting on an agent
-        # (green), not on a long-running command (yellow), and must not mask a pending question.
-        if e.get("state") != "question":
-            e.update(state="working", tool=None)
-        return True
-    if ev == "PreToolUse":
-        e.update(state="working", tool=d.get("tool_name"), tool_ts=ctx["now"])
-        return True
-    if ev in ("PostToolUse", "PostToolUseFailure"):
-        e.update(state="working", tool=None)
-        return True
-    if ev == "PermissionRequest" or (ev == "Notification" and d.get("notification_type")
-                                     in ("permission_prompt", "elicitation_dialog")):
-        e.update(state="question", stopped=False)
-        return True
-    return False    # idle_prompt keeps whatever Stop set; unknown events change nothing
+        e.update(tool=None, agents=[], agent_types={})
+    if ev in ("Stop", "StopFailure") and "last_assistant_message" in d:
+        e["last_assistant_message"] = str(d["last_assistant_message"] or "")[:MAX_LAST_MESSAGE]
+
+    state = ClaudeAdapter().state_of(d, e.get("state", ""))
+    if state is not None:
+        e["state"] = state
+    if ev == "PreToolUse" and state == "working" and not d.get("agent_id"):
+        e.update(tool=d.get("tool_name"), tool_ts=ctx["now"])
+    elif ev in ("PostToolUse", "PostToolUseFailure") or (ev == "PreToolUse" and state is not None):
+        e["tool"] = None
+    return state
 
 
 def _record(d, ev, sid):
@@ -364,15 +336,30 @@ def _record(d, ev, sid):
     with _session_lock(sid):
         e = _read_state(path)
         prev = e.get("state")
-        written = _apply(e, ev, d, ctx)
-        if written:
-            _write_state(path, e)
-    if written and e.get("state") == "question" and prev != "question":
-        try:    # only the transition into red: PermissionRequest + Notification fire once
+        state = _apply(e, ev, d, ctx)
+        _write_state(path, e)
+    if state is not None:
+        _record_tab_state(state, ctx)
+    if state == session_state.BLOCKED and prev != session_state.BLOCKED:
+        try:    # only the transition into blocked: PermissionRequest + Notification fire once
             _notify(d, ev)
         except Exception:
             pass
     return ctx
+
+
+def _record_tab_state(state, ctx):
+    """Stores the state the Claude event declared on the tab that runs this session (the tab state
+    file is owned by `session_state`). Without the launcher's tab and root, nothing is stored."""
+    tab = os.environ.get("WS_SESSION_TAB", "")
+    root = os.environ.get("WS_SESSION_ROOT", "")
+    if not tab or not root:
+        return
+    try:
+        session_state.record_agent(root, tab, state, pid=ctx["claude_pid"], harness="claude",
+                                   ts=ctx["now"])
+    except (OSError, ValueError):
+        pass
 
 
 def _is_stale(state, ctx):
@@ -533,8 +520,37 @@ def main():
         _request_popup(d)
 
 
+def agent_main(argv):
+    """`hook.py agent <harness> <tab> <pid>`: one event of a non-Claude agent (the OpenCode plugin),
+    JSON on stdin. The harness adapter translates it; the tab state file stores the result.
+
+    The plugin runs inside the agent process, so `pid` is that process: when it dies the tab reads
+    as `unknown`. Errors are swallowed, as in the Claude hook: a state write never breaks a tool."""
+    from agents import adapter   # lazy: only this entry point needs the adapters
+    if len(argv) != 3:
+        return
+    harness, tab, pid = argv
+    root = os.environ.get("WS_SESSION_ROOT", "")
+    try:
+        event = json.load(sys.stdin)
+    except ValueError:
+        return
+    if not root or not tab or not isinstance(event, dict):
+        return
+    state = adapter(harness).state_of(event)
+    if state is None:
+        return
+    try:
+        session_state.record_agent(root, tab, state, pid=int(pid), harness=harness)
+    except (OSError, ValueError):
+        pass
+
+
 if __name__ == "__main__":
     try:
-        main()
+        if sys.argv[1:2] == ["agent"]:
+            agent_main(sys.argv[2:])
+        else:
+            main()
     except Exception:
         pass

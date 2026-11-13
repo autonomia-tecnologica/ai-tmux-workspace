@@ -5,11 +5,15 @@ an emoji set for a terminal without a Nerd Font) is a change in one file. Needs 
 terminal for the git and file icons.
 """
 import icons
-from colors import YELLOW, GRAY, GRAY_DARK, R, GREEN, RED
+from colors import BLUE, YELLOW, GRAY, GRAY_DARK, R, GREEN, RED
+from session_state import BLOCKED, DONE, IDLE, UNKNOWN, WORKING
 
-# --- status dots (repos, sessions) -------------------------------------------------------------
-_DOT = {"idle": (GRAY, "○"), "working": (GREEN, "●"),
-        "waiting": (YELLOW, "●"), "question": (RED, "●")}
+# --- status dots (repos, sessions, tabs) -------------------------------------------------------
+# One entry per state of session_state.STATES: blocked = waits for the person (red), done = the turn
+# ended (blue), working = running (green), idle = nothing to do (hollow gray), unknown = the agent
+# process is gone (dim, dotted).
+_DOT = {IDLE: (GRAY, "○"), WORKING: (GREEN, "●"), DONE: (BLUE, "●"),
+        BLOCKED: (RED, "●"), UNKNOWN: (GRAY_DARK, "◌")}
 
 
 def dot(state):

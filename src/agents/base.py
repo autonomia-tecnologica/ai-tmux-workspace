@@ -197,6 +197,15 @@ class Adapter:
         """One stream event as an `Update`; subclasses know their own event shape."""
         raise NotImplementedError
 
+    def state_of(self, event, current=""):
+        """The agent state (`session_state.STATES`, declarable part) that one lifecycle event of this
+        harness declares, or None when the event does not change it.
+
+        `current` is the state the tab reads now; an adapter uses it only where the event's meaning
+        depends on it (a subagent's tool step does not clear a `blocked`). No adapter reads the
+        screen: only what the agent itself reports is translated here."""
+        return None
+
     def read_stream(self, stream, repo="", on_status=None):
         """Final text of the stream, reporting each tool step through `on_status`."""
         return read_stream(stream, repo, on_status, adapter=self)

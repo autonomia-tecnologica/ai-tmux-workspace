@@ -11,9 +11,13 @@ import sys
 from pathlib import Path
 
 import conference
+from session_state import BLOCKED, DONE, IDLE, WORKING
 from .base import SESSION_ID_WORKSPACE, Adapter, Update, _t, clip, short_path
 
 ALLOWED_TOOLS = "Read,Edit"
+TOOL_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+ASK_TOOLS = ("AskUserQuestion", "ExitPlanMode")       # the agent waits on the person
+PROMPT_NOTIFICATIONS = ("permission_prompt", "elicitation_dialog")
 DISALLOWED_TOOLS = "Bash,Task,NotebookEdit,MultiEdit,Write,WebFetch,WebSearch,Grep,Glob"
 SETTINGS_FLAG = re.compile(r"(?:^|\s)--settings(?:=|\s|$)")
 
@@ -176,3 +180,44 @@ class ClaudeAdapter(Adapter):
         if kind == "result" and not event.get("is_error"):
             return Update(final=str(event.get("result") or ""))
         return Update()
+
+    def state_of(self, event, current=""):
+        """Agent state declared by one Claude Code hook event (the `hook_event_name` payload).
+
+        Blocked: the agent asks for an approval or an answer (`PermissionRequest`, a permission or
+        elicitation prompt, `AskUserQuestion`, `ExitPlanMode`). Done: the turn ended with no
+        background work left (`Stop`). Working: a prompt, a tool step or a denied permission. Idle:
+        a fresh session, or the session ended. A subagent's tool step keeps a `blocked` state, as the
+        session still waits on the person. Events that carry no state change return None."""
+        if not isinstance(event, dict):
+            return None
+        name = event.get("hook_event_name")
+        tool = event.get("tool_name")
+        if name == "SessionStart":
+            return None if event.get("source") == "compact" else IDLE
+        if name == "SessionEnd":
+            return IDLE
+        if name == "UserPromptSubmit":
+            return WORKING
+        if name in ("Stop", "StopFailure"):
+            return WORKING if has_background_work(event) else DONE
+        if name == "PermissionDenied":
+            return WORKING
+        if name == "Elicitation":
+            return BLOCKED
+        if name == "PreToolUse" and tool in ASK_TOOLS:
+            return BLOCKED
+        if name in TOOL_EVENTS and event.get("agent_id"):
+            return BLOCKED if current == BLOCKED else WORKING
+        if name in TOOL_EVENTS:
+            return WORKING
+        if name == "PermissionRequest":
+            return BLOCKED
+        if name == "Notification" and event.get("notification_type") in PROMPT_NOTIFICATIONS:
+            return BLOCKED
+        return None
+
+
+def has_background_work(event):
+    """True while background tasks or session crons keep the session working after its turn ended."""
+    return bool(event.get("background_tasks")) or bool(event.get("session_crons"))
