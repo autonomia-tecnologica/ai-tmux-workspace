@@ -11,6 +11,18 @@ em arquitetura; o `HARNESS.md` vence em segurança e isolamento.
 Onde código e este documento discordarem, vale o que está aqui: ou o código se corrige, ou a
 divergência entra em `## Dívidas conhecidas`, com o motivo.
 
+Workspace minimalista baseado em tmux, sem pretensão de ser algo novo: só uma abordagem específica (um
+repo por janela do tmux, agente Claude Code ao lado, painéis de repos, tarefas, arquivos, sessões, diff e
+GitHub). Vive dentro do ecossistema Autonomia Tecnológica. Nome oficial: `ai-tmux-workspace` (repo, pasta
+local e config usam o mesmo nome). Repo em `~/Codes/ai-tmux-workspace`, grupo `IA`.
+
+Repo público em github.com/autonomia-tecnologica/ai-tmux-workspace (`origin`): nada sensível no repo nem no
+histórico; commits só com o e-mail noreply do GitHub; push só quando o mantenedor pedir.
+
+Segurança é o motivo de ser código próprio (uma ferramenta Electron rodando tudo num só processo pediu
+permissões demais no Mac): sem rede, sem daemon, sem acesso remoto. Worktree não é sandbox; o limite real
+são as permissões do Claude Code por perfil.
+
 ## Camadas
 
 | camada | pasta/arquivos | responsabilidade | proibido |
@@ -112,9 +124,16 @@ Cache reconstruível de `session_state`: `$WS_STATE/tabs/<sha1>.json` é cópia 
 sessão de cada aba (`tabs/session-<aba>`) não é refeito assim: volta pelo hook ou pelo plugin na próxima
 sessão.
 
+Mudança só entra em lugar que o `workspace reload` (Ctrl+b r) resolve: `config/tmux.conf`, `src/*.py`,
+`bin/workspace` e a config do workspace (lida na hora, ex.: `perfil_cmd`). Só hooks do Claude e plugins
+exigem `restart`. Layout montado uma vez não é estado válido: estrutura nova de janela entra em
+`ensure_window` (idempotente), não só em `build_window`.
+
 Prova: `grep -c "@ws_" bin/workspace` (opções escritas e lidas no script).
 
 ## UI
+
+Lado esquerdo: metade de cima repos, metade de baixo tarefas.
 
 Foco, cursor e ativo são três estados separados e não se misturam:
 
