@@ -47,8 +47,9 @@ that into no answer, so the session's own mode decides. Such a segment still mee
 hold whatever its form is (`_ambiguous_findings`): an admin program named anywhere in it, and a secret
 or a workspace-code write among its words. Known segments keep their table decision. A `cd` into a
 directory, inside or outside the box, reanchors the following segments of the same command; `git -C`
-works the same way. Denied for every role, with no list to maintain: `admin` (`sudo`, `pkexec`, `su`,
-`doas`, ...), secrets, and the workspace code (write).
+works the same way. Denied for every role, with no list to maintain: secrets and the workspace code (write). `admin`
+(`sudo`, `pkexec`, `su`, `doas`, ...) is `privileged` for every role (item 154): the person approves the
+whole command, then it runs through pkexec, and no mode turns it into `allow`.
 
 `ask` mode (item 119) is opt-in by the person: `WS_POLICY_ASK`/`WS_POLICY_OPEN` or the marker
 `policy.ask`/`policy.open` in `$WS_STATE`. In it an action the engine cannot classify becomes `ask`
@@ -95,8 +96,10 @@ ROLES = ("repo", "home", "self", "subagent")
 # Roles a subagent or a plain session may take a capability table from. `self` is the workspace's
 # dev session: it has the table of `repo` (see `inherits` in the policy file).
 PARENT_ROLES = ("repo", "home", "self")
-DECISIONS = ("allow", "ask", "deny")
-_RANK = {"deny": 0, "ask": 1, "allow": 2}
+DECISIONS = ("allow", "ask", "privileged", "deny")
+# Strictness order for combining findings (the lowest rank wins). `privileged` (admin, item 154) sits
+# between deny and ask: it is never allow, and `auto` only upgrades `ask`, so it is never upgraded.
+_RANK = {"deny": 0, "privileged": 1, "ask": 2, "allow": 3}
 
 # Path-scoped capabilities are the only ones `auto` may upgrade, and only inside the box.
 BOX_CAPABILITIES = {"repo.read", "repo.write", "repo.outside", "config.read", "config.write", "tmp"}
@@ -1774,7 +1777,7 @@ def main(argv=None):
     if argv and argv[0] in ("-h", "--help"):
         print(USAGE)
         return 0
-    if not argv or argv[0] != "check":
+    if not argv or argv[0] not in ("check", "privileged"):
         print(USAGE, file=sys.stderr)
         return 2
     try:
@@ -1782,6 +1785,11 @@ def main(argv=None):
     except (OSError, ValueError):
         event = None
     result = check_event(event)
+    if argv[0] == "privileged" and result.get("decision") == "privileged":
+        # OpenCode adapter (item 154): the person approves, then pkexec runs the command here, in the
+        # same call. The Claude hook calls `privileged.run_approved` itself and never reaches this.
+        import privileged     # lazy: tmux is only needed on the approval path
+        result = privileged.run_approved(event)
     sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
     return 0
 

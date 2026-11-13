@@ -181,3 +181,109 @@ def privileged(argv, cwd=None):
     finally:
         shutil.rmtree(directory, ignore_errors=True)
 
+
+# --- approved administrative commands (backlog item 154) ----------------------------------------
+
+BASH = shutil.which("bash") or "/bin/bash"
+APPROVAL_SECONDS = 120      # how long the person has to answer before nothing runs
+MAX_OUTPUT = 20000          # characters of the command output sent back to the agent
+
+
+def _yes_pattern():
+    """Shell case pattern for the affirmative answers (`privileged.answer.yes`), any case."""
+    forms = []
+    for word in i18n.t("privileged.answer.yes").split():
+        for form in (word, word.upper(), word.capitalize()):
+            if form not in forms:
+                forms.append(form)
+    return "|".join(shlex.quote(form) for form in forms)
+
+
+def _approved_script(command, question, seconds, exec_line, code_file, output_file):
+    """Bash script for the approval popup: the question and the full command, a yes/no answer with
+    a time limit, then the command's output (tee'd to `output_file`) and its exit code.
+
+    The code file holds the exit code, or `refused`/`timeout` when nothing ran, so the caller can
+    tell a refusal from a failure. bash is required for `read -t` and PIPESTATUS.
+    """
+    def write_code(value):
+        return "printf '%s' " + shlex.quote(value) + " > " + shlex.quote(code_file)
+
+    def stop(message, value):
+        return [write_code(value),
+                "printf '\\n%s\\n' " + shlex.quote(message),
+                "printf '%s' " + shlex.quote(i18n.t("privileged.close")),
+                "read -r _",
+                "exit 1"]
+
+    lines = [
+        "#!/bin/bash",
+        "printf '%s\\n\\n' " + shlex.quote(question),
+        "printf '%s\\n\\n' " + shlex.quote(i18n.t("privileged.ask.command", command=command)),
+        "read -r -t " + str(int(seconds)) + " -p " + shlex.quote(i18n.t("privileged.ask.answer"))
+        + " answer",
+        "status=$?",
+        'if [ "$status" -ne 0 ]; then',
+        *["  " + line for line in stop(i18n.t("privileged.timeout"), "timeout")],
+        "fi",
+        'case "$answer" in ' + _yes_pattern() + ') ;; *)',
+        *["  " + line for line in stop(i18n.t("privileged.refused"), "refused")],
+        "  ;;",
+        "esac",
+        "printf '%s\\n' " + shlex.quote(i18n.t("privileged.approved")),
+        "( " + exec_line + " ) 2>&1 | tee " + shlex.quote(output_file),
+        "code=${PIPESTATUS[0]}",
+        write_code("$code").replace("'$code'", '"$code"'),
+        "printf '\\n%s %s\\n' " + shlex.quote(i18n.t("privileged.exit")) + ' "$code"',
+        "printf '%s' " + shlex.quote(i18n.t("privileged.close")),
+        "read -r _",
+        'exit "$code"',
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _read_text(path, limit=None):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read(limit)
+    except OSError:
+        return ""
+
+
+def approved_run(argv, cwd=None, question="", command="", seconds=APPROVAL_SECONDS):
+    """Asks the person on a separate tmux screen, then runs `argv` there if they say yes.
+
+    Returns (status, code, output). `status` is `ran` (code and output are set), `refused`,
+    `timeout`, `interrupted` (the screen closed before the command ended), `no_tmux` (no attached
+    client: nothing ran) or `no_command`. The question and the full command are shown before the
+    answer; `argv` is what runs (through pkexec, built by the caller) and is never run without it.
+    """
+    argv = [str(arg) for arg in argv]
+    if not argv:
+        return "no_command", None, ""
+    attached = clients()
+    if not attached:
+        return "no_tmux", None, ""
+    directory = tempfile.mkdtemp(prefix="ws-privileged-")
+    code_file = os.path.join(directory, "exit")
+    output_file = os.path.join(directory, "output")
+    script = os.path.join(directory, "run.sh")
+    try:
+        # pkexec asks for the password its own way (the system agent); only the question is ours.
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(_approved_script(command or shlex.join(argv), question, seconds,
+                                          shlex.join(argv), code_file, output_file))
+        os.chmod(script, 0o700)
+        popup(quote_cmd([BASH, script]), str(cwd or os.getcwd()), client=attached[0])
+        status = _read_text(code_file).strip()
+        output = _read_text(output_file, MAX_OUTPUT)
+        if status in ("refused", "timeout"):
+            return status, None, ""
+        try:
+            return "ran", int(status), output
+        except ValueError:
+            return "interrupted", None, output
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+

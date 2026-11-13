@@ -195,7 +195,7 @@ class PolicyTest(unittest.TestCase):
             (self.bash("python3 -m unittest discover -s tests"), "test.run", "allow"),
             (self.bash("curl https://example.com"), "net", "allow"),
             (self.bash("pip install requests"), "install", "allow"),
-            (self.bash("sudo ls"), "admin", "deny"),
+            (self.bash("sudo ls"), "admin", "privileged"),
             ({"tool_name": "send_message", "tool_input": {}, "session_id": "s"},
              "session.external", "ask"),
         ]
@@ -217,7 +217,7 @@ class PolicyTest(unittest.TestCase):
                 (self.write("/opt/other/file.txt"), "repo.outside", "allow"),
                 (self.bash("curl https://example.com"), "net", "ask"),
                 (self.bash("pip install requests"), "install", "ask"),
-                (self.bash("sudo ls"), "admin", "deny"),
+                (self.bash("sudo ls"), "admin", "privileged"),
                 (self.read(self.home / ".env"), "secrets", "deny"),
                 ({"tool_name": "send_message", "tool_input": {}}, "session.external", "ask"),
             ]
@@ -402,7 +402,7 @@ class PolicyTest(unittest.TestCase):
                 (self.write(self.home / ".config" / "app.conf"), "config.write", "deny"),
                 (self.bash("curl https://example.com"), "net", "allow"),
                 (self.bash("pip install requests"), "install", "allow"),
-                (self.bash("sudo ls"), "admin", "deny"),
+                (self.bash("sudo ls"), "admin", "privileged"),
                 (self.bash("git push origin main"), "vcs.remote", "ask"),
                 (self.bash("git status"), "vcs.read", "allow"),
             ]
@@ -518,7 +518,7 @@ class PolicyTest(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+                self.assertEqual((result["decision"], result["capability"]), ("privileged", "admin"))
         # A bare admin name used as an argument is not a command: the form defers.
         for command in ("grep -r passwd src", "grep -r service .", "grep -r \"mount\" docs"):
             with self.subTest(command=command):
@@ -907,7 +907,7 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual(self.decide(self.write("/tmp/outside.txt"))["decision"], "allow")
                 self.assertEqual(self.decide(self.write(self.home / ".config" / "x"))["decision"], "ask")
                 self.assertEqual(self.decide(self.bash("git commit -m x"))["decision"], "ask")
-                self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "deny")
+                self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "privileged")
                 self.assertEqual(self.decide(self.read(self.repo / ".env"))["decision"], "deny")
 
     def test_auto_from_the_event_permission_mode(self):
@@ -962,7 +962,7 @@ class PolicyTest(unittest.TestCase):
             "repo.write": "deny",     # parent repo allows: accepted (stricter)
         })
         with patched_env(WS_POLICY=str(fixture)):
-            self.assertEqual(self.decide(self.bash("sudo ls", agent_id="a1"))["decision"], "deny")
+            self.assertEqual(self.decide(self.bash("sudo ls", agent_id="a1"))["decision"], "privileged")
             self.assertEqual(self.decide(self.write(self.repo / "a.py", agent_id="a1"))["decision"],
                              "deny")
             self.assertEqual(self.decide(self.write(self.repo / "a.py"))["decision"], "allow")
@@ -985,7 +985,7 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual(result["reason"], "policy.reason.inert")
 
         # Loading a tool is not the same as calling it: the loaded tool is classified one by one.
-        self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "privileged")
         self.assertEqual(self.decide(self.bash("git push"))["decision"], "ask")
 
     def test_tool_search_other_queries_and_names_outside_the_list_fail_closed(self):
@@ -1340,7 +1340,7 @@ class PolicyTest(unittest.TestCase):
              "policy.reason.control_plane"),
             ("dotnet build > ~/.config/ai-tmux-workspace/out", "deny",
              "policy.reason.control_plane"),
-            ("dotnet build && sudo ls", "deny", "policy.reason.deny"),
+            ("dotnet build && sudo ls", "privileged", "policy.reason.privileged"),
             ("git status && dotnet --version", "allow", "policy.reason.allow"),
         )
         for command, decision, reason in cases:
@@ -1402,7 +1402,8 @@ class PolicyTest(unittest.TestCase):
                 ("make -C /etc && sudo ls", ("repo.outside", "admin"))):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual(result["decision"], "deny")
+                expected = "privileged" if capabilities == ("admin",) else "deny"
+                self.assertEqual(result["decision"], expected)
                 self.assertIn(result["capability"], capabilities)
         # `ask` mode (opt-in marker) asks about a deferred form instead of allowing it.
         self.ask_marker()
@@ -1419,8 +1420,8 @@ class PolicyTest(unittest.TestCase):
             (self.bash("dotnet --version"), "allow"),
             (self.bash("python3 -m venv .venv"), "allow"),
             (self.bash("pip install -e ."), "allow"),
-            (self.bash("sudo ls"), "deny"),
-            (self.bash("pkexec ls"), "deny"),
+            (self.bash("sudo ls"), "privileged"),
+            (self.bash("pkexec ls"), "privileged"),
             (self.bash("cp a.txt ~/.config/ai-tmux-workspace/config.yaml"), "deny"),
             (self.write(ROOT / "src" / "policy.py"), "deny"),
             (self.bash("cat .env"), "deny"),
@@ -1434,13 +1435,13 @@ class PolicyTest(unittest.TestCase):
         for command in ("sudo ls", "pkexec ls", "su -c ls", "doas ls"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+                self.assertEqual((result["decision"], result["capability"]), ("privileged", "admin"))
         with patched_env(WS_POLICY_AUTO="1"):
-            self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "deny")
+            self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "privileged")
         with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
-            self.assertEqual(self.decide(self.bash("pkexec ls"))["decision"], "deny")
+            self.assertEqual(self.decide(self.bash("pkexec ls"))["decision"], "privileged")
         self.ask_marker()
-        self.assertEqual(self.decide(self.bash("doas ls"))["decision"], "deny")
+        self.assertEqual(self.decide(self.bash("doas ls"))["decision"], "privileged")
 
     def test_macos_admin_programs_are_admin_for_every_role(self):
         # The macOS admin tools deny like sudo in every role, in command position and after a
@@ -1461,7 +1462,7 @@ class PolicyTest(unittest.TestCase):
                         with self.subTest(program=program, role=role, command=command):
                             result = policy.check_event(self.bash(command))
                             self.assertEqual((result["decision"], result["capability"]),
-                                             ("deny", "admin"))
+                                             ("privileged", "admin"))
                 # A bare admin name used as an argument still defers (item 135), and so does the
                 # rest of the unknown-program matrix: the new entries only change command position.
                 for command in ("grep -r security src", "grep -r networksetup docs",
@@ -1480,7 +1481,7 @@ class PolicyTest(unittest.TestCase):
                         "sh -c '/opt/homebrew/sbin/sudo id'"):
             with self.subTest(command=command):
                 result = self.decide(self.bash(command))
-                self.assertEqual((result["decision"], result["capability"]), ("deny", "admin"))
+                self.assertEqual((result["decision"], result["capability"]), ("privileged", "admin"))
         # Another directory is not a program directory: the word is a path, not the program.
         result = self.decide(self.bash("sh -c '/usr/share/sudo id'"))
         self.assertEqual((result["decision"], result["reason"]),
@@ -1528,7 +1529,6 @@ class PolicyTest(unittest.TestCase):
         self.ask_marker()
         cases = (
             ("cat .env", "secrets"),
-            ("sudo ls", "admin"),
             ("ls ~/Desktop", "repo.outside"),
             ("git config --global user.name Someone", "config.write"),
         )
@@ -1537,6 +1537,8 @@ class PolicyTest(unittest.TestCase):
                 result = self.decide(self.bash(command))
                 self.assertEqual((result["decision"], result["capability"]), ("deny", capability))
                 self.assertEqual(result["reason"], "policy.reason.deny")
+        result = self.decide(self.bash("sudo ls"))
+        self.assertEqual((result["decision"], result["capability"]), ("privileged", "admin"))
         for event in (self.write(ROOT / "src" / "policy.py"),
                       self.bash(f"echo x > {ROOT}/src/policy.py")):
             with self.subTest(event=event):
@@ -1621,7 +1623,7 @@ class PolicyTest(unittest.TestCase):
             ({"tool_name": "UnknownTool", "tool_input": {}, "session_id": "s"},
              "ask", None),
             (self.bash("cat .env"), "deny", "secrets"),
-            (self.bash("sudo ls"), "deny", "admin"),
+            (self.bash("sudo ls"), "privileged", "admin"),
             (self.bash("ls ~/Desktop"), "deny", "repo.outside"),
             (self.write(ROOT / "src" / "policy.py"), "deny", "workspace.write"),
             (self.bash("curl https://example.com"), "allow", "net"),
@@ -1672,10 +1674,11 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(ask["hookSpecificOutput"]["permissionDecisionReason"],
                          i18n.t("policy.reason.ask", capability="vcs.remote"))
 
-        deny = self.hook(self.bash("sudo ls"))
+        # outside tmux nothing runs: the hook answers deny with the reason (item 154)
+        deny = self.hook(self.bash("sudo ls"), TMUX=None)
         self.assertEqual(deny["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertEqual(deny["hookSpecificOutput"]["permissionDecisionReason"],
-                         i18n.t("policy.reason.deny", capability="admin"))
+                         i18n.t("privileged.no_tmux", command="sudo ls"))
 
         self.assertIsNone(self.hook(self.bash("git status")))
         self.assertIsNone(self.hook({"tool_name": "TodoWrite", "tool_input": {}}))
@@ -1792,7 +1795,9 @@ process.stdout.write(JSON.stringify(plugin.decideMany(events, options)));
         process = subprocess.run([NODE, "-e", script, str(PLUGIN), json.dumps(opencode_events),
                                   json.dumps(env)], capture_output=True, text=True, check=False)
         self.assertEqual(process.returncode, 0, process.stderr)
-        plugin_decisions = [entry["decision"] for entry in json.loads(process.stdout)]
+        # the hook answers deny for a privileged command (the approval result), the engine says privileged
+        plugin_decisions = [("deny" if entry["decision"] == "privileged" else entry["decision"])
+                            for entry in json.loads(process.stdout)]
         self.assertEqual(hook_decisions, plugin_decisions)
 
     def test_node_plugin_blocks_deny_and_ask(self):
@@ -1817,7 +1822,7 @@ process.stdout.write(JSON.stringify(result));
         self.assertEqual(process.returncode, 0, process.stderr)
         result = json.loads(process.stdout)
         self.assertTrue(result["deny"]["error"])
-        self.assertEqual(result["deny"]["policy"]["decision"], "deny")
+        self.assertEqual(result["deny"]["policy"]["decision"], "privileged")
         self.assertTrue(result["ask"]["error"])
         self.assertEqual(result["ask"]["policy"]["decision"], "ask")
         self.assertEqual(result["allow"]["decision"], "allow")

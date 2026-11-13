@@ -179,7 +179,8 @@ function before(input, output, options) {
   recordSession(input, (options && options.env) || process.env);
   reportState({ event: "tool.execute.before" }, options);
   const result = decide(opencodeEvent(input, output), options);
-  if (result.decision === "deny" || result.decision === "ask") {
+  // `privileged` (item 154) is not run from this sync path yet: it fails closed here, never as allow.
+  if (result.decision === "deny" || result.decision === "ask" || result.decision === "privileged") {
     const env = (options && options.env) || process.env;
     const error = new Error(translate(result.reason, result.capability, env));
     error.policy = result;

@@ -481,6 +481,21 @@ def _policy_check(d):
     if not isinstance(result, dict):
         result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
     decision = result.get("decision")
+    if decision == "privileged":
+        # Item 154: the person approves on a separate screen and pkexec runs it here; the output
+        # comes back as this call's deny message (the agent's own tool must not run it again).
+        try:
+            import privileged
+            outcome = privileged.run_approved(d)
+            message = outcome.get("message") or _policy_message(outcome)
+        except Exception:
+            message = _policy_message({"reason": "policy.reason.error"})
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": message,
+        }}, ensure_ascii=False))
+        return
     if decision not in ("allow", "ask", "deny"):
         result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
         decision = "deny"
