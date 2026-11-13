@@ -19,6 +19,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -1046,27 +1047,49 @@ class CursesError(Exception):
 
 
 FAKE_CURSES = types.SimpleNamespace(error=CursesError, A_BOLD=1, A_REVERSE=2, A_DIM=4,
-                                    KEY_UP=259, KEY_DOWN=258, KEY_LEFT=260, KEY_BACKSPACE=263,
-                                    KEY_ENTER=343)
+                                    KEY_UP=259, KEY_DOWN=258, KEY_LEFT=260, KEY_RIGHT=261,
+                                    KEY_BACKSPACE=263, KEY_ENTER=343, KEY_PPAGE=339, KEY_NPAGE=338,
+                                    ACS_HLINE="-", ACS_VLINE="|", ACS_ULCORNER="+", ACS_URCORNER="+",
+                                    ACS_LLCORNER="+", ACS_LRCORNER="+")
 
 
 class FakeWindow:
-    """Records what the drawing layer writes; rows outside the terminal raise like curses does."""
+    """Records what the drawing layer writes: text cells by (y, x) and the border; writes outside the
+    terminal raise like curses does."""
 
     def __init__(self, height, width):
         self.height, self.width = height, width
-        self.rows, self.refreshed = {}, 0
+        self.cells, self.refreshed = {}, 0
 
     def erase(self):
-        self.rows = {}
+        self.cells = {}
 
     def getmaxyx(self):
         return (self.height, self.width)
 
-    def addnstr(self, y, x, text, n, attr=0):
-        if y >= self.height:
+    def _check(self, y, x):
+        if not (0 <= y < self.height and 0 <= x < self.width):
             raise CursesError("outside the terminal")
-        self.rows[y] = (text[:n], attr)
+
+    def addnstr(self, y, x, text, n, attr=0):
+        self._check(y, x)
+        for index, char in enumerate(text[:n]):
+            self.cells[(y, x + index)] = (char, attr)
+
+    def addch(self, y, x, char, attr=0):
+        self._check(y, x)
+        self.cells[(y, x)] = (char, attr)
+
+    def hline(self, y, x, char, n, attr=0):
+        for index in range(n):
+            self.addch(y, x + index, char, attr)
+
+    def vline(self, y, x, char, n, attr=0):
+        for index in range(n):
+            self.addch(y + index, x, char, attr)
+
+    def text_row(self, y):
+        return "".join(self.cells.get((y, x), (" ", 0))[0] for x in range(self.width))
 
     def refresh(self):
         self.refreshed += 1
@@ -1133,7 +1156,10 @@ class TuiWizardTest(unittest.TestCase):
         wizard.handle_key("enter")
         wizard.handle_key("enter")
         self.assertEqual(wizard.screen, installer_tui.MANAGE)
-        wizard.handle_key("left")
+        self.assertEqual(wizard.focus, installer_tui.LIST)
+        wizard.handle_key("left")      # arrows move between the buttons, they do not go back
+        self.assertEqual((wizard.screen, wizard.focus), (installer_tui.MANAGE, installer_tui.BUTTONS))
+        wizard.handle_key("enter")     # the focused button is Voltar
         self.assertEqual(wizard.screen, installer_tui.DEPS)
 
     def test_q_cancels_before_any_install_and_changes_no_answer(self):
@@ -1191,13 +1217,96 @@ class TuiWizardTest(unittest.TestCase):
         self.assertEqual(marks[0], "[x]")
         self.assertEqual(marks[1], "[ ]")
 
-    def test_layout_fits_the_terminal_and_keeps_the_footer(self):
+    def test_layout_is_a_box_centred_in_the_terminal_at_several_sizes(self):
         wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
-        rows = installer_tui.layout(installer_tui.view(wizard, installer_tui.Progress()), 40, 8)
-        self.assertLessEqual(len(rows), 8)
-        self.assertIn(i18n.t("installer.tui.btn.install"), rows[-1][0])
-        self.assertEqual(installer_tui.layout({"title": "x", "lines": [], "options": [], "hint": "",
-                                               "buttons": [], "tail": False}, 40, 0), [])
+        view_data = installer_tui.view(wizard, installer_tui.Progress())
+        for width, height in ((60, 18), (80, 24), (100, 40), (120, 30), (200, 60)):
+            with self.subTest(size=(width, height)):
+                geo = installer_tui.layout(view_data, width, height)
+                self.assertLessEqual(geo["width"], installer_tui.BOX_MAX_WIDTH)
+                self.assertLessEqual(geo["height"], height)
+                left_margin, right_margin = geo["left"], width - (geo["left"] + geo["width"])
+                top_margin, bottom_margin = geo["top"], height - (geo["top"] + geo["height"])
+                self.assertLessEqual(abs(left_margin - right_margin), 1)
+                self.assertLessEqual(abs(top_margin - bottom_margin), 1)
+                for y, x, text, _style in geo["cells"]:
+                    self.assertTrue(geo["top"] < y < geo["top"] + geo["height"] - 1)
+                    self.assertTrue(geo["left"] < x and x + len(text) <= geo["left"] + geo["width"] - 1)
+        geo = installer_tui.layout(view_data, 60, 18)
+        self.assertTrue(any(i18n.t("installer.tui.btn.install") in text for _y, _x, text, _s in geo["cells"]))
+
+    def test_the_focused_option_and_button_are_the_reversed_ones(self):
+        wizard, _ = drive(["enter", "enter"])                       # MANAGE, the list has the focus
+        geo = installer_tui.layout(installer_tui.view(wizard, installer_tui.Progress()), 80, 24)
+        self.assertIn("focus", {style for _y, _x, _t, style in geo["cells"]})
+        wizard.handle_key("tab")                                    # the buttons get the focus
+        geo = installer_tui.layout(installer_tui.view(wizard, installer_tui.Progress()), 80, 24)
+        reversed_text = [text for _y, _x, text, style in geo["cells"] if style == "focus"]
+        self.assertEqual(reversed_text, [f"< {i18n.t('installer.tui.btn.next')} >"])
+
+    def test_text_scrolls_inside_the_box_and_clamps(self):
+        progress = installer_tui.Progress()
+        wizard = installer_tui.Wizard(make_plan())
+        wizard.goto(installer_tui.DONE)                              # keys are read on the final screen
+        progress.add_section("passo")
+        for index in range(30):
+            progress.add_line(f"linha {index}")
+        geo = installer_tui.layout(installer_tui.view(wizard, progress), 60, 18)
+        texts = [text for _y, _x, text, _s in geo["cells"]]
+        self.assertIn("   linha 29", texts)                       # tail screens keep the end
+        self.assertNotIn("   linha 0", texts)
+        wizard.scroll = geo["scroll"]
+        wizard.handle_key("pgup", page=3)                          # reads back up
+        geo = installer_tui.layout(installer_tui.view(wizard, progress), 60, 18, wizard.scroll)
+        texts = [text for _y, _x, text, _s in geo["cells"]]
+        self.assertNotIn("   linha 29", texts)
+        self.assertEqual(geo["scroll"], wizard.scroll)
+        geo = installer_tui.layout(installer_tui.view(wizard, progress), 60, 18, 10_000)
+        self.assertEqual(geo["scroll"], max(0, 31 - geo["room"]), "clamped to the last text line")
+
+    def test_option_keys_move_mark_and_the_buttons_act(self):
+        wizard, _ = drive(["enter", "enter"])                        # MANAGE, cursor on Sim
+        wizard.handle_key("j")
+        self.assertEqual(wizard.cursor, 1)
+        wizard.handle_key("down")
+        self.assertEqual(wizard.cursor, 1, "the cursor stops at the last option")
+        wizard.handle_key("k")
+        self.assertEqual(wizard.cursor, 0)
+        wizard.handle_key("tab")
+        self.assertEqual(wizard.focus, installer_tui.BUTTONS)
+        self.assertEqual(wizard.handle_key("enter"), None)           # Próximo: moves on
+        self.assertEqual(wizard.screen, installer_tui.HARNESS)
+
+    def test_provider_checklist_space_marks_and_enter_only_moves_on(self):
+        wizard, _ = drive(["enter", "enter", "enter", "enter"])      # PROVIDERS
+        self.assertEqual(wizard.screen, installer_tui.PROVIDERS)
+        wizard.handle_key("space")
+        wizard.handle_key("down")
+        wizard.handle_key("space")
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-claude"])
+        self.assertEqual(wizard.screen, installer_tui.PROVIDERS)
+        wizard.handle_key("enter")
+        self.assertEqual(wizard.screen, installer_tui.DEFAULT)
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-claude"])
+
+    def test_small_terminal_shows_the_warning_and_never_raises(self):
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
+        window = FakeWindow(17, 59)
+        self.assertIsNone(installer_tui.draw(FAKE_CURSES, window, installer_tui.view(wizard, installer_tui.Progress())))
+        self.assertIn("Mínimo 60x18", window.text_row(0))
+        tiny = FakeWindow(1, 4)
+        installer_tui.draw(FAKE_CURSES, tiny, installer_tui.view(wizard, installer_tui.Progress()))
+
+    def test_run_falls_back_to_text_when_the_terminal_is_too_small(self):
+        original_curses, original_size = installer_tui._curses, installer_tui._terminal_size
+        installer_tui._curses = lambda: FAKE_CURSES
+        installer_tui._terminal_size = lambda: (59, 17)
+        try:
+            with mock.patch("sys.stdout", new=io.StringIO()) as printed:
+                self.assertIsNone(installer_tui.run(make_plan(), lambda answers, progress: 0))
+            self.assertIn("Mínimo 60x18", printed.getvalue())
+        finally:
+            installer_tui._curses, installer_tui._terminal_size = original_curses, original_size
 
     def test_final_screen_titles_follow_the_install_result(self):
         wizard = installer_tui.Wizard(make_plan())
@@ -1234,8 +1343,8 @@ class TuiWizardTest(unittest.TestCase):
             progress.add_line(f"linha {index}")
         wizard = installer_tui.Wizard(make_plan())
         wizard.goto(installer_tui.PROGRESS)
-        rows = installer_tui.layout(installer_tui.view(wizard, progress), 60, 10)
-        self.assertEqual(rows[-3][0], "   linha 29")
+        geo = installer_tui.layout(installer_tui.view(wizard, progress), 60, 10)
+        self.assertIn("   linha 29", [text for _y, _x, text, _s in geo["cells"]])
 
     def test_progress_redraws_on_every_change_and_keeps_multiline_text(self):
         progress = installer_tui.Progress()
@@ -1250,25 +1359,28 @@ class TuiWizardTest(unittest.TestCase):
 
     def test_key_names_come_from_curses_codes_and_printable_keys(self):
         names = {code: installer_tui.key_name(FAKE_CURSES, code)
-                 for code in (259, 258, 260, 263, 343, 10, 27, 32, 127, 66, 9999)}
-        self.assertEqual(names, {259: "up", 258: "down", 260: "left", 263: "backspace", 343: "enter",
-                                 10: "enter", 27: None, 32: "space", 127: "backspace", 66: "b",
-                                 9999: None})
+                 for code in (259, 258, 260, 261, 339, 338, 9, 263, 343, 10, 27, 32, 127, 66, 9999)}
+        self.assertEqual(names, {259: "up", 258: "down", 260: "left", 261: "right", 339: "pgup",
+                                 338: "pgdn", 9: "tab", 263: "backspace", 343: "enter", 10: "enter",
+                                 27: None, 32: "space", 127: "backspace", 66: "b", 9999: None})
 
     def test_esc_alone_never_cancels_the_wizard(self):
         wizard, action = drive(["enter", "enter", "esc"])
         self.assertIsNone(action)
         self.assertEqual(wizard.screen, installer_tui.MANAGE)
 
-    def test_draw_clips_to_a_small_terminal_and_never_raises(self):
+    def test_draw_centres_the_box_and_redraws_at_a_new_size(self):
         wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])
-        window = FakeWindow(6, 30)
-        installer_tui.draw(FAKE_CURSES, window, installer_tui.view(wizard, installer_tui.Progress()))
-        self.assertLessEqual(len(window.rows), 6)
-        self.assertEqual(window.refreshed, 1)
-        self.assertIn(i18n.t("installer.tui.btn.install"), window.rows[5][0])
+        view_data = installer_tui.view(wizard, installer_tui.Progress())
+        for height, width in ((24, 80), (40, 120)):
+            window = FakeWindow(height, width)
+            geo = installer_tui.draw(FAKE_CURSES, window, view_data)
+            self.assertEqual(window.refreshed, 1)
+            self.assertEqual(window.cells[(geo["top"], geo["left"])][0], "+")
+            self.assertEqual(geo["left"], (width - geo["width"]) // 2)
+            self.assertEqual(geo["top"], (height - geo["height"]) // 2)
         tiny = FakeWindow(1, 4)
-        installer_tui.draw(FAKE_CURSES, tiny, installer_tui.view(wizard, installer_tui.Progress()))
+        installer_tui.draw(FAKE_CURSES, tiny, view_data)
 
     def test_run_refuses_without_curses_so_the_text_mode_takes_over(self):
         original = installer_tui._curses
