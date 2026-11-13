@@ -118,10 +118,10 @@ no harness do workspace.
   principal.
 - Implementar: subagente lê só o item e os `Caminhos`, roda a `Validação`, não commita; fecha com
   `SubagentHandback` — arquivos alterados, validação rodada e resultado; entrega sem handback não conta.
-- Fechar e commitar: sessão que despachou.
+- Fechar e commitar: sessão que despachou. Checkout, commit, merge e criar/remover branch ou worktree são dela, sem pedir à pessoa nem entregar comando; a pessoa fica só com push (quando pedir) e o que a sessão não pode escrever.
 - Sem item despachável, a sessão principal refina o próximo e despacha: laço refinar → despachar →
   conferir → fechar, até esvaziar `Refinadas`. `Faz o 17` não entra no laço.
-- Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
+- Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador que mescla direto na `main`, sem branch de integração.
 - Worktree não é sandbox; só remover o que o próprio agente criou.
 - Registrar tokens e retrabalho no commit quando disponível.
 - Modo e worktree: `harness/regras/dispatch.md`; leia antes de despachar subagente, abrir worktree ou paralelizar fatias.

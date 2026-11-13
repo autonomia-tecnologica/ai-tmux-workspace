@@ -30,5 +30,6 @@ Detalhe do que o `HARNESS.md` resume. A regra de rotina está lá; aqui fica o m
 ## Worktree
 
 - Worktree novo não traz `.env` nem dependências: o repo tem um passo de preparação.
-- Ordem da mescla: uma branch por vez, a mais fundamental primeiro; a `Validação` roda a cada merge.
-- A branch também é removida depois de mesclar ou descartar.
+- Ordem da mescla: uma branch de fatia por vez, a mais fundamental primeiro; a `Validação` roda a cada merge.
+- Integrador (a sessão que despachou): integra direto na `main`, sem branch de integração intermediária. Merge fast-forward; se a `main` andou, rebaseia a fatia antes.
+- Ao fechar: remove os worktrees e as branches que a sessão criou, descartadas ou mescladas; não sobra branch nem worktree dela, só a `main`. Não toca em worktree ou branch de outra sessão.
