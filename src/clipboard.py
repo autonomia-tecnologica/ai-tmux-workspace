@@ -1,8 +1,10 @@
 """Puts a file on the OS clipboard as a file (not as text), so Ctrl+V/Cmd+V in a chat, mail,
-a browser upload, etc. attaches it without going through the file manager.
+a browser upload, etc. attaches it without going through the file manager. `copy_text` puts plain
+text on the clipboard instead (the absolute path, to paste as text).
 
-macOS: osascript `set the clipboard to POSIX file`. Linux: wl-copy (Wayland) or xclip (X11) with
-`text/uri-list`. Returns the kind of copy that happened ("file", "path") or None.
+macOS: osascript `set the clipboard to POSIX file`; text goes through pbcopy. Linux: wl-copy
+(Wayland) or xclip (X11) with `text/uri-list` for files and `text/plain` for text.
+`copy_file` returns "file" or None; `copy_text` returns "text" or None.
 """
 import os
 import shutil
@@ -37,6 +39,23 @@ def build_command(path, platform=None, wayland=None, which=shutil.which):
     return None
 
 
+def build_text_command(text, platform=None, wayland=None, which=shutil.which):
+    """(argv, stdin_bytes) that copies `text` as plain text, or None if no tool is available.
+
+    macOS: pbcopy. Linux: wl-copy (Wayland) or xclip (X11), type text/plain.
+    """
+    platform = platform or sys.platform
+    data = text.encode("utf-8")
+    if platform == "darwin":
+        return ["pbcopy"], data
+    if platform.startswith("linux"):
+        if which("wl-copy"):
+            return ["wl-copy", "--type", "text/plain"], data
+        if which("xclip"):
+            return ["xclip", "-selection", "clipboard", "-t", "text/plain"], data
+    return None
+
+
 def _run(cmd, data):
     try:
         subprocess.run(cmd, input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -50,4 +69,12 @@ def copy_file(path):
     built = build_command(path)
     if built and _run(*built):
         return "file"
+    return None
+
+
+def copy_text(text):
+    """Puts `text` on the clipboard as plain text. Returns "text" or None (no tool, or it failed)."""
+    built = build_text_command(text)
+    if built and _run(*built):
+        return "text"
     return None

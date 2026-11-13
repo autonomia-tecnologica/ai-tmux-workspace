@@ -265,10 +265,28 @@ def copy(v, key):
     tmux.message(msg)
 
 
+def _copied_text(text):
+    try:
+        return clipboard.copy_text(text)
+    except Exception:
+        return None
+
+
+def copy_path(v, key):
+    """Puts the absolute path of the file on the clipboard as text, to paste in a terminal or a chat."""
+    path = os.path.abspath(key[1])
+    if _copied_text(path):
+        msg = t("tree.path_copied", path=path)
+    else:
+        msg = t("tree.path_copy_failed")
+    tmux.message(msg)
+
+
 def actions(v, key):
     """Context menu (Space or right click). On a folder the actions are shown but unavailable."""
     file = key[0] == "f"
     return [(t("tree.menu_copy"), file, copy),
+            (t("tree.menu_copy_path"), file, copy_path),
             (t("tree.menu_rename"), file, rename)]
 
 
