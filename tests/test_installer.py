@@ -833,15 +833,20 @@ class CurlInstallTest(unittest.TestCase):
         self.assertNotEqual(snapshot(self.home), before)
 
     # 2 ---------------------------------------------------------------------------------------
-    def test_update_fast_forwards_a_clean_clone(self):
+    def test_update_shows_by_default_and_fast_forwards_on_apply(self):
         remote = make_remote(self.root)
         self.clone(remote)
         (remote / "NOVO.md").write_text("new\n", encoding="utf-8")
         git(remote, "add", "-A")
         git(remote, "commit", "-q", "-m", "next")
-        result = self.run_cmd([BASH, str(self.install_dir / "bin" / "workspace"), "update"],
-                              AT_WS_INSTALL_DIR=str(self.install_dir))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        workspace = str(self.install_dir / "bin" / "workspace")
+        # The installed clone is found at its default place (AT_WS_INSTALL_DIR unset), as the layout expects.
+        shown = self.run_cmd([BASH, workspace, "update"], AT_WS_REPO_URL=remote.as_uri())
+        self.assertEqual(shown.returncode, 0, shown.stdout + shown.stderr)
+        self.assertIn("next", shown.stdout)
+        self.assertFalse((self.install_dir / "NOVO.md").exists())
+        applied = self.run_cmd([BASH, workspace, "update", "--apply"], AT_WS_REPO_URL=remote.as_uri())
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
         self.assertEqual((self.install_dir / "NOVO.md").read_text(encoding="utf-8"), "new\n")
 
     # 3 ---------------------------------------------------------------------------------------
@@ -860,14 +865,14 @@ class CurlInstallTest(unittest.TestCase):
         self.assertEqual((self.install_dir / "README.md").read_text(encoding="utf-8"), "local edit\n")
 
     # 4 ---------------------------------------------------------------------------------------
-    def test_update_refuses_a_dev_checkout_and_leaves_it_alone(self):
+    def test_update_on_a_dev_checkout_shows_the_mode_and_moves_nothing(self):
         remote = make_remote(self.root)          # stands in for a dev checkout (not the app clone)
         self.clone(make_remote(self.root / "other"))
         head = git(remote, "rev-parse", "HEAD").stdout
         result = self.run_cmd([BASH, str(remote / "bin" / "workspace"), "update"],
                               AT_WS_INSTALL_DIR=str(self.install_dir))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(i18n.t("cli.update.dev", root=str(remote)), result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(i18n.t("update.mode.dev", path=str(remote)), result.stdout)
         self.assertEqual(git(remote, "rev-parse", "HEAD").stdout, head)
 
     # 5 ---------------------------------------------------------------------------------------

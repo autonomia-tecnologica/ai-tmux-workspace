@@ -1354,6 +1354,37 @@ def copy_harness(source, target):
         shutil.copy2(lean, target / "HARNESS.md")
     remove_path(security)
     install_policy_files(security)
+    return _render_and_record(source, target, security)
+
+
+def overlay_harness(source, target):
+    """Non-destructive refresh of the installed copy (`workspace config update --apply`): every file of the
+    canonical `source` is written over `target`; files `target` has and `source` does not (forcado.yaml, any
+    extra) are left as they are, and nothing is removed. The mechanism is overwritten in place the same way.
+    Returns the render error text or None. Raises OSError when a copy fails."""
+    source, target = Path(source), Path(target)
+    security = target.parent / "security"
+    lean = ROOT / "harness" / "HARNESS.md"
+    target.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.rglob("*")):
+        if not path.is_file() or path.name == SOURCE_FILE:
+            continue
+        _write_over(path, target / path.relative_to(source))
+    if lean.is_file():
+        _write_over(lean, target / "HARNESS.md")
+    install_policy_files(security)
+    return _render_and_record(source, target, security)
+
+
+def _write_over(source, destination):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        os.chmod(destination, 0o644)   # HARNESS.md is installed read-only
+    shutil.copy2(source, destination)
+
+
+def _render_and_record(source, target, security):
+    """Renders settings.json from the installed harness, writes its source.json and locks HARNESS.md."""
     rendered = subprocess.run(
         [sys.executable, str(security / "gate.py"), "render",
          "--harness", str(target), "--out", str(security / "settings.json")],

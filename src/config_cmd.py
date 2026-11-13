@@ -9,7 +9,9 @@
      kind, path and value; the identities already applied are kept in state/config-offered.json next
      to config.yaml, so a pattern the person removed does not come back.
   2. the installed harness (~/.local/share/ai-tmux-workspace/harness): drift.check() reports it and
-     installer.copy_harness refreshes it from the canonical source.
+     installer.overlay_harness writes harness_source() over it: this checkout's harness/ (regras/ included),
+     or the canonical source only when there is none. Nothing is removed: files the repo does not ship
+     (forcado.yaml, extras) stay.
   3. the generated settings of each profile (lib.expected_profile_settings), when manage is on.
   4. the Claude Code hooks: the installer's own step (`bin/workspace install-hooks`), run against a
      temporary HOME, shows whether it would change ~/.claude/settings.json. Applying runs it for real.
@@ -335,9 +337,44 @@ def _config_step(apply):
     return 0, False
 
 
+def _inside(path, root):
+    """True when `path` is `root` or lies under it. The harness copy removes its target first, so a target
+    inside the running code (AT_WS_INSTALL_DIR pointing at the clone) must never be copied over."""
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def harness_source():
+    """Directory copied to the installed harness. AT_HARNESS_SOURCE keeps the installer's rule; otherwise
+    it is this checkout's `harness/` (the text `workspace update` brings with the code), and only when
+    that is missing the canonical source the installer looks for."""
+    if os.environ.get("AT_HARNESS_SOURCE"):
+        return installer.harness_source()
+    own = ROOT / "harness"
+    if (own / "HARNESS.md").is_file():
+        return own
+    return installer.harness_source()
+
+
+def _source_changed(source, target):
+    """True when the installed copy was taken from another source than `source` (drift.check compares
+    the recorded source only, so a switch of source needs this extra check)."""
+    record, error = drift.read_record(target)
+    if error or record is None:
+        return False
+    recorded = record.get("source")
+    return not isinstance(recorded, str) or Path(recorded).expanduser().resolve() != Path(source).resolve()
+
+
 def _harness_step(apply):
     print(t("config.section.harness"))
     issues = drift.check()
+    source = harness_source()
+    if source is not None and _source_changed(source, drift.harness_dir()):
+        issues.append(("drift", t("config.harness.source_changed", path=str(source))))
     if not issues:
         print(t("config.harness.none"))
         return 0, False
@@ -348,13 +385,15 @@ def _harness_step(apply):
         return 0, False
     if not apply:
         return 0, True
-    source = installer.harness_source()
     if source is None:
         print(t("config.harness.no_source"))
         return 1, True
     target = drift.harness_dir()
+    if _inside(target, ROOT) or _inside(target.parent / "security", ROOT):
+        print(t("config.harness.inside_code", path=str(target)))
+        return 1, True
     try:
-        warning = installer.copy_harness(source, target)
+        warning = installer.overlay_harness(source, target)
     except OSError as error:
         print(t("config.harness.failed", error=str(error)))
         return 1, True
@@ -414,7 +453,7 @@ def _run_hook_step(env=None, capture=True):
                           capture_output=capture, text=True)
 
 
-def _hooks_would_change():
+def hooks_would_change():
     """True when the installer's hook step would change ~/.claude/settings.json. It runs on a copy in a
     temporary HOME, so the real file is never touched by the check."""
     real = Path.home() / ".claude" / "settings.json"
@@ -437,7 +476,7 @@ def _hooks_step(apply):
         print(t("config.hooks.skipped"))
         return 0, False
     try:
-        changed = _hooks_would_change()
+        changed = hooks_would_change()
     except (OSError, RuntimeError) as error:
         print(t("config.hooks.failed", error=str(error)))
         return 1, False
