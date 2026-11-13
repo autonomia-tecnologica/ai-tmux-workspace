@@ -571,6 +571,7 @@
   "repos.toggled": "{repo}: {state}",
   "repos.open_disabled": "{repo} está desligado: ligue com T antes de abrir",
   "repos.group.uncategorized": "Sem categoria",
+  "repos.worktree.detached": "(destacado)",
   "repos.menu.move_group": "Mover para grupo",
   "repos.menu.sibling": "Marcar como irmão de...",
   "repos.menu.new_group": "Novo grupo…",

@@ -9,6 +9,10 @@
 
 A repo shows the worst state of its tabs (blocked > working > done > unknown > idle).
 
+Under each repo (switched on) its extra git worktrees are listed, indented: the branch, with the agent
+dot when a window of that worktree is open (a worktree with no window is dim). Enter opens or focuses
+the worktree's window. A repo with no extra worktree, or a git error, shows only the repo.
+
 Next to the name, two icons always present:
   branch  = local git: dim without git · normal clean · yellow with uncommitted work
   GitHub  = remote:    dim not on the remote · normal up to date · yellow ahead/behind the upstream
@@ -28,6 +32,8 @@ import time
 import context_menu
 import glyphs
 import lib
+import session_state
+import worktrees
 from i18n import t
 from tree_state import Expander
 from viewer import BLUE, B, GRAY, DIM, R, GREEN, YELLOW, RED, Row, Viewer
@@ -37,6 +43,44 @@ def git_icon(repo):
     """Two icons, always present: branch (local git) and the GitHub logo (remote)."""
     state, dirty = lib.git_state(repo)
     return glyphs.git_icons(state, dirty)
+
+
+WT_TTL = 10   # seconds between worktree listings: the panel redraws every second, git runs once per TTL
+_WT_CACHE = {}   # repo -> (ts, [(branch, path), ...])
+
+
+def worktrees_of(repo):
+    """[(branch, path), ...] of the extra worktrees of `repo`, sorted by branch; the main checkout is
+    left out. A git error, or a repo that is not a git repo, gives [] (the repo shows with no children)."""
+    now = time.time()
+    cached = _WT_CACHE.get(repo)
+    if cached and now - cached[0] < WT_TTL:
+        return cached[1]
+    try:
+        entries = worktrees.list_worktrees(repo)
+    except worktrees.WorktreeError:
+        entries = []
+    main = os.path.realpath(repo)
+    found = [(entry.get("branch"), entry["path"]) for entry in entries
+             if entry.get("path") and os.path.realpath(entry["path"]) != main
+             and os.path.isdir(entry["path"])]
+    found.sort(key=lambda item: (item[0] is None, item[0] or "", item[1]))
+    _WT_CACHE[repo] = (now, found)
+    return found
+
+
+def worktree_rows(repo, indent):
+    """One keyed row per extra worktree of `repo`, under the repo row. The state dot shows only when a
+    window of the worktree holds agent tabs (its own state file, read by session_state)."""
+    rows = []
+    for branch, path in worktrees_of(repo):
+        label = branch or t("repos.worktree.detached")
+        if not session_state.tab_states(path):   # no window of this worktree: dim, no state
+            rows.append(Row(f"{indent}{GRAY}↳ {label}{R}", ("w", path)))
+            continue
+        sel = f"{BLUE}{B}" if path == CURRENT else ""
+        rows.append(Row(f"{indent}{glyphs.dot(session_state.repo_state(path))} {sel}{label}{R}", ("w", path)))
+    return rows
 
 
 GROUPS = Expander(lib.STATE / "collapsed.json", default_open=True)   # groups start open; the file keeps the closed ones
@@ -77,6 +121,7 @@ def collect(v):
         repo_name, p = main
         color = BLUE if p == CURRENT else ""
         body.append(Row(f" {glyphs.dot(state.get(p, 'idle'))} {color}{B}{repo_name}{R} {git_icon(p)}", ("r", p)))
+        body += worktree_rows(p, "   ")
     for name, all_repos in groups:
         repos = [(n, p) for n, p in all_repos if shown(n, off)]
         opened = GROUPS.is_open(name)
@@ -93,6 +138,7 @@ def collect(v):
                 continue
             sel = f"{BLUE}{B}" if p == CURRENT else ""
             body.append(Row(f"   {glyphs.dot(state.get(p, 'idle'))} {sel}{repo_name}{R} {git_icon(p)}", ("r", p)))
+            body += worktree_rows(p, "     ")
     return header, body
 
 
