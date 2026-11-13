@@ -184,6 +184,102 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual(doc["gone"], [2])                   # absent below "Próximo id": delivered by absence
         self.assertEqual(doc["legacy"], [])
 
+    def test_harness_status_line_sets_status(self):
+        doc = backlog.document(self._write("""Próximo id: 10
+
+## Refinadas
+
+### 1. ready one
+- Categoria: X
+- Status: ready
+
+### 2. decision pending
+- Categoria: X
+- Status: blocked: decisão X
+
+## A refinar
+
+### 3. ready wins over section
+- Categoria: X
+- Status: ready
+"""))
+        by = {i["id"]: i for i in doc["items"]}
+        self.assertEqual(by[1]["status"], "ready")
+        self.assertEqual(by[2]["status"], "blocked")
+        self.assertEqual(by[2]["status_reason"], "decisão X")
+        self.assertEqual(by[3]["status"], "ready")
+
+    def test_missing_or_invalid_status_falls_back_to_section(self):
+        doc = backlog.document(self._write("""Próximo id: 10
+
+## Refinadas
+
+### 1. no status
+- Categoria: X
+
+## A refinar
+
+### 2. no status either
+- Categoria: X
+
+### 3. typo in status
+- Categoria: X
+- Status: readi
+"""))
+        by = {i["id"]: i for i in doc["items"]}
+        self.assertEqual(by[1]["status"], "ready")
+        self.assertEqual(by[2]["status"], "refine")
+        self.assertEqual(by[3]["status"], "refine")
+        self.assertEqual(by[3]["status_raw"], "readi")
+        self.assertNotIn("status_raw", by[1])
+
+    def test_done_status_closes_item(self):
+        doc = backlog.document(self._write("""Próximo id: 4
+
+## Refinadas
+
+### 1. open
+- Categoria: X
+
+### 2. transitional
+- Categoria: X
+- Status: done
+
+### 3. open too
+- Categoria: X
+"""))
+        self.assertEqual([i["id"] for i in doc["items"]], [1, 3])
+        self.assertEqual(doc["done"], [2])
+        self.assertEqual(doc["gone"], [])                     # done is present in the file: not "gone"
+
+    def test_blocked_status_is_not_parallel_safe(self):
+        items = self.parse("""Próximo id: 10
+
+## Refinadas
+
+### 1. A
+- Categoria: X
+- Caminhos: `src/a.py`
+- Status: blocked: decisão Y
+
+### 2. B
+- Categoria: X
+- Caminhos: `src/b.py`
+""")
+        self.assertEqual(backlog.parallel_ids(items), [])     # each one has no ready partner
+
+    def test_paused_title_does_not_break(self):
+        # the old PAUSADA marker is just title text now: the item keeps its section status
+        items = self.parse("""Próximo id: 10
+
+## Refinadas
+
+### 1. old marker (PAUSADA)
+- Categoria: X
+""")
+        self.assertEqual(items[0]["title"], "old marker (PAUSADA)")
+        self.assertEqual(items[0]["status"], "ready")
+
     def _write(self, text):
         path = self.root / "BACKLOG.md"
         path.write_text(text, encoding="utf-8")

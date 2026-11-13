@@ -8,6 +8,9 @@ ITEM = re.compile(r"^###\s+(\d+)\.\s*(.*?)\s*$")
 SECTIONS = {"refinadas": "ready", "a refinar": "refine", "a validar": "validate"}
 PRIORITIES = ("P0", "P1", "P2")
 DEFAULT_PRIORITY = "P2"
+# Campo `Status` do harness (harness/regras/backlog.md): `ready`, `blocked: <motivo>` ou `done`.
+# Quando presente e válido, vence a seção; ausente ou inválido, vale a seção (ver `status_raw`).
+HARNESS_STATUS = ("ready", "blocked", "done")
 
 
 def _paths(text):
@@ -21,6 +24,13 @@ def _priority(text):
     return value if value in PRIORITIES else DEFAULT_PRIORITY
 
 
+def _harness_status(text):
+    """`Status` value -> (kind, reason). kind is one of HARNESS_STATUS, or None when invalid."""
+    kind, _, reason = text.strip().partition(":")
+    kind = kind.strip().lower()
+    return (kind, reason.strip()) if kind in HARNESS_STATUS else (None, text.strip())
+
+
 def parse(path):
     """-> None if the file has no recognizable sections, else the list of open items (see document)."""
     doc = document(path)
@@ -29,18 +39,21 @@ def parse(path):
 
 def document(path):
     """-> None if the file has no recognizable sections, else {"items": [...], "gone": [int],
-    "legacy": [int], "next_id": int|None}. Items: {"id", "title", "category": str ("" if missing),
-    "status": ready|refine|paused, "deps": [int], "paths": [str], "priority": P0|P1|P2, "accept": str,
-    "blocked": bool, "cycle": bool, "unblocks": int, "typo": [int], "cross": [int]}.
+    "legacy": [int], "done": [int], "next_id": int|None}. Items: {"id", "title", "category": str
+    ("" if missing), "status": ready|refine|blocked, "status_reason": str ("" unless blocked),
+    "deps": [int], "paths": [str], "priority": P0|P1|P2, "accept": str, "blocked": bool,
+    "cycle": bool, "unblocks": int, "typo": [int], "cross": [int]}. `status` comes from the item's
+    `Status:` line (ready | blocked: <motivo>) when valid, else from its section. "status_raw" is set
+    when the `Status:` value is invalid (diagnostics only).
     "gone": ids below "Próximo id" that the file no longer lists (taken as delivered; the skill shows
     them so a typo or a lost item is not mistaken for a delivery). "legacy": ids under the old
-    "A validar" section (closed, not listed)."""
+    "A validar" section (closed, not listed). "done": ids with `Status: done` (closed, not listed)."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     items, section, cur, seen, next_id = [], None, None, False, None
-    listed, legacy = set(), []
+    listed, legacy, done = set(), [], []
     for line in lines:
         if line.startswith("## "):
             section = SECTIONS.get(line[3:].strip().lower())
@@ -53,14 +66,21 @@ def document(path):
                 legacy.append(int(m.group(1)))
                 cur = None
                 continue
-            title = m.group(2)
-            paused = "(PAUSADA)" in title.upper()
-            cur = {"id": int(m.group(1)), "title": re.sub(r"\s*\(PAUSADA\)\s*", " ", title, flags=re.I).strip(),
-                   "status": "paused" if paused else section, "deps": [],
-                   "paths": [], "priority": DEFAULT_PRIORITY, "accept": "", "category": ""}
+            cur = {"id": int(m.group(1)), "title": m.group(2), "status": section, "status_reason": "",
+                   "deps": [], "paths": [], "priority": DEFAULT_PRIORITY, "accept": "", "category": ""}
             items.append(cur)
             listed.add(cur["id"])
         elif cur is not None:
+            s = re.match(r"^-\s*Status:\s*(.*)$", line)
+            if s:
+                kind, reason = _harness_status(s.group(1))
+                if kind is None:
+                    cur["status_raw"] = reason  # invalid value kept for diagnostics only; section applies
+                elif kind == "done":
+                    cur["done"] = True
+                else:
+                    cur["status"] = "blocked" if kind == "blocked" else "ready"
+                    cur["status_reason"] = reason if kind == "blocked" else ""
             d = re.match(r"^-\s*Depende de:\s*(.*)$", line)
             if d:
                 cur["deps"] = [int(n) for n in re.findall(r"\d+", d.group(1))]
@@ -84,10 +104,12 @@ def document(path):
             next_id = int(nxt.group(1))
     if not seen:
         return None
+    done = [i["id"] for i in items if i.get("done")]     # `done` leaves the file; not an open item
+    items = [i for i in items if not i.get("done")]
     resolve(items, next_id)
-    present = listed | set(legacy)
+    present = listed | set(legacy) | set(done)
     gone = [n for n in range(1, next_id or 0) if n not in present]
-    return {"items": items, "gone": gone, "legacy": legacy, "next_id": next_id}
+    return {"items": items, "gone": gone, "legacy": legacy, "done": done, "next_id": next_id}
 
 
 def resolve(items, next_id):

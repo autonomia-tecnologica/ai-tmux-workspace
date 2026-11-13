@@ -70,13 +70,12 @@ Itens abertos do `BACKLOG.md` do repo. Contadores no topo; os itens se agrupam p
 |---|---|
 | `●` verde | refinada, despachável (não concluída) |
 | `○` cinza | a refinar |
-| `◌` apagada | pausada (título com `PAUSADA` entre parênteses) |
-| `⊘` | bloqueada por dependência ainda aberta |
+| `⊘` | bloqueada: dependência ainda aberta ou `Status: blocked: <motivo>` (decisão pendente) |
 | `✖` | ciclo de dependência (inválida até desfazer) |
 | `⚠` | id de dependência >= próximo id (provável erro de digitação) ou dependência de outra categoria (inválida) |
 
 - `→` expande o grupo ou o item (título completo, dependências, aceite); `←` recolhe. Enter no grupo não faz nada.
-- Enter pede confirmação (y/n) e manda a mensagem para a sessão ativa: refinada = implementar, a refinar/pausada = refinar. Bloqueada e ciclo não despacham.
+- Enter pede confirmação (y/n) e manda a mensagem para a sessão ativa: refinada = implementar, a refinar = refinar. Bloqueada e ciclo não despacham.
 - "sem formato" = o `BACKLOG.md` não segue o formato padrão. "nenhum backlog encontrado" = não existe o arquivo.
 
 ## SESSÕES e TERMINAL

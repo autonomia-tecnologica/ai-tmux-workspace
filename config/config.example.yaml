@@ -105,7 +105,7 @@ prompts:
   - "Quero limpar a sessão. Decisões em aberto e trabalhos realizados estão persistidos? E o backlog está atualizado? Grave no BACKLOG.md o que ficou aberto (decisão em `Falta decidir`, entrega em `Estado`) para eu não decidir de novo na próxima sessão."
   - "Você me enviou muito texto. Tem alguma dúvida? Se sim, me pergunte com enquetes individuais, com a pergunta direto na enquete."
   - "Implemente o máximo de tarefas já refinadas que podem ser paralelizadas. Use worktrees (um por subagente, branch própria) para aumentar o paralelismo. Ao final da sessão, condense tudo numa única branch e limpe os worktrees e as branches extras que você criou."
-  - "Quero refinar TODAS as tarefas pendentes no backlog, exceto as pausadas (PAUSADA). Me pergunte cada coisa em uma enquete separada, e toda enquete precisa ter as opções \"Remover\" e \"Pausar\" (para eu descartar ou pausar o item). Envie por lotes, mas não me espere para enviar cada lote."
+  - "Quero refinar TODAS as tarefas pendentes no backlog, exceto as bloqueadas (Status: blocked). Me pergunte cada coisa em uma enquete separada, e toda enquete precisa ter as opções \"Remover\" e \"Bloquear\" (para eu descartar ou bloquear o item até uma decisão). Envie por lotes, mas não me espere para enviar cada lote."
 
 options:
   - label: Ask Claude
