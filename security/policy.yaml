@@ -30,7 +30,8 @@
 # segment still meets the barriers that hold for any form: admin programs named anywhere in it, and
 # secrets or workspace-code writes among its words. The table below decides the known forms (file
 # tools and the known Bash forms alike), so `repo.outside` and `config.write` still deny there.
-# `deny` stays for admin (sudo, pkexec, su, doas, ...), secrets and the workspace code.
+# `privileged` is the decision for admin (sudo, pkexec, su, doas, ...): the person approves the whole
+# command on a separate screen, then it runs through pkexec. `deny` stays for secrets and the workspace code.
 version: 1
 default: deny
 roles:
@@ -46,7 +47,7 @@ roles:
     test.run: allow
     net: allow
     install: allow
-    admin: deny
+    admin: privileged
     config.read: allow
     config.write: deny
     tmp: allow
@@ -64,7 +65,7 @@ roles:
     test.run: allow
     net: ask
     install: ask
-    admin: deny
+    admin: privileged
     config.read: allow
     config.write: allow
     tmp: allow

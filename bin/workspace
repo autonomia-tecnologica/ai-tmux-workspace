@@ -1062,12 +1062,22 @@ if not isinstance(cfg, dict):
 
 changed = []
 hooks = cfg.setdefault("hooks", {})
+# PreToolUse waits for the person's answer to an administrative command (item 154), so its timeout
+# covers the approval window (tmux.APPROVAL_SECONDS = 120 plus margin). Other events keep 5 seconds.
+PRETOOL_TIMEOUT = 130
 for ev in EVENTS:
+    timeout = PRETOOL_TIMEOUT if ev == "PreToolUse" else 5
     groups = hooks.setdefault(ev, [])
-    if any(hook in h.get("command", "") for g in groups for h in g.get("hooks", [])):
+    mine = [h for g in groups for h in g.get("hooks", []) if hook in h.get("command", "")]
+    if mine:
+        # Migrate an installed entry: raise only the PreToolUse timeout, leave the rest as it is.
+        if ev == "PreToolUse" and any(h.get("timeout") != timeout for h in mine):
+            for h in mine:
+                h["timeout"] = timeout
+            changed.append(ev)
         continue
     command = f"{shlex.quote(python)} {shlex.quote(hook)}"
-    groups.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
+    groups.append({"hooks": [{"type": "command", "command": command, "timeout": timeout}]})
     changed.append(ev)
 
 sl = cfg.get("statusLine")
