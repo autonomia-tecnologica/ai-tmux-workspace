@@ -1352,23 +1352,92 @@ def copy_harness(source, target):
     return _render_and_record(source, target, security)
 
 
+# The overlay's own record: the files it installed in the copy (relative paths). Lives in state/
+# (paths.state_dir()), next to update-previous.json. Only the names in it may be removed from the copy.
+OVERLAY_RECORD = "harness-overlay.json"
+# Never removed, whatever the record says: the installed declaration and the source record.
+OVERLAY_KEEP = ("forcado.yaml", SOURCE_FILE)
+
+
+def overlay_record_path():
+    return paths.state_dir() / OVERLAY_RECORD
+
+
+def read_overlay_record():
+    """Names the overlay installed last time. No record yet: empty. Unreadable or malformed: OSError, so
+    nothing is removed or rewritten over a record that cannot be read."""
+    path = overlay_record_path()
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise OSError(f"registro do overlay ilegível: {path} ({error})") from error
+    names = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise OSError(f"registro do overlay com formato inesperado: {path}")
+    return set(names)
+
+
+def write_overlay_record(names):
+    """Replaces the record atomically (temporary file, then os.replace): a failure keeps the old one."""
+    path = overlay_record_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"files": sorted(names)}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _overlay_names(source, lean):
+    """Relative paths (posix) the overlay writes: every file of `source` except source.json, and HARNESS.md
+    when the lean HARNESS.md exists (it replaces the source's one)."""
+    names = set()
+    for path in source.rglob("*"):
+        if path.is_file() and path.name != SOURCE_FILE:
+            names.add(path.relative_to(source).as_posix())
+    if lean.is_file():
+        names.add("HARNESS.md")
+    return sorted(names)
+
+
+def _removable(name):
+    """A recorded name that may be removed: relative, inside the copy, and not one of OVERLAY_KEEP."""
+    parts = Path(name).parts
+    return (bool(parts) and not Path(name).is_absolute() and ".." not in parts
+            and Path(name).name not in OVERLAY_KEEP)
+
+
 def overlay_harness(source, target):
     """Non-destructive refresh of the installed copy (`workspace config update --apply`): every file of the
-    canonical `source` is written over `target`; files `target` has and `source` does not (forcado.yaml, any
-    extra) are left as they are, and nothing is removed. The mechanism is overwritten in place the same way.
-    Returns the render error text or None. Raises OSError when a copy fails."""
+    canonical `source` is written over `target` (the mechanism too, in place). The names written are recorded
+    in state/harness-overlay.json. On the next overlay, a recorded name the source no longer has is removed
+    from `target`; nothing else is removed (forcado.yaml, source.json and files that are not in the record stay).
+    Order: the record is widened to old+new names before any copy, so a failure keeps every old name; the
+    stale files go after the copy; the record becomes exactly the new names only after everything succeeded.
+    Returns the render error text or None. Raises OSError when a copy, a removal or the record fails."""
     source, target = Path(source), Path(target)
     security = target.parent / "security"
     lean = ROOT / "harness" / "HARNESS.md"
+    if not source.is_dir():
+        raise OSError(f"fonte do harness ausente: {source}")
+    written = _overlay_names(source, lean)
+    if not written:
+        raise OSError(f"fonte do harness sem arquivos: {source}")
+    previous = read_overlay_record()
+    stale = sorted(name for name in previous - set(written) if _removable(name))
+    write_overlay_record(previous | set(written))
     target.mkdir(parents=True, exist_ok=True)
-    for path in sorted(source.rglob("*")):
-        if not path.is_file() or path.name == SOURCE_FILE:
-            continue
-        _write_over(path, target / path.relative_to(source))
-    if lean.is_file():
-        _write_over(lean, target / "HARNESS.md")
+    for name in written:
+        origin = lean if name == "HARNESS.md" and lean.is_file() else source / name
+        _write_over(origin, target / name)
+    for name in stale:
+        path = target / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
     install_policy_files(security)
-    return _render_and_record(source, target, security)
+    warning = _render_and_record(source, target, security)
+    write_overlay_record(set(written))
+    return warning
 
 
 def _write_over(source, destination):
