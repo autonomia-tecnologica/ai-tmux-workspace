@@ -428,8 +428,8 @@ class InstallerTest(unittest.TestCase):
         claude_md = self.home / ".claude" / "CLAUDE.md"
         shim = claude_md.read_text(encoding="utf-8")
         self.assertEqual(shim.count(">>> ai-tmux-workspace harness >>>"), 1)
-        self.assertIn("~/.local/share/ai-tmux-workspace/harness/HARNESS.md", shim)
-        self.assertIn(i18n.t("installer.harness.shim"), shim)
+        self.assertIn("@~/.local/share/ai-tmux-workspace/harness/HARNESS.md", shim)
+        self.assertEqual(shim.count("@"), 1, "the shim is one import line, nothing else")
         self.assertFalse((self.home / ".claude" / "settings.json").exists(),
                          "manage: false must not register hooks")
         self.assertFalse((self.state / "settings").exists(),
@@ -905,6 +905,48 @@ class CurlInstallTest(unittest.TestCase):
         self.assertTrue(remote.is_dir())
         self.assertTrue(self.install_dir.is_symlink())
         self.assertIn("symlink", result.stderr)
+
+
+class ShimMergeTest(unittest.TestCase):
+    """Unit tests of the Claude shim merge: the block is created, replaced in place, and never
+    touches the person's text outside the markers."""
+
+    IMPORT = "@~/.local/share/ai-tmux-workspace/harness/HARNESS.md"
+
+    def setUp(self):
+        import installer
+        self.installer = installer
+        self.block = installer.shim_block(self.IMPORT)
+
+    def test_empty_file_gets_only_the_block(self):
+        self.assertEqual(self.installer.merge_shim("", self.block), self.block + "\n")
+
+    def test_person_text_is_kept_and_block_appended_once(self):
+        user = "# Minhas notas\n\nUma regra minha.\n"
+        once = self.installer.merge_shim(user, self.block)
+        self.assertEqual(once, user + self.block + "\n")
+        self.assertEqual(self.installer.merge_shim(once, self.block), once)
+
+    def test_missing_final_newline_is_handled_before_appending(self):
+        once = self.installer.merge_shim("sem fim de linha", self.block)
+        self.assertEqual(once, "sem fim de linha\n" + self.block + "\n")
+
+    def test_outdated_block_is_replaced_in_place_and_surroundings_are_kept(self):
+        old = ("antes\n" + self.installer.SHIM_START + "\n@~/velho.md\n" +
+               self.installer.SHIM_END + "\ndepois\n")
+        merged = self.installer.merge_shim(old, self.block)
+        self.assertEqual(merged, "antes\n" + self.block + "\ndepois\n")
+        self.assertEqual(self.installer.merge_shim(merged, self.block), merged)
+
+    def test_block_without_trailing_newline_is_replaced_without_losing_text(self):
+        old = "a\n" + self.installer.SHIM_START + "\n@x\n" + self.installer.SHIM_END
+        self.assertEqual(self.installer.merge_shim(old, self.block), "a\n" + self.block)
+
+    def test_repeated_or_unpaired_markers_refuse_to_merge(self):
+        start, end = self.installer.SHIM_START, self.installer.SHIM_END
+        for damaged in (start + "\n@x\n", "@x\n" + end + "\n", self.block + "\n" + self.block):
+            with self.subTest(damaged=damaged), self.assertRaises(self.installer.ShimError):
+                self.installer.merge_shim(damaged, self.block)
 
 
 if __name__ == "__main__":
