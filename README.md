@@ -249,6 +249,20 @@ groups:
 Se um desses repos já estiver em outro grupo, não repita a entrada: acrescente só o `siblings` na entrada que
 já existe, porque um repo listado duas vezes aparece duas vezes no painel de repos.
 
+## Pasta de repos, repos extras e pastas livres
+Com `repos_folder`, todo repo git direto na pasta entra no painel. `repos_extra` (lista de caminhos) traz repos
+de fora dela: entram como os da pasta, com janela e agente próprios, e `groups` classificam os dois. Use-o para
+um repo que não mora na pasta; a pasta continua sendo a fonte principal.
+
+`free_folders` é outra coisa: pasta de navegação (Documentos, Imagens...) na aba PASTAS da home. Não é repo, não
+abre janela nem agente. Regra simples: repo que você trabalha com agente vai em `repos_folder` ou `repos_extra`;
+pasta que você só quer abrir e ler vai em `free_folders`.
+
+Worktrees ficam fora da pasta de repos (`WS_WORKTREES`, ou o padrão em `~/.local/share/ai-tmux-workspace/worktrees`).
+Uma raiz de worktrees dentro de `repos_folder` é recusada com aviso ao criar um worktree, e a listagem da pasta
+ignora qualquer worktree achado nela. No painel de repos, os worktrees de cada repo ficam escondidos (um `▸` ao
+lado do nome indica que existem); `→` abre a lista e `←` fecha, como nos painéis de arquivos e tarefas.
+
 ## Comandos
 `workspace [perfil]` · `update` (git pull --ff-only do clone instalado) · `--help` (lista os comandos; não abre o tmux) · `reload [perfil]` (recarrega config e painéis sem sair; é o `ctrl+b r`) · `restart [perfil]` (derruba e sobe de novo; sem argumento, cada servidor `ws-*` vivo; regenera as settings do Claude e o plugin/config do OpenCode) · `stop [perfil]` · `install` · `install-hooks` · `doctor` (confere o harness instalado contra o `source.json` e a fonte canônica) · `config` (mostra o caminho e o texto do `config.yaml`) · `config update [--apply]` (compara o `config.yaml` com `config/config.example.yaml`, o harness instalado, as settings por perfil e os hooks do Claude com este repo).
 

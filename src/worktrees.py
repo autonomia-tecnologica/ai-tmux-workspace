@@ -42,6 +42,17 @@ def root():
     return paths.install_dir() / "worktrees"
 
 
+def _check_root_outside_folder():
+    """Refuses a worktree root inside the repos folder: the folder lists its direct git repos, so the
+    worktrees there would read as repos. Only creation checks it; listing and pruning read the root as is."""
+    folder = lib.repos_folder()
+    if not folder:
+        return
+    base, folder = os.path.realpath(root()), os.path.realpath(folder)
+    if base == folder or base.startswith(folder + os.sep):
+        raise WorktreeError(t("worktree.root_in_folder", root=base, folder=folder))
+
+
 def _expand(value):
     return os.path.realpath(os.path.expanduser(value))
 
@@ -126,6 +137,7 @@ def _config_base(config):
 
 def create(repo, branch, base=None):
     """Creates the worktree for `branch` and returns its path (no preparation, no window)."""
+    _check_root_outside_folder()
     repo = _require_repo(resolve_repo(repo))
     validate_branch(branch)
     dest = path_for(repo, branch)

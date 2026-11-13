@@ -72,6 +72,34 @@ class WorktreeTest(unittest.TestCase):
     def branch_exists(self, branch):
         return self.git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
 
+    # root outside the repos folder -----------------------------------------------------------
+    def write_config(self, data):
+        import yaml_min
+        (self.root / "config.yaml").write_text(yaml_min.dumps(data), encoding="utf-8")
+
+    def test_root_inside_the_repos_folder_is_refused_on_create(self):
+        self.write_config({"repos_folder": str(self.root)})   # the root (worktrees/) sits inside it
+        with self.assertRaises(worktrees.WorktreeError) as refused:
+            worktrees.create(self.repo, "feature")
+        self.assertIn(str(self.wtroot.resolve()), str(refused.exception))
+        self.assertFalse(self.wtroot.exists())
+
+    def test_root_of_the_folder_itself_is_refused_too(self):
+        self.write_config({"repos_folder": str(self.wtroot)})
+        with self.assertRaises(worktrees.WorktreeError):
+            worktrees.create(self.repo, "feature")
+
+    def test_root_outside_the_folder_is_accepted(self):
+        folder = self.root / "Codes"
+        folder.mkdir()
+        self.write_config({"repos_folder": str(folder)})
+        dest = worktrees.create(self.repo, "feature")
+        self.assertTrue(dest.is_dir())
+
+    def test_listing_the_windows_is_not_refused_by_the_folder_rule(self):
+        self.write_config({"repos_folder": str(self.root)})
+        self.assertEqual(worktrees.all_window_names(), [])
+
     # create / base --------------------------------------------------------------------------
     def test_create_makes_a_real_worktree_from_main(self):
         dest = worktrees.create(self.repo, "feature")

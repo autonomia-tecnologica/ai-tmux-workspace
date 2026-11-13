@@ -98,6 +98,73 @@ class ReposFolderTest(unittest.TestCase):
         self.write_config({"repos_folder": str(self.root / "missing")})
         self.assertEqual(lib.read_repos(), [])
 
+    # repos_extra: repos from outside the folder
+    def outside_repo(self, name="tool"):
+        path = self.root / "elsewhere" / name
+        make_repo(path)
+        return path
+
+    def test_extra_repo_joins_the_panel_outside_the_folder(self):
+        ext = self.outside_repo()
+        self.write_config({"repos_folder": str(self.folder), "repos_extra": [str(ext)]})
+        self.assertEqual(lib.repos_extra(), [("tool", str(ext))])
+        groups = lib.read_repos()
+        self.assertEqual([name for name, _ in groups], [t("repos.group.uncategorized")])
+        self.assertEqual(self.names(groups[0][1]), ["alpha", "beta", "gamma", "tool"])
+
+    def test_groups_classify_extra_repos_too(self):
+        ext = self.outside_repo()
+        self.write_config({"repos_folder": str(self.folder), "repos_extra": [str(ext)],
+                           "groups": {"Work": [str(ext), str(self.folder / "beta")]}})
+        groups = lib.read_repos()
+        self.assertEqual([name for name, _ in groups], ["Work", t("repos.group.uncategorized")])
+        self.assertEqual(self.names(groups[0][1]), ["tool", "beta"])   # the order the group declares
+        self.assertEqual(self.names(groups[1][1]), ["alpha", "gamma"])
+
+    def test_extra_without_a_folder_joins_the_uncategorized_group(self):
+        ext = self.outside_repo()
+        self.write_config({"repos_extra": [str(ext)]})
+        self.assertIsNone(lib.repos_folder())
+        self.assertEqual(lib.read_repos(), [(t("repos.group.uncategorized"), [("tool", str(ext))])])
+
+    def test_extra_of_the_folder_is_listed_once(self):
+        self.write_config({"repos_folder": str(self.folder), "repos_extra": [str(self.folder / "alpha")]})
+        self.assertEqual(lib.repos_extra(), [])
+        self.assertEqual(self.names(lib.read_repos()[0][1]), ["alpha", "beta", "gamma"])
+
+    def test_extra_that_is_not_a_git_repo_or_is_missing_is_skipped(self):
+        plain = self.root / "plain"
+        plain.mkdir()
+        self.write_config({"repos_folder": str(self.folder),
+                           "repos_extra": [str(plain), str(self.root / "missing")]})
+        self.assertEqual(lib.repos_extra(), [])
+
+    def test_group_menu_accepts_an_extra_repo_and_refuses_a_stranger(self):
+        ext = self.outside_repo()
+        stranger = self.outside_repo("stranger")
+        self.write_config({"repos_folder": str(self.folder), "repos_extra": [str(ext)]})
+        lib.move_repo_to_group(str(ext), "Work")
+        self.assertEqual(self.names(lib.read_repos()[0][1]), ["tool"])
+        with self.assertRaises(ValueError) as refused:
+            lib.move_repo_to_group(str(stranger), "Work")
+        self.assertIn(t("repo.not_in_panel", repo="stranger"), str(refused.exception))
+
+    # a worktree checkout is not a repo of the folder
+    def test_worktree_checkout_inside_the_folder_is_not_listed_nor_an_extra(self):
+        base = self.root / "base"
+        make_repo(base)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        subprocess.run(["git", "-C", str(base), "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                        "commit", "-q", "--allow-empty", "-m", "init"], check=True, env=env)
+        checkout = self.folder / "feat-wt"
+        subprocess.run(["git", "-C", str(base), "worktree", "add", "-q", str(checkout), "-b", "feat"],
+                       check=True, env=env)
+        self.assertNotIn("feat-wt", self.names(lib.folder_repos()))
+        self.write_config({"repos_folder": str(self.folder), "repos_extra": [str(checkout)]})
+        self.assertEqual(lib.repos_extra(), [])
+        self.assertNotIn("feat-wt", self.names(lib.read_repos()[0][1]))
+
     # the switch
     def test_every_folder_repo_is_on_by_default(self):
         self.assertEqual(lib.disabled_repos(), set())

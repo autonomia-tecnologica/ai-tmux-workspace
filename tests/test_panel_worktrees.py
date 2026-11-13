@@ -24,6 +24,7 @@ import yaml_min  # noqa: E402
 from i18n import _STRINGS, t  # noqa: E402
 
 import panel_repos  # noqa: E402
+from tree_state import Expander  # noqa: E402
 
 
 def make_repo(path):
@@ -69,6 +70,13 @@ class PanelWorktreesTest(unittest.TestCase):
         self.addCleanup(panel_repos.VIEW.update, {"filter": "all", "note": "", "note_until": 0.0})
         self.alpha = str(self.folder / "alpha")
         self.beta = str(self.folder / "beta")
+        # the open-list state lives in its own file under the temporary folder, never in the real state dir
+        old_open = panel_repos.WT_OPEN
+        panel_repos.WT_OPEN = Expander(self.root / "worktrees_open.json", default_open=False)
+        self.addCleanup(setattr, panel_repos, "WT_OPEN", old_open)
+
+    def open_list(self, repo):
+        panel_repos.WT_OPEN.open(repo)
 
     def body(self):
         _header, body = panel_repos.collect(mock.Mock())
@@ -104,6 +112,7 @@ class PanelWorktreesTest(unittest.TestCase):
 
     def test_worktree_row_sits_under_its_repo_indented_and_dim_without_window(self):
         path = worktrees.create(self.alpha, "feature")
+        self.open_list(self.alpha)
         body = self.body()
         at = self.index_of_repo(body, self.alpha)
         child = body[at + 1]
@@ -114,6 +123,7 @@ class PanelWorktreesTest(unittest.TestCase):
 
     def test_worktree_row_shows_the_agent_dot_when_its_window_has_tabs(self):
         path = str(worktrees.create(self.alpha, "feature"))
+        self.open_list(self.alpha)
         tabs = {path: [{"id": "tab-1"}]}
         states = {path: "working"}
         with mock.patch.object(session_state, "tab_states", side_effect=lambda repo, *a, **k: tabs.get(repo, [])), \
@@ -126,6 +136,7 @@ class PanelWorktreesTest(unittest.TestCase):
     def test_detached_worktree_reads_with_the_detached_label(self):
         detached = self.root / "detached-wt"
         detached.mkdir()
+        self.open_list(self.alpha)
         entries = [{"path": str(self.alpha), "branch": "main"}, {"path": str(detached), "branch": None}]
         with mock.patch.object(worktrees, "list_worktrees", return_value=entries):
             child = next(row for row in self.body() if row.key == ("w", str(detached)))
@@ -158,10 +169,65 @@ class PanelWorktreesTest(unittest.TestCase):
         self.config.write_text(yaml_min.dumps({"repos_folder": str(self.folder), "main": str(main_folder)}),
                                encoding="utf-8")
         worktrees.create(str(main_folder), "side")
+        self.open_list(str(main_folder))
         body = self.body()
         at = self.index_of_repo(body, str(main_folder))
         self.assertIn("↳ side", body[at + 1].text)
         self.assertTrue(body[at + 1].text.startswith("   "))
+
+    # hidden by default and the arrows ----------------------------------------------------------
+    def test_worktrees_are_hidden_by_default_and_a_mark_shows_they_exist(self):
+        worktrees.create(self.alpha, "feature")
+        body = self.body()
+        self.assertEqual(self.keyed(body, "w"), [])
+        at = self.index_of_repo(body, self.alpha)
+        self.assertIn("▸", body[at].text)
+        self.assertNotIn("↳", body[at].text)
+
+    def test_repo_without_worktrees_has_no_mark(self):
+        body = self.body()
+        at = self.index_of_repo(body, self.beta)
+        self.assertNotIn("▸", body[at].text)
+        self.assertNotIn("▾", body[at].text)
+
+    def test_right_opens_the_worktrees_and_left_closes_them(self):
+        path = str(worktrees.create(self.alpha, "feature"))
+        self.body()
+        v = mock.Mock(key=("r", self.alpha))
+        panel_repos.on_key(v, "right")
+        self.assertEqual([row.key for row in self.body() if row.key and row.key[0] == "w"], [("w", path)])
+        self.assertIn("▾", self.body()[self.index_of_repo(self.body(), self.alpha)].text)
+        self.assertEqual(v.key, ("r", self.alpha))   # the cursor stays on the repo
+        panel_repos.on_key(v, "left")
+        self.assertEqual(self.keyed(self.body(), "w"), [])
+        self.assertEqual(v.key, ("r", self.alpha))
+
+    def test_left_on_a_worktree_goes_to_its_repo(self):
+        path = str(worktrees.create(self.alpha, "feature"))
+        self.open_list(self.alpha)
+        self.body()
+        v = mock.Mock(key=("w", path))
+        panel_repos.on_key(v, "left")
+        self.assertEqual(v.key, ("r", self.alpha))
+
+    def test_left_on_a_closed_repo_goes_to_its_group(self):
+        self.body()
+        v = mock.Mock(key=("r", self.beta))
+        panel_repos.on_key(v, "left")
+        self.assertEqual(v.key, ("g", t("repos.group.uncategorized")))
+
+    def test_right_on_a_repo_without_worktrees_opens_nothing(self):
+        self.body()
+        v = mock.Mock(key=("r", self.beta))
+        panel_repos.on_key(v, "right")
+        self.assertFalse(panel_repos.WT_OPEN.is_open(self.beta))
+        self.assertEqual(v.key, ("r", self.beta))
+
+    def test_the_open_list_is_kept_in_its_own_state_file(self):
+        worktrees.create(self.alpha, "feature")
+        panel_repos.WT_OPEN.open(self.alpha)
+        self.assertTrue((self.root / "worktrees_open.json").is_file())
+        self.assertIn(self.alpha, (self.root / "worktrees_open.json").read_text(encoding="utf-8"))
 
     # enter -----------------------------------------------------------------------------------
     def test_enter_on_a_worktree_opens_or_focuses_its_window(self):

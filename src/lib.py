@@ -725,8 +725,23 @@ def repos_folder():
     return expand_path(value.strip())
 
 
+def _is_linked_worktree(path):
+    """True for a git worktree checkout: its `.git` is a file that points into `<repo>/.git/worktrees/`."""
+    git = os.path.join(path, ".git")
+    if not os.path.isfile(git):
+        return False
+    try:
+        with open(git, encoding="utf-8") as handle:
+            first = handle.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return first.startswith("gitdir:") and "/worktrees/" in first
+
+
 def folder_repos(folder=None):
-    """[(name, path), ...] of the git repos directly inside the repos folder, sorted by name. [] without a folder."""
+    """[(name, path), ...] of the git repos directly inside the repos folder, sorted by name. [] without a folder.
+
+    A worktree checkout found in the folder is not a repo of it (it belongs to its repo's worktrees)."""
     folder = folder or repos_folder()
     if not folder or not os.path.isdir(folder):
         return []
@@ -735,7 +750,26 @@ def folder_repos(folder=None):
         path = os.path.join(folder, name)
         if name.startswith(".") or not os.path.isdir(path) or not os.path.exists(os.path.join(path, ".git")):
             continue
+        if _is_linked_worktree(path):
+            continue
         found.append((name, path))
+    return found
+
+
+def repos_extra():
+    """[(name, path), ...] of the git repos listed in "repos_extra" (config order), from outside the repos folder.
+
+    They join the panel like the folder's repos (window, agent, and `groups` can classify them) but need no
+    folder. A path that is not a git repo, is a worktree checkout, or is already a repo of the folder is skipped."""
+    own = {path for _, path in folder_repos()}
+    found, seen = [], set(own)
+    for path in _entries(read_config().get("repos_extra")):
+        if path in seen or not os.path.isdir(path) or not os.path.exists(os.path.join(path, ".git")):
+            continue
+        if _is_linked_worktree(path):
+            continue
+        seen.add(path)
+        found.append((os.path.basename(path.rstrip("/")) or path, path))
     return found
 
 
@@ -1128,9 +1162,8 @@ def _check_repo_path(path):
     main = read_main()
     if main and path == main[1]:
         return
-    folder = repos_folder()
-    if folder and path not in {p for _, p in folder_repos(folder)}:
-        raise ValueError(t("repo.not_in_folder", repo=os.path.basename(path)))
+    if repos_folder() and path not in {p for _, p in repo_pool()}:
+        raise ValueError(t("repo.not_in_panel", repo=os.path.basename(path)))
 
 
 def _check_group_written(data, group, target):
@@ -1341,15 +1374,19 @@ def group_names():
     return [name for name in groups if isinstance(name, str) and name] if isinstance(groups, dict) else []
 
 
-def _folder_repos_groups(folder):
-    """Groups of the repos folder: the declared "groups" first, then the implicit uncategorized group.
+def repo_pool():
+    """Every repo of the panel: the repos folder's, then "repos_extra". Without a folder: the extras only."""
+    return (folder_repos() if repos_folder() else []) + repos_extra()
 
-    A "groups" entry only counts when it points to a repo directly inside the folder; the folder is the
-    only source of repos. A repo in no declared group is shown under the implicit "Sem categoria"."""
-    repos = folder_repos(folder)
-    if not repos:
+
+def _classified_repos(pool):
+    """Groups of the panel's repos: the declared "groups" first, then the implicit uncategorized group.
+
+    A "groups" entry only counts when it points to a repo of the pool (the folder's or an extra); a repo in no
+    declared group is shown under the implicit "Sem categoria"."""
+    if not pool:
         return []
-    by_path = {path: name for name, path in repos}
+    by_path = {path: name for name, path in pool}
     declared = read_config().get("groups")
     groups = []
     used = set()
@@ -1360,23 +1397,31 @@ def _folder_repos_groups(folder):
         if members:
             groups.append((group_name, members))
             used |= {path for _, path in members}
-    rest = [(name, path) for name, path in repos if path not in used]
+    rest = [(name, path) for name, path in pool if path not in used]
     if rest:
         groups.append((t("repos.group.uncategorized"), rest))
     return groups
 
 
 def read_repos():
-    """[(group, [(name, path), ...]), ...]. With "repos_folder" the folder is the only source: "groups" classify
-    its git repos and a repo in no group goes to the implicit "Sem categoria" (repos outside the folder are not
-    supported). Without it: "groups" (category; each entry is a path or {path, siblings})."""
-    folder = repos_folder()
-    if folder:
-        return _folder_repos_groups(folder)
+    """[(group, [(name, path), ...]), ...] of the panel.
+
+    With "repos_folder" the folder is the source of its repos and "repos_extra" adds the repos from outside it;
+    "groups" classify both, and a repo in no group goes to the implicit "Sem categoria". Without a folder,
+    "groups" are read as before (each entry is a path or {path, siblings}) and the extras not in any group go
+    to "Sem categoria"."""
+    if repos_folder():
+        return _classified_repos(repo_pool())
     groups = []
     for group_name, paths in read_config().get("groups", {}).items():
         repos = [(os.path.basename(p) or p, p) for p in _entries(paths)]
         groups.append((group_name, repos))
+    extra = repos_extra()
+    if extra:
+        listed = {path for _, repos in groups for _, path in repos}
+        rest = [(name, path) for name, path in extra if path not in listed]
+        if rest:
+            groups.append((t("repos.group.uncategorized"), rest))
     return groups
 
 

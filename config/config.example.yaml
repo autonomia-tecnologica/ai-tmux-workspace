@@ -122,8 +122,18 @@ main: ~/Codes/main-repo
 # Pasta de repositórios (opcional, descomentar para usar): todo repo git que estiver direto nesta pasta
 # entra no painel, sem listar um por um. Com ela declarada, ela é a única fonte de repos: "groups"
 # classificam os repos da pasta e os que não estiverem em nenhum grupo aparecem no grupo implícito "Sem
-# categoria". Repos fora da pasta não são suportados (o "main" continua à parte).
+# categoria". Repos de fora da pasta entram por "repos_extra" (abaixo); o "main" continua à parte.
 # repos_folder: ~/Codes
+
+# Repos de fora da pasta (opcional): lista de caminhos de repos git que não estão em "repos_folder".
+# Entram no painel como os da pasta: janela e agente próprios, e "groups" os classificam (sem grupo, vão
+# para "Sem categoria"; sem pasta, "groups" continuam como antes). Um caminho que já está na pasta, que não
+# é repo git (ou é um worktree) ou que não existe é ignorado. Só repo: "free_folders" (abaixo) é outra coisa.
+# repos_extra:
+#   - ~/Work/repo-fora-da-pasta
+#
+# Worktrees ficam fora da pasta de repos: a raiz (`WS_WORKTREES` ou ~/.local/share/ai-tmux-workspace/worktrees)
+# dentro de "repos_folder" é recusada com aviso, e a listagem da pasta ignora qualquer worktree achado nela.
 
 # Repos desligados da pasta de repositórios (nome da pasta). Desligado: não abre janela nem processo de
 # agente, e mensagem para ele falha com aviso. Liga/desliga pela tecla T no painel de repos (F filtra
@@ -132,7 +142,8 @@ main: ~/Codes/main-repo
 #   - some-repo
 
 # Pastas livres (opcional): abas de navegação na janela da home (o repo principal). Não são repos:
-# não abrem janela nem sessão de agente. Enter abre/fecha a pasta e abre o arquivo pelo visualizador
+# não abrem janela nem sessão de agente (para um repo com agente, use "repos_extra" ou a pasta de repos).
+# Enter abre/fecha a pasta e abre o arquivo pelo visualizador
 # (`viewer`); tipo que o visualizador não cobre fica como está. Cada entrada é um caminho ou um mapa
 # com "path" e "label" (o nome mostrado). Caminhos aceitam ~. Sem esta chave, a home não tem a aba
 # PASTAS. A primeira versão só navega e abre; nada é movido, renomeado ou apagado.

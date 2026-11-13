@@ -9,9 +9,11 @@
 
 A repo shows the worst state of its tabs (blocked > working > done > unknown > idle).
 
-Under each repo (switched on) its extra git worktrees are listed, indented: the branch, with the agent
-dot when a window of that worktree is open (a worktree with no window is dim). Enter opens or focuses
-the worktree's window. A repo with no extra worktree, or a git error, shows only the repo.
+A repo with extra git worktrees (switched on) has them hidden by default; a ▸ after its name marks them.
+→ opens them and ← closes them (← on a worktree, or on a closed repo, goes to its parent row), as in the
+files and tasks panels. An open list shows each worktree indented: the branch, with the agent dot when a
+window of that worktree is open (a worktree with no window is dim). Enter opens or focuses the worktree's
+window. A repo with no extra worktree, or a git error, shows only the repo.
 
 Next to the name, two icons always present:
   branch  = local git: dim without git · normal clean · yellow with uncommitted work
@@ -69,11 +71,21 @@ def worktrees_of(repo):
     return found
 
 
+def worktree_mark(repo):
+    """▸ or ▾ after a repo's name when it has extra worktrees (list closed or open); nothing otherwise."""
+    if not worktrees_of(repo):
+        return ""
+    return f" {GRAY}{'▾' if WT_OPEN.is_open(repo) else '▸'}{R}"
+
+
 def worktree_rows(repo, indent):
-    """One keyed row per extra worktree of `repo`, under the repo row. The state dot shows only when a
-    window of the worktree holds agent tabs (its own state file, read by session_state)."""
+    """Keyed rows of the extra worktrees of `repo`, under the repo row, only while its list is open. The state
+    dot shows only when a window of the worktree holds agent tabs (its own state file, read by session_state)."""
     rows = []
+    if not WT_OPEN.is_open(repo):
+        return rows
     for branch, path in worktrees_of(repo):
+        PARENT[("w", path)] = ("r", repo)
         label = branch or t("repos.worktree.detached")
         if not session_state.tab_states(path):   # no window of this worktree: dim, no state
             rows.append(Row(f"{indent}{GRAY}↳ {label}{R}", ("w", path)))
@@ -84,6 +96,8 @@ def worktree_rows(repo, indent):
 
 
 GROUPS = Expander(lib.STATE / "collapsed.json", default_open=True)   # groups start open; the file keeps the closed ones
+WT_OPEN = Expander(lib.STATE / "worktrees_open.json", default_open=False)   # repos start closed; the file keeps the open ones
+PARENT = {}   # row key -> the row ← moves to (a worktree -> its repo, a repo -> its group); rebuilt on every redraw
 CURRENT = lib.current_repo()
 FILTERS = ("all", "on", "off")
 VIEW = {"filter": "all", "note": "", "note_until": 0.0}   # per panel run: a restart shows every repo again
@@ -117,10 +131,11 @@ def collect(v):
         header.append(f" {VIEW['note']}")
     header += context_menu.header()   # the menu layer owns its prompt and notice
     body = []
+    PARENT.clear()
     if main:   # main repo: outside the groups, always on top, bold in the default foreground (blue when it is this window's repo)
         repo_name, p = main
         color = BLUE if p == CURRENT else ""
-        body.append(Row(f" {glyphs.dot(state.get(p, 'idle'))} {color}{B}{repo_name}{R} {git_icon(p)}", ("r", p)))
+        body.append(Row(f" {glyphs.dot(state.get(p, 'idle'))} {color}{B}{repo_name}{R}{worktree_mark(p)} {git_icon(p)}", ("r", p)))
         body += worktree_rows(p, "   ")
     for name, all_repos in groups:
         repos = [(n, p) for n, p in all_repos if shown(n, off)]
@@ -133,25 +148,41 @@ def collect(v):
         if not opened:
             continue
         for repo_name, p in repos:
+            PARENT[("r", p)] = ("g", name)
             if repo_name in off:   # a switched-off repo is not worked on: no git state is read for it
                 body.append(Row(f"   {GRAY}○ {repo_name} · {t('repos.disabled')}{R}", ("r", p)))
                 continue
             sel = f"{BLUE}{B}" if p == CURRENT else ""
-            body.append(Row(f"   {glyphs.dot(state.get(p, 'idle'))} {sel}{repo_name}{R} {git_icon(p)}", ("r", p)))
+            body.append(Row(f"   {glyphs.dot(state.get(p, 'idle'))} {sel}{repo_name}{R}{worktree_mark(p)} {git_icon(p)}", ("r", p)))
             body += worktree_rows(p, "     ")
     return header, body
 
 
 def on_key(v, k):
-    """F cycles the filter; T switches the repo under the cursor; Left/Right fold a group (like the files tree)."""
+    """F cycles the filter; T switches the repo under the cursor; Left/Right fold a group or a repo's worktrees."""
     if k == "f":
         VIEW["filter"] = FILTERS[(FILTERS.index(VIEW["filter"]) + 1) % len(FILTERS)]
         v.redraw.set()
     elif k == "t" and v.key and v.key[0] == "r":
         toggle(v, v.key[1])
-    elif k in ("left", "right") and v.key and v.key[0] == "g":
-        GROUPS.handle_arrow(k, v.key[1])
-        v.redraw.set()
+    elif k in ("left", "right") and v.key and v.key[0] in ("g", "r", "w"):
+        arrow(v, k)
+
+
+def arrow(v, k):
+    """→ opens a repo's worktrees; ← closes them, or moves to the parent row (a worktree's repo, a repo's group).
+    On a group, the arrows open and close it."""
+    kind, value = v.key
+    if kind == "g":
+        GROUPS.handle_arrow(k, value)
+    elif k == "right":
+        if kind == "r" and worktrees_of(value):
+            WT_OPEN.open(value)
+    elif kind == "r" and WT_OPEN.is_open(value) and worktrees_of(value):
+        WT_OPEN.close(value)
+    else:
+        v.key = PARENT.get(v.key, v.key)
+    v.redraw.set()
 
 
 def toggle(v, path):
