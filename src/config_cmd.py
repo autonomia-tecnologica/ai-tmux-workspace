@@ -10,8 +10,8 @@
      to config.yaml, so a pattern the person removed does not come back.
   2. the installed harness (~/.local/share/ai-tmux-workspace/harness): drift.check() reports it and
      installer.overlay_harness writes harness_source() over it: this checkout's harness/ (regras/ included),
-     or the canonical source only when there is none. Nothing is removed: files the repo does not ship
-     (forcado.yaml, extras) stay.
+     or the canonical source only when there is none. Only what the overlay installed before (state/
+     harness-overlay.json) and the source no longer has is removed; forcado.yaml, source.json and extras stay.
   3. the generated settings of each profile (lib.expected_profile_settings), when manage is on.
   4. the Claude Code hooks: the installer's own step (`bin/workspace install-hooks`), run against a
      temporary HOME, shows whether it would change ~/.claude/settings.json. Applying runs it for real.
