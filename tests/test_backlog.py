@@ -334,17 +334,65 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual(backlog.parallel_ids(items), [1, 2])
 
     # --- panel counters -----------------------------------------------------------------------
-    def test_paused_gets_its_own_bucket(self):
+    def _panel_tasks(self):
         old = os.environ.pop("TMUX_PANE", None)             # keep the import from shelling out
         try:
             import panel_tasks
         finally:
             if old is not None:
                 os.environ["TMUX_PANE"] = old
-        self.assertEqual(panel_tasks.buckets(["ready", "paused", "paused", "refine"]),
-                         {"ready": 1, "refine": 1, "blocked": 0, "paused": 2})
-        self.assertEqual(panel_tasks.buckets(["ready", "blocked", "cycle", "paused"]),
-                         {"ready": 1, "refine": 0, "blocked": 2, "paused": 1})
+        return panel_tasks
+
+    def test_buckets_have_no_paused(self):
+        panel_tasks = self._panel_tasks()
+        self.assertEqual(panel_tasks.buckets(["ready", "refine", "refine", "refine"]),
+                         {"ready": 1, "refine": 3, "blocked": 0})
+        self.assertEqual(panel_tasks.buckets(["ready", "blocked", "cycle", "refine"]),
+                         {"ready": 1, "refine": 1, "blocked": 2})
+
+    def test_decision_blocked_shows_reason_and_never_implements(self):
+        from unittest import mock
+        panel_tasks = self._panel_tasks()
+        items = self.parse("""Próximo id: 10
+
+## Refinadas
+
+### 1. waits decision
+- Categoria: X
+- Status: blocked: decisão X
+
+### 2. waits dependency
+- Categoria: X
+- Depende de: 1
+""")
+        by = {i["id"]: i for i in items}
+        self.assertEqual(panel_tasks.effective(by[1]), "blocked")
+        self.assertEqual(panel_tasks.effective(by[2]), "blocked")
+        root = str(self.root)                                # parse() above wrote BACKLOG.md here
+        with mock.patch.object(panel_tasks, "CURRENT", root), \
+                mock.patch.object(panel_tasks.tmux, "confirm_then") as confirm:
+            panel_tasks.enter(None, ("i", root, 1, "blocked"), None)
+            msg = confirm.call_args[0][0]
+            self.assertIn("decisão X", msg)
+            self.assertNotIn("dependências", msg)
+            panel_tasks.enter(None, ("i", root, 2, "blocked"), None)
+            msg = confirm.call_args[0][0]
+            self.assertIn("dependências", msg)
+            self.assertNotIn("decisão X", msg)
+
+    def test_done_item_is_not_in_panel(self):
+        items = self.parse("""Próximo id: 10
+
+## Refinadas
+
+### 1. open
+- Categoria: X
+
+### 2. finished
+- Categoria: X
+- Status: done
+""")
+        self.assertEqual([i["id"] for i in items], [1])
 
 
 if __name__ == "__main__":

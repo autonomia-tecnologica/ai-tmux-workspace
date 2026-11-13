@@ -5,7 +5,7 @@ an emoji set for a terminal without a Nerd Font) is a change in one file. Needs 
 terminal for the git and file icons.
 """
 import icons
-from colors import YELLOW, GRAY, DIM, GRAY_DARK, R, GREEN, RED
+from colors import YELLOW, GRAY, GRAY_DARK, R, GREEN, RED
 
 # --- status dots (repos, sessions) -------------------------------------------------------------
 _DOT = {"idle": (GRAY, "○"), "working": (GREEN, "●"),
@@ -23,7 +23,7 @@ def ci_dot(color):
 
 
 # --- task markers ------------------------------------------------------------------------------
-_MARK = {"ready": (GREEN, "●"), "refine": (GRAY, "○"), "paused": (DIM, "◌"),
+_MARK = {"ready": (GREEN, "●"), "refine": (GRAY, "○"),
          "blocked": (YELLOW, "⊘"), "cycle": (RED, "✖")}
 
 
