@@ -212,6 +212,46 @@ class AgentAdapterTest(unittest.TestCase):
         # The plugin copy is still regenerated, so a restart never loses it.
         self.assertTrue((self.state / "settings" / "opencode-plugin-oc.js").is_file())
 
+    def test_opencode_prepare_points_instructions_at_the_installed_harness_idempotently(self):
+        harness = self.root / "harness"
+        harness.mkdir()
+        (harness / "HARNESS.md").write_text("regras\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"AT_HARNESS_DIR": str(harness)}):
+            path = lib.profile_adapter("oc").prepare("oc")
+            first = Path(path).read_text(encoding="utf-8")
+            again = lib.profile_adapter("oc").prepare("oc")
+        self.assertEqual(Path(again).read_text(encoding="utf-8"), first)
+        config = json.loads(first)
+        self.assertEqual(config["instructions"], [str(harness / "HARNESS.md")])
+
+    def test_opencode_prepare_keeps_declared_instructions_and_adds_the_harness_once(self):
+        harness = self.root / "harness"
+        harness.mkdir()
+        (harness / "HARNESS.md").write_text("regras\n", encoding="utf-8")
+        declared = self.root / "declared.json"
+        declared.write_text(json.dumps({"instructions": ["notas.md"]}), encoding="utf-8")
+        self.cfg.write_text(
+            "agent: oc\n"
+            "profiles:\n"
+            "  claude: claude\n"
+            "  oc:\n"
+            "    harness: opencode\n"
+            "    command: opencode\n"
+            f"    config: {declared}\n",
+            encoding="utf-8")
+        with mock.patch.dict(os.environ, {"AT_HARNESS_DIR": str(harness)}):
+            path = lib.profile_adapter("oc").prepare("oc")
+            lib.profile_adapter("oc").prepare("oc")
+        config = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(config["instructions"], ["notas.md", str(harness / "HARNESS.md")])
+        self.assertEqual(json.loads(declared.read_text(encoding="utf-8")),
+                         {"instructions": ["notas.md"]})
+
+    def test_opencode_prepare_adds_no_instruction_when_the_harness_is_not_installed(self):
+        with mock.patch.dict(os.environ, {"AT_HARNESS_DIR": str(self.root / "ausente")}):
+            path = lib.profile_adapter("oc").prepare("oc")
+        self.assertNotIn("instructions", json.loads(Path(path).read_text(encoding="utf-8")))
+
     # --- one central policy ---------------------------------------------------------------------
     def _events(self):
         return [

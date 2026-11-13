@@ -24,7 +24,7 @@ SYMBOL_COLOR = {
     i18n.t("help.color.gray"): GRAY,
     i18n.t("help.color.dim"): DIM,
 }
-SYMBOL_DEFAULT = {"◆": YELLOW, "⊘": YELLOW, "⚠": YELLOW, "✖": RED, "◌": DIM, "○": GRAY}
+SYMBOL_DEFAULT = {"◆": YELLOW, "⊘": YELLOW, "⚠": YELLOW, "✖": RED, "○": GRAY}
 
 
 def width(s):

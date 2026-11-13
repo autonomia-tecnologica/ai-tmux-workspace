@@ -949,5 +949,63 @@ class ShimMergeTest(unittest.TestCase):
                 self.installer.merge_shim(damaged, self.block)
 
 
+class ShimRefreshTest(unittest.TestCase):
+    """`reload` runs `lib.py shim-refresh`: the same block as install, only with `manage: false`
+    (install writes the shim only then). Runs in a throwaway HOME; the person's CLAUDE.md is never used."""
+
+    BLOCK = (">>> ai-tmux-workspace harness >>>\n"
+             "@~/.local/share/ai-tmux-workspace/harness/HARNESS.md\n"
+             "<<< ai-tmux-workspace harness <<<")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name).resolve()
+        self.state = self.home / "state"
+        self.cfg = self.home / "config.yaml"
+        self.claude = self.home / ".claude" / "CLAUDE.md"
+
+    def refresh(self, manage):
+        self.cfg.write_text(f"manage: {'true' if manage else 'false'}\nagent: claude\n", encoding="utf-8")
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("AT_WS_INSTALL_DIR", "AT_HARNESS_DIR", "AT_WS_INSTALL_STATE")}
+        env.update(HOME=str(self.home), WS_STATE=str(self.state), AT_WS_CONFIG=str(self.cfg),
+                   NO_COLOR="1")
+        return subprocess.run([sys.executable, str(ROOT / "src" / "lib.py"), "shim-refresh"],
+                              env=env, capture_output=True, text=True, check=False, timeout=60)
+
+    def test_reload_creates_the_block_and_a_second_reload_is_a_no_op(self):
+        self.assertEqual(self.refresh(manage=False).returncode, 0)
+        once = self.claude.read_text(encoding="utf-8")
+        self.assertEqual(once, self.BLOCK + "\n")
+        self.assertEqual(self.refresh(manage=False).returncode, 0)
+        self.assertEqual(self.claude.read_text(encoding="utf-8"), once)
+
+    def test_reload_keeps_the_persons_text_around_the_block(self):
+        self.claude.parent.mkdir(parents=True)
+        self.claude.write_text("# Minhas regras\n\nUma regra minha.\n", encoding="utf-8")
+        self.assertEqual(self.refresh(manage=False).returncode, 0)
+        self.assertEqual(self.claude.read_text(encoding="utf-8"),
+                         "# Minhas regras\n\nUma regra minha.\n" + self.BLOCK + "\n")
+        # An existing block is replaced in place, and the text around it is still the person's.
+        old = ">>> ai-tmux-workspace harness >>>\n@~/velho.md\n<<< ai-tmux-workspace harness <<<"
+        self.claude.write_text("antes\n" + old + "\ndepois\n", encoding="utf-8")
+        self.assertEqual(self.refresh(manage=False).returncode, 0)
+        self.assertEqual(self.claude.read_text(encoding="utf-8"), "antes\n" + self.BLOCK + "\ndepois\n")
+
+    def test_reload_warns_and_never_writes_over_a_broken_block(self):
+        damaged = "minha nota\n>>> ai-tmux-workspace harness >>>\n@x\n"
+        self.claude.parent.mkdir(parents=True)
+        self.claude.write_text(damaged, encoding="utf-8")
+        result = self.refresh(manage=False)
+        self.assertEqual(result.returncode, 0, "reload never fails on the shim")
+        self.assertIn("quebrado", result.stderr)
+        self.assertEqual(self.claude.read_text(encoding="utf-8"), damaged)
+
+    def test_reload_leaves_the_shim_alone_when_the_workspace_manages_the_harness(self):
+        self.assertEqual(self.refresh(manage=True).returncode, 0)
+        self.assertFalse(self.claude.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

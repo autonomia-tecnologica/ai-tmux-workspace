@@ -1055,20 +1055,18 @@ class Assistant:
 
     def install_harness_shim(self):
         """Without the SessionStart hook, ~/.claude/CLAUDE.md imports the installed HARNESS.md (`@path`,
-        one line). Created or updated in place between the markers; the person's text is kept."""
-        path = HOME / ".claude" / "CLAUDE.md"
-        block = shim_block("@" + display(layout_root() / "harness" / "HARNESS.md"))
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        one line). Shared with `reload` (apply_shim): the manifest records the file only when it writes."""
+        path = shim_path()
+
+        def record(target):
+            self.ensure_dir(target.parent)
+            self.manifest_for().record(target)
+
         try:
-            merged = merge_shim(existing, block)
+            apply_shim(on_write=record)
         except ShimError as error:
-            # Provisional pt-BR text: the key for this message lives in i18n/pt-BR.json (not in scope).
-            self.ui.warn(f"Bloco do harness em {display(path)} está quebrado ({error}); não mexi no arquivo.")
+            self.ui.warn(shim_broken_text(error))
             return
-        if merged != existing:
-            self.ensure_dir(path.parent)
-            self.manifest_for().record(path)
-            path.write_text(merged, encoding="utf-8")
         self.ui.ok(t("installer.harness.shim_ok", path=display(path)))
 
     def install_hooks(self):
@@ -1308,6 +1306,37 @@ def merge_shim(existing, block):
     if line_end == -1:
         line_end = len(existing)
     return existing[:line_start] + block + existing[line_end:]
+
+
+def shim_path():
+    return HOME / ".claude" / "CLAUDE.md"
+
+
+def shim_import_line():
+    return "@" + display(layout_root() / "harness" / "HARNESS.md")
+
+
+def shim_broken_text(error):
+    return t("installer.harness.shim_broken", path=display(shim_path()), error=str(error))
+
+
+def apply_shim(on_write=None):
+    """Creates or updates the managed shim block in ~/.claude/CLAUDE.md. Returns True when the file
+    was written, False when it already had the block. Raises ShimError (and writes nothing) when the
+    block is damaged. `on_write(path)` runs right before a write (install records it in the manifest).
+    Used by `install` and by `reload` (`lib.py shim-refresh`), so both leave the same bytes."""
+    path = shim_path()
+    block = shim_block(shim_import_line())
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    merged = merge_shim(existing, block)
+    if merged == existing:
+        return False
+    if on_write is not None:
+        on_write(path)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(merged, encoding="utf-8")
+    return True
 
 
 def copy_harness(source, target):

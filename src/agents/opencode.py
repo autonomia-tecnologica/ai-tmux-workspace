@@ -19,6 +19,7 @@ import shlex
 from pathlib import Path
 
 import conference
+import paths
 from .base import SESSION_ID_AGENT, Adapter, Update, _t, clip, short_path
 
 
@@ -64,6 +65,21 @@ def _write(path, text, mode=0o600):
     finally:
         temporary.unlink(missing_ok=True)
     return path
+
+
+def _add_harness_instructions(settings):
+    """Adds the installed HARNESS.md to the config `instructions` (OpenCode's own rules-file key), so
+    the OpenCode session reads the same text as the Claude shim. The declared entries are kept; the
+    path is added once, and only when the installed file exists (no dangling instruction)."""
+    text = os.path.abspath(str(paths.harness_dir() / "HARNESS.md"))
+    if not os.path.isfile(text):
+        return settings
+    instructions = settings.get("instructions")
+    instructions = [str(item) for item in instructions] if isinstance(instructions, list) else []
+    if text not in instructions:
+        instructions.append(text)
+    settings["instructions"] = instructions
+    return settings
 
 
 def conference_permissions():
@@ -157,6 +173,7 @@ class OpenCodeAdapter(Adapter):
         if url not in plugins:
             plugins.append(url)
         settings["plugin"] = plugins
+        _add_harness_instructions(settings)
         return str(_write(generated_config_path(profile),
                           json.dumps(settings, indent=2, ensure_ascii=False, sort_keys=True) + "\n"))
 

@@ -108,6 +108,21 @@ def migrate_config():
     return destination
 
 
+def shim_refresh():
+    """`reload` side of the Claude shim: the block install writes, only when `manage: false` (install
+    writes it only then too). A broken block or an OSError goes to stderr; reload never fails on it."""
+    if manage_enabled():
+        return
+    # Function-local on purpose: installer is a higher layer (entry and adapters) than this module.
+    import installer
+    try:
+        installer.apply_shim()
+    except installer.ShimError as error:
+        print(installer.shim_broken_text(error), file=sys.stderr)
+    except OSError as error:
+        print(error, file=sys.stderr)
+
+
 def manage_enabled():
     """False only when config.yaml sets `manage: false` (item 93).
 
@@ -1937,6 +1952,8 @@ if __name__ == "__main__":
             sys.exit(2)
         if path:
             print(path)
+    elif command == "shim-refresh":      # bash reload: the Claude shim block, only with manage: false (as install)
+        shim_refresh()
     elif command == "profile-names":     # bash reload: every profile whose generated settings must be refreshed
         print("\n".join(profile_names()))
     elif command == "agent-harness":     # bash: "claude" or "opencode", the harness of the chosen agent

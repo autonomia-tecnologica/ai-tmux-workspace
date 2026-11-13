@@ -995,6 +995,7 @@ reload() {
   export TMUX="$(tmux -L "$sock" display -p '#{socket_path},#{pid},0')"
   export WS_PROFILE="$profile"
   settings_refresh_all
+  "$PYTHON" "$SRC/lib.py" shim-refresh || true   # manage: false only; a broken block warns, never fails
   tmux source-file "$ROOT/config/tmux.conf"
   prune "$profile"
   while IFS='|' read -r W path; do
