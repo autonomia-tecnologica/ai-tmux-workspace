@@ -2,7 +2,7 @@
 
 Regras operacionais para a LLM, só com tópicos: o texto é enxuto de propósito para gastar menos token
 em toda sessão. Descrição aberta em `ambiente-de-trabalho`; bloqueios em `forcado.yaml`. Termo ou
-motivo: `harness/regras/glossario.md`, quando não estiver claro; os demais arquivos de `regras/` ficam
+motivo: `harness/regras/glossary.md`, quando não estiver claro; os demais arquivos de `regras/` ficam
 no harness do workspace.
 
 ## Contexto
@@ -103,7 +103,7 @@ no harness do workspace.
 - Paralelo só com `Caminhos` disjuntos e sem `Depende de`; worktree e branch por fatia; um integrador.
 - Worktree não é sandbox; só remover o que o próprio agente criou.
 - Registrar tokens e retrabalho no commit quando disponível.
-- Modo e worktree: `harness/regras/despacho.md`; leia antes de despachar subagente, abrir worktree ou paralelizar fatias.
+- Modo e worktree: `harness/regras/dispatch.md`; leia antes de despachar subagente, abrir worktree ou paralelizar fatias.
 
 ## Permissões e isolamento
 
@@ -114,7 +114,7 @@ no harness do workspace.
 - `bypassPermissions` só por escolha da pessoa; `deny` vale em todo modo.
 - Comunicação entre sessões só com autorização de quem recebe; repo não edita repo irmão: pede por `workspace request send` e quem edita é a sessão do irmão; execução externa do pedido exige aprovação da pessoa.
 - Toda ação deixa rastro; pendência de freio em código vai para `Segurança`.
-- Caso novo: `harness/regras/permissoes.md`; leia antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
+- Caso novo: `harness/regras/permissions.md`; leia antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
 
 ## Commits
 
@@ -127,7 +127,7 @@ no harness do workspace.
 - Segredo em claro fora da pasta de trabalho: cifrado no repo ou em config do usuário.
 - Nunca no chat, em argv, em variável de ambiente ou em arquivo claro.
 - Chave nunca nas settings geradas; a settings só aponta para o cofre.
-- Varredura e canal: `harness/regras/segredos.md`; leia antes de commit, de criar chave ou de decidir onde um segredo mora.
+- Varredura e canal: `harness/regras/secrets.md`; leia antes de commit, de criar chave ou de decidir onde um segredo mora.
 
 ## Operação
 

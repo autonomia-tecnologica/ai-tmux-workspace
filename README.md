@@ -264,7 +264,7 @@ dois.
 
 Os tópicos de [`harness/HARNESS.md`](harness/HARNESS.md) trazem a filosofia que sustenta as regras;
 o racional e os dois vocabulários (harness de inferência e harness determinístico) ficam em
-[`harness/regras/glossario.md`](harness/regras/glossario.md), lido só quando a tarefa pede.
+[`harness/regras/glossary.md`](harness/regras/glossary.md), lido só quando a tarefa pede.
 
 ## Persistência
 Sem plugins de tmux. As abas de sessão de cada repo ficam em `$WS_STATE/tabs/`: uma lista ordenada com o perfil e o id de cada aba, mais `session-<aba>` com o id real gravado pelo hook do Claude e pelo plugin do OpenCode. `reload`, `restart` e fechar/abrir o workspace restauram as abas na ordem, cada uma no próprio id; sem abas persistidas, abre a padrão. O resto vem do `config.yaml` e dos arquivos do repo.

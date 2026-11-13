@@ -57,7 +57,7 @@ não estiver claro; não leia a pasta.
 - **Política** — o motor central de capacidades, com um adaptador para o Claude e outro para o
   OpenCode.
 - **Forma de uso / allowlist** — a unidade de permissão; a lista de cada forma está em
-  `permissoes.md`.
+  `permissions.md`.
 - **Rastro** — o registro do que foi feito.
 - **Conferência** — conversa entre o repo da janela e os irmãos, cada um respondendo pelo próprio
   repo.

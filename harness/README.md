@@ -20,15 +20,17 @@ já declara.
 - [`choke-point.md`](choke-point.md) — dono único por efeito: quem desenha, chama `tmux`, escreve
   arquivo ou formata caminho, a dívida de desenho e o teste de allowlist que só encolhe.
 - [`regras/`](regras/) — detalhe do que o `HARNESS.md` resume em uma linha.
-  - [`regras/glossario.md`](regras/glossario.md) — termos do ambiente e o motivo das regras; leia
+  - [`regras/glossary.md`](regras/glossary.md) — termos do ambiente e o motivo das regras; leia
     quando um termo ou o motivo não estiver claro.
   - [`regras/backlog.md`](regras/backlog.md) — ciclo, `Depende de`, bloqueio e fio da meada; leia
     antes de criar, refinar ou despachar item.
-  - [`regras/permissoes.md`](regras/permissoes.md) — formas de uso, caso desconhecido e rastro; leia
+  - [`regras/permissions.md`](regras/permissions.md) — formas de uso, caso desconhecido e rastro; leia
     antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
-  - [`regras/despacho.md`](regras/despacho.md) — modo de despacho e worktree; leia antes de despachar
+  - [`regras/agent-rules.md`](regras/agent-rules.md) — mapa das regras de agente que moram no
+    `HARNESS.md` (Backlog, Agentes, Commits); leia só para localizar essas seções.
+  - [`regras/dispatch.md`](regras/dispatch.md) — modo de despacho e worktree; leia antes de despachar
     subagente, abrir worktree ou paralelizar fatias.
-  - [`regras/segredos.md`](regras/segredos.md) — varredura, onde um segredo mora e canal seguro; leia
+  - [`regras/secrets.md`](regras/secrets.md) — varredura, onde um segredo mora e canal seguro; leia
     antes de commit, de criar chave ou de decidir onde um segredo mora.
 
 ## Como usar
