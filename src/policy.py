@@ -203,6 +203,9 @@ READ_PROGRAMS = {
 # `sed`/`awk` are deliberately absent: their script language writes files and runs commands.
 # `less`/`more` are absent too: their pager escapes (LESSOPEN, `!`) run commands.
 TARGET_DIRECTORY_PROGRAMS = {"cp", "mv", "ln", "install"}
+# Copy programs: the sources are read, only the destination is written (`mv` removes its sources, so it
+# keeps every positional as a write).
+COPY_PROGRAMS = {"cp", "install"}
 FIND_DENIED_OPTIONS = {
     "-exec", "-execdir", "-ok", "-okdir", "-delete",
     "-fprint", "-fprint0", "-fprintf", "-fls",
@@ -764,7 +767,7 @@ def _path_args(arguments, skip_first=False):
     return values
 
 
-def _classify_paths(arguments, root, write, skip_first=False, target=None, anchor=None):
+def _classify_paths(arguments, root, write, skip_first=False, target=None, anchor=None, root_ok=False):
     """Findings for the positional arguments. `target` keeps option values out of the audit log.
 
     `anchor` is the directory relative paths are resolved against (a `cd` in the same command);
@@ -778,12 +781,49 @@ def _classify_paths(arguments, root, write, skip_first=False, target=None, ancho
     base = anchor or root
     findings = []
     for value in paths:
+        if not write and _is_read_neutral(value, root_ok):
+            # The standard streams name nothing in the box; `/` is neutral only for a non-recursive read.
+            findings.append(Finding(None, target if target is not None else value, None))
+            continue
         path = _resolve(value, base)
         if path is None:
             raise _Ambiguous(value)
         findings.append(Finding(_path_capability(path, root, write),
                                 target if target is not None else path, path))
     return findings
+
+
+def _is_read_neutral(value, root_ok=False):
+    """Whether a read argument names nothing outside the box: a standard device (`/dev/null`,
+    `/dev/stdout`, `/dev/stderr`), or `/` when `root_ok` (a non-recursive read of the root).
+
+    The raw spelling is compared, not the resolved path: on Linux `/dev/stdout` resolves to a
+    per-process `/proc` file. Only an absolute spelling counts; `~`, `$`, globs are resolved as usual.
+    A recursive read of `/` (`find /`, `grep -r /`, `ls -R /`) keeps its repo.outside decision.
+    """
+    if not isinstance(value, str) or not value.startswith("/"):
+        return False
+    spelled = os.path.normpath(value)
+    if spelled in DEV_NULL:
+        return True
+    return root_ok and spelled == "/"
+
+
+# Read programs that only list or print the named entry: `/` is neutral for them, not for `tree`,
+# `find`, `grep`, which walk the tree.
+ROOT_READ_PROGRAMS = {"cat", "head", "tail", "ls", "stat", "wc"}
+
+
+def _root_read_only(program, arguments):
+    """Whether `/` among the arguments of `program` is a non-recursive read (`ls /`, not `ls -R /`)."""
+    if program not in ROOT_READ_PROGRAMS:
+        return False
+    for argument in arguments:
+        if argument == "--recursive":
+            return False
+        if argument.startswith("-") and not argument.startswith("--") and "R" in argument:
+            return False
+    return True
 
 
 def _write_option_paths(program, arguments, root, anchor=None):
@@ -858,6 +898,30 @@ def _target_directory_paths(program, arguments, root, anchor=None):
                 raise _Ambiguous(value)
             findings.append(Finding(_path_capability(path, root, True), path, path))
     return findings or None
+
+
+def _copy_paths(arguments, root, anchor=None):
+    """Findings for `cp`/`install` without `-t`: every source is read, only the destination is written.
+
+    A source inside the config folders (the hook scripts under `~/.claude`) is a read, so it is
+    `config.read` and not `config.write`. Every other source keeps its write capability, so the
+    control plane, the workspace code, secrets and outside paths keep the decision they had.
+    """
+    paths = _path_args(arguments)
+    if len(paths) < 2:
+        return _classify_paths(arguments, root, True, anchor=anchor)
+    base = anchor or root
+    findings = []
+    for value in paths[:-1]:
+        path = _resolve(value, base)
+        if path is None:
+            raise _Ambiguous(value)
+        capability = _path_capability(path, root, True)
+        if capability == "config.write":
+            capability = _path_capability(path, root, False)
+        findings.append(Finding(capability, path, path))
+    findings.extend(_classify_paths([paths[-1]], root, True, anchor=anchor) or [])
+    return findings
 
 
 def _denied_read_options(program, arguments):
@@ -1331,8 +1395,11 @@ def _classify_tokens_impl(tokens, root, anchor=None):
     if program in ("echo", "printf"):
         return [Finding("repo.read", program, None)]
     if program in WRITE_PROGRAMS:
-        findings = _classify_paths(arguments, root, True, anchor=anchor)
         targets = _target_directory_paths(program, arguments, root, anchor)
+        if program in COPY_PROGRAMS and targets is None:
+            findings = _copy_paths(arguments, root, anchor)
+        else:
+            findings = _classify_paths(arguments, root, True, anchor=anchor)
         if findings is None and targets is None:
             return None
         return (findings or []) + (targets or [])
@@ -1340,7 +1407,8 @@ def _classify_tokens_impl(tokens, root, anchor=None):
         if _denied_read_options(program, arguments):
             return None
         target = None if program in PATH_TARGET_READ_PROGRAMS else program
-        findings = _classify_paths(arguments, root, False, target=target, anchor=anchor)
+        findings = _classify_paths(arguments, root, False, target=target, anchor=anchor,
+                                   root_ok=_root_read_only(program, arguments))
         writes = _write_option_paths(program, arguments, root, anchor)
         if findings is None and writes is None:
             return [Finding("repo.read", root, root)] if root else None
@@ -1484,15 +1552,65 @@ def _admin_in_text(text):
 
 
 def _secret_glob(pattern):
-    """Whether a glob word can name a secret (`*.env`, `.env*`, `*.pem`). A bare wildcard cannot.
+    """Whether a glob word can name a secret (`*.env`, `.env*`, `*.pem`, `id_*`). A bare wildcard cannot.
 
     The pattern must hold a letter, so `*` alone is not taken for the secret names it could match.
+    An extension-only pattern (`*.json`, `*.js`) is a secret only when its extension is one of the
+    secret names (`*.env`) or suffixes (`*.pem`): `*.json` matches `auth.json` among many others, and
+    that is an ambiguous glob, not a credential file.
     """
     if not re.search(r"[A-Za-z]", pattern):
         return False
     if any(pattern.endswith(suffix) for suffix in SECRET_SUFFIXES):
         return True
+    extension = re.fullmatch(r"\*\.([A-Za-z0-9_-]+)", pattern)
+    if extension:
+        return "." + extension.group(1) in SECRET_NAMES
     return any(fnmatch.fnmatch(name, pattern) for name in SECRET_NAMES | SECRET_DIRS)
+
+
+_AMBIGUOUS_SEPARATORS = frozenset(";&|()<>`'\"{}$=,")
+_AMBIGUOUS_WORD = re.compile(r"[^\s;&|()<>`'\"{}$=,]+|[;&|()<>`'\"{}$=,]")
+# The quoted code of a `python -c` at the start of a command: its words are code, not paths (item 158 a).
+# Only the interpreter name `python`/`python3.x` counts; `sh -c` and the other shells do not match.
+_INTERPRETER_CODE = re.compile(
+    r"""(?:^|[;&|(])\s*python[\w.]*(?:\s+-[^\s'"]+)*?\s+-c\s+"""
+    r"""(?:'(?P<single>[^']*)'|"(?P<double>(?:[^"\\]|\\.)*)")"""
+)
+
+
+def _ambiguous_words(text):
+    """`(word, command)` for each word of an ambiguous text, in order.
+
+    `command` marks the program position: the start of the text, of a segment or of a substitution
+    (after `;&|()`, a backtick or `{`), the word after a command wrapper (`xargs`, `env`, `find -exec`),
+    and the program that follows the `NAME=value` assignments of a segment. Redirect targets and the
+    other words are arguments. Flags keep the position, so `env -i python3` still names `python3`.
+    """
+    tokens = _AMBIGUOUS_WORD.findall(text)
+    words, expect, value_next = [], True, False
+    for index, token in enumerate(tokens):
+        if token in _AMBIGUOUS_SEPARATORS:
+            if token in ";&|()`{":
+                expect = True
+            elif token in "<>":
+                expect = False
+            elif token == "=":
+                value_next = True
+            continue
+        if value_next:
+            value_next = False
+            words.append((token, False))
+            continue
+        if index + 1 < len(tokens) and tokens[index + 1] == "=":
+            words.append((token, False))        # `NAME=value`: the name is not a program
+            continue
+        words.append((token, expect))
+        if token in COMMAND_WRAPPERS:
+            expect = True
+        elif not token.startswith("-"):
+            expect = False
+    return words
 
 
 def _ambiguous_findings(text, root, anchor):
@@ -1513,26 +1631,42 @@ def _ambiguous_findings(text, root, anchor):
     home = os.path.expanduser("~")
     if not home.startswith("~"):
         text = text.replace("${HOME}", home).replace("$HOME", home)
-    for word in re.split(r"[\s;&|()<>`'\"{}$=,]+", text):
+    code = [match.group("single") or match.group("double") or ""
+            for match in _INTERPRETER_CODE.finditer(text)]
+    outside = _INTERPRETER_CODE.sub(" ", text)
+
+    def check(word, command, in_code):
         if not word or word.startswith("-"):
-            continue
+            return
+        if command and "/" not in word and not word.startswith((".", "~")) and not re.search(r"[*?\[]", word):
+            return              # a program name (`python3`, `grep`) is not a path, with or without a `cd`
         glob = re.search(r"[*?\[]", word)
         if glob and _secret_glob(os.path.basename(word)):
             findings.append(Finding("secrets", word, None))
-            continue
+            return
         base = word[:glob.start()] if glob else word
         base = base.rstrip("/") or base[:1]
         # A glob with no literal prefix (`*`, `*.py`) is in the directory the shell is in.
         path = _resolve(base, anchor) if base else (anchor if glob else None)
         if path is None:
-            continue
-        explicit = bool(glob) or "/" in word or word.startswith((".", "~")) or os.path.exists(path)
-        if explicit and _is_secret(path):
+            return
+        explicit_form = bool(glob) or "/" in word or word.startswith((".", "~"))
+        if (explicit_form or os.path.exists(path)) and _is_secret(path):
             findings.append(Finding("secrets", path, path))
-        else:
-            capability = _path_capability(path, root, True)
-            if capability in ("workspace.write", CONTROL_PLANE):
-                findings.append(Finding(capability, path, path))
+            return
+        # Approved (item 158 a): a bare word inside the code of `python -c` is code, not a path. Its
+        # explicit forms (`/`, `~`, `.`, a glob) still meet the write barrier.
+        if in_code and not explicit_form:
+            return
+        capability = _path_capability(path, root, True)
+        if capability in ("workspace.write", CONTROL_PLANE):
+            findings.append(Finding(capability, path, path))
+
+    for word, command in _ambiguous_words(outside):
+        check(word, command, False)
+    for source in code:
+        for word, command in _ambiguous_words(source):
+            check(word, command, True)
     return findings
 
 
