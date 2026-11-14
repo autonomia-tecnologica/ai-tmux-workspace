@@ -71,12 +71,12 @@
   "summary": {
     "out_of_scope": 8,
     "needs_decision": 3,
-    "implemented": 15,
+    "implemented": 16,
     "not_implemented": 31,
-    "total": 57,
+    "total": 58,
     "by_priority": {
       "P0": 30,
-      "P1": 17,
+      "P1": 18,
       "P2": 10
     }
   },
@@ -144,6 +144,16 @@
         "R-SCOPE-02",
         "R-SCOPE-05",
         "R-HOME-02"
+      ]
+    },
+    {
+      "id": "D-006",
+      "date": "2026-11-14",
+      "source": "Rafael, 2026-11-14",
+      "type": "behavior",
+      "decision": "Web reads (WebFetch, WebSearch, fetch) are the net.web capability, allowed for every role, so the model reads public pages without asking. Accepted risk: a request URL can carry part of what the session saw, and page content can try to steer the model (prompt injection). curl, gh and ssh stay on net.",
+      "requirement_ids": [
+        "R-POL-08"
       ]
     }
   ],
@@ -356,6 +366,7 @@
           "R-POL-04",
           "R-POL-05",
           "R-POL-07",
+          "R-POL-08",
           "R-CONF-12",
           "R-CONF-17",
           "R-ISO-01",
@@ -377,6 +388,7 @@
           "implemented",
           "implemented",
           "not_implemented",
+          "implemented",
           "not_implemented",
           "not_implemented",
           "not_implemented",
@@ -452,6 +464,7 @@
           "R-POL-03",
           "R-POL-04",
           "R-POL-05",
+          "R-POL-08",
           "R-CONF-12"
         ],
         "statuses": [
@@ -459,6 +472,7 @@
           "implemented",
           "not_implemented",
           "not_implemented",
+          "implemented",
           "implemented",
           "implemented",
           "not_implemented"
@@ -792,6 +806,7 @@
           "R-POL-04",
           "R-POL-05",
           "R-POL-07",
+          "R-POL-08",
           "R-CONF-12",
           "R-ISO-02",
           "R-HOME-01",
@@ -810,6 +825,7 @@
           "implemented",
           "implemented",
           "not_implemented",
+          "implemented",
           "not_implemented",
           "not_implemented",
           "not_implemented",
@@ -1572,6 +1588,32 @@
       "decision": null,
       "notes": "Check protected paths first, then the role table. The workspace process and installer are not agent tool calls and are not subject to it.",
       "decision_ids": []
+    },
+    {
+      "id": "R-POL-08",
+      "title": "Web reads are a separate capability, allowed for every role",
+      "requirement": "WebFetch, WebSearch and fetch are classified as net.web, not net. net.web is allow for repo, home, self and subagent, and auto or ask mode never upgrade a net.web deny.",
+      "status": "implemented",
+      "owasp": [
+        "LLM06",
+        "ASI02"
+      ],
+      "atlas": [
+        "AML.T0053"
+      ],
+      "priority": "P1",
+      "evidence": [
+        "src/policy.py (NET_TOOLS -> Finding net.web)",
+        "security/policy.yaml (net.web allow in repo and home; description line)",
+        "tests/test_policy.py (test_web_reads_are_net_web_allowed_for_every_role, test_table_without_net_web_fails_closed, test_net_web_deny_is_never_upgraded_by_auto_or_ask_mode)"
+      ],
+      "failure": null,
+      "validation": "WebFetch, WebSearch and fetch are allow for repo, home, self and a subagent of home; curl and gh stay net (ask in home); a table without net.web denies with policy.reason.invalid.",
+      "decision": "D-006",
+      "notes": "Accepted risk (D-006): the model reads public pages without asking, and a request URL can carry part of what the session saw. curl, gh and ssh stay on net.",
+      "decision_ids": [
+        "D-006"
+      ]
     },
     {
       "id": "R-CONF-01",

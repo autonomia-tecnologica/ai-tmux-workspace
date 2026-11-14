@@ -88,7 +88,7 @@ except Exception:       # a hand-copied engine may be missing the path owner: fa
 CAPABILITIES = (
     "repo.read", "repo.write", "repo.outside",
     "vcs.read", "vcs.write", "vcs.remote",
-    "test.run", "net", "install", "admin",
+    "test.run", "net", "net.web", "install", "admin",
     "config.read", "config.write", "tmp", "secrets", "session.external",
     "workspace.read", "workspace.write",
 )
@@ -631,7 +631,9 @@ def classify(event, root):
         command = tool_input.get("command") or tool_input.get("cmd")
         return _classify_command(command, root)
     if name in NET_TOOLS:
-        return [Finding("net", name, None)]
+        # Web reads (item 157) have their own capability: allowed for every role, so a subagent of a
+        # home session does not stop on `ask` with no one to answer. `curl`, `gh`, `ssh` stay `net`.
+        return [Finding("net.web", name, None)]
     if name in READ_TOOLS:
         value = _input_path(tool_input)
         if value is None:

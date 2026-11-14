@@ -30,8 +30,8 @@ data, not against a secondary crosswalk.
 | `out_of_scope` | 8 |
 | `needs_decision` | 3 |
 | `implemented` | 16 |
-| `not_implemented` | 30 |
-| **total** | **57** |
+| `not_implemented` | 31 |
+| **total** | **58** |
 
 The only statuses are `out_of_scope`, `needs_decision`, `implemented` and
 `not_implemented`. There is no `partial`: a partial control is `not_implemented` with a
@@ -67,6 +67,7 @@ accepted design. D-005 fixes the owner of the main folder, not the breadth of th
 | `D-003` | 2026-11-09 | When a secret is found in README.md/BACKLOG.md, block the run. | R-SEC-05 |
 | `D-004` | 2026-11-09 | A README.md write requires showing the proposed diff and waiting for confirmation. | R-CONF-17 |
 | `D-005` | 2026-11-09 | The main folder is the main repo from config.yaml (today ~/Codes/home). It manages all configured repos' README.md/BACKLOG.md only; the workspace control plane stays workspace-only. | R-SCOPE-02, R-SCOPE-05, R-HOME-02 |
+| `D-006` | 2026-11-14 | Web reads (WebFetch, WebSearch, fetch) are the `net.web` capability, allowed for every role, so the model reads public pages without asking. Accepted risk: a request URL can carry part of what the session saw, and page content can try to steer the model (prompt injection). `curl`, `gh` and `ssh` stay on `net`. | R-POL-08 |
 
 ## P0 — blocking
 
@@ -110,6 +111,7 @@ accepted design. D-005 fixes the owner of the main folder, not the breadth of th
 | `R-SCOPE-06` | Development happens inside each repo's own folder | `implemented` | LLM06, ASI03 | AML.T0053 | — |
 | `R-POL-05` | OpenCode's missing ask channel is fail-closed | `implemented` | LLM06, ASI02 | AML.T0053 | — |
 | `R-POL-06` | The audit log is 0600 and contains no raw arguments or secrets | `implemented` | LLM02, ASI03 | AML.T0025, AML.T0037 | — |
+| `R-POL-08` | Web reads are a separate capability, allowed for every role | `implemented` | LLM06, ASI02 | AML.T0053 | — |
 | `R-CONF-04` | A stale worker cannot write into a newer conference | `implemented` | LLM04, ASI08 | AML.T0080, AML.T0130 | — |
 | `R-CONF-05` | The broker owns the log and its attribution | `implemented` | ASI07, ASI03 | AML.T0073, AML.T0074, AML.T0118.001 | — |
 | `R-CONF-07` | The log sent in each prompt has an explicit cap | `not_implemented` | LLM10 | AML.T0029, AML.T0034, AML.T0034.002 | No cap exists. With the new full-log requirement, the prompt can grow without bound. The accepted decision is a hard cap with visible truncation (D-002), but it is not implemented. |
@@ -169,13 +171,13 @@ accepted design. D-005 fixes the owner of the main folder, not the breadth of th
 | `LLM03` | `not_implemented` | R-PERS-02, R-PERS-04, R-SEC-03, R-SC-01, R-SC-02, R-SC-03, R-OOS-07 |
 | `LLM04` | `not_implemented` | R-CONF-01, R-CONF-02, R-CONF-03, R-CONF-04, R-OOS-02 |
 | `LLM05` | `not_implemented` | R-CONF-08, R-CONF-10, R-CONF-17 |
-| `LLM06` | `not_implemented` | R-SCOPE-01, R-SCOPE-02, R-SCOPE-03, R-SCOPE-04, R-SCOPE-05, R-SCOPE-06, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-POL-07, R-CONF-12, R-CONF-17, R-ISO-01, R-ISO-02, R-HOME-01, R-HOME-02, R-HOME-03 |
+| `LLM06` | `not_implemented` | R-SCOPE-01, R-SCOPE-02, R-SCOPE-03, R-SCOPE-04, R-SCOPE-05, R-SCOPE-06, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-POL-07, R-POL-08, R-CONF-12, R-CONF-17, R-ISO-01, R-ISO-02, R-HOME-01, R-HOME-02, R-HOME-03 |
 | `LLM07` | `implemented` | R-CONF-16 |
 | `LLM08` | `out_of_scope` | R-OOS-01 |
 | `LLM09` | `not_implemented` | R-CONF-15 |
 | `LLM10` | `not_implemented` | R-CONF-06, R-CONF-07, R-CONF-12, R-CONF-13 |
 | `ASI01` | `not_implemented` | R-CONF-11 |
-| `ASI02` | `not_implemented` | R-SCOPE-03, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-CONF-12 |
+| `ASI02` | `not_implemented` | R-SCOPE-03, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-POL-08, R-CONF-12 |
 | `ASI03` | `not_implemented` | R-SCOPE-01, R-SCOPE-02, R-SCOPE-04, R-SCOPE-05, R-SCOPE-06, R-POL-06, R-POL-07, R-CONF-05, R-PERS-01, R-HOME-01, R-HOME-02, R-HOME-03 |
 | `ASI04` | `not_implemented` | R-PERS-02, R-PERS-04, R-SC-01, R-SC-02, R-SC-03, R-OOS-07 |
 | `ASI05` | `not_implemented` | R-CONF-10, R-ISO-01, R-ISO-02 |
@@ -201,7 +203,7 @@ accepted design. D-005 fixes the owner of the main folder, not the breadth of th
 | `AML.T0037` | `not_implemented` | R-POL-06, R-CONF-09, R-PERS-01, R-PERS-03, R-PERS-05, R-SEC-01, R-SEC-05, R-HOME-03 |
 | `AML.T0050` | `implemented` | R-CONF-10 |
 | `AML.T0051.001` | `not_implemented` | R-CONF-11 |
-| `AML.T0053` | `not_implemented` | R-SCOPE-01, R-SCOPE-02, R-SCOPE-03, R-SCOPE-04, R-SCOPE-05, R-SCOPE-06, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-POL-07, R-CONF-12, R-ISO-02, R-HOME-01, R-HOME-02 |
+| `AML.T0053` | `not_implemented` | R-SCOPE-01, R-SCOPE-02, R-SCOPE-03, R-SCOPE-04, R-SCOPE-05, R-SCOPE-06, R-POL-01, R-POL-02, R-POL-03, R-POL-04, R-POL-05, R-POL-07, R-POL-08, R-CONF-12, R-ISO-02, R-HOME-01, R-HOME-02 |
 | `AML.T0054` | `not_implemented` | R-CONF-11 |
 | `AML.T0055` | `implemented` | R-SEC-01, R-SEC-03 |
 | `AML.T0060` | `not_implemented` | R-CONF-15 |

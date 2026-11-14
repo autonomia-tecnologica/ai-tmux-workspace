@@ -46,6 +46,7 @@ roles:
     vcs.remote: ask
     test.run: allow
     net: allow
+    net.web: allow
     install: allow
     admin: privileged
     config.read: allow
@@ -64,6 +65,7 @@ roles:
     vcs.remote: ask
     test.run: allow
     net: ask
+    net.web: allow
     install: ask
     admin: privileged
     config.read: allow
@@ -96,6 +98,7 @@ roles:
 # capacidade vcs.remote: git que fala com o remoto (push, pull, fetch, clone, remote update); ask nos dois papéis. Motivo: o código sai da máquina, a pessoa decide.
 # capacidade test.run: rodar testes e checagens (pytest, unittest, make test, go test...); allow nos dois papéis. Motivo: validar faz parte do trabalho.
 # capacidade net: acesso à rede (curl, gh, ssh, ...); repo: allow, porque o trabalho com GitHub passa por gh; home: ask, porque a sessão da casa enxerga arquivos de vários projetos.
+# capacidade net.web: leitura web (WebFetch, WebSearch, fetch), sem shell; allow nos dois papéis. Motivo: o agente lê página pública para trabalhar, e ask no subagente da casa travava sem ninguém para responder (item 157). Risco aceito: a IA lê página pública sem perguntar, e a URL pode levar um trecho do que a sessão viu. `curl`, `gh` e `ssh` continuam em `net`.
 # capacidade install: instalar software (pip install, apt, brew, npm install...); repo: allow, para as dependências do projeto; home: ask, porque instalar fora de um projeto muda o ambiente todo.
 # capacidade admin: administração do sistema e de contêiner (sudo, systemctl, docker...); deny nos dois papéis, sem exceção. Motivo: root ou um daemon de contêiner fura a caixa. A lista está em `programs.admin`.
 # capacidade config.read: ler configuração (config.yaml, ~/.config, ~/.claude, a instalação); allow nos dois papéis. Motivo: o agente lê o ambiente para trabalhar. A pasta de controle só é lida, nunca escrita.

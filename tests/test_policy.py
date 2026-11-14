@@ -33,7 +33,7 @@ import yaml_min  # noqa: E402
 EXPECTED_CAPABILITIES = {
     "repo.read", "repo.write", "repo.outside",
     "vcs.read", "vcs.write", "vcs.remote",
-    "test.run", "net", "install", "admin",
+    "test.run", "net", "net.web", "install", "admin",
     "config.read", "config.write", "tmp", "secrets", "session.external",
     "workspace.read", "workspace.write",
 }
@@ -226,6 +226,82 @@ class PolicyTest(unittest.TestCase):
                     result = policy.check_event(event)
                     self.assertEqual(result["capability"], capability)
                     self.assertEqual(result["decision"], decision)
+
+    # --- web reads (item 157) ------------------------------------------------------------------
+    def web(self, tool="WebFetch", **extra):
+        return {"tool_name": tool, "tool_input": {"url": "https://example.com", "query": "x"},
+                "session_id": "sess-1", **extra}
+
+    def test_web_reads_are_net_web_allowed_for_every_role(self):
+        # WebFetch/WebSearch/fetch are net.web (not net), allow in every role, so a subagent of
+        # the home session no longer stops on `ask`.
+        for tool in ("WebFetch", "WebSearch", "fetch"):
+            with self.subTest(tool=tool, role="repo"):
+                result = self.decide(self.web(tool))
+                self.assertEqual((result["capability"], result["decision"]),
+                                 ("net.web", "allow"))
+        for role, root in (("home", self.home), ("self", self.repo)):
+            with self.subTest(role=role):
+                with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
+                    for tool in ("WebFetch", "WebSearch"):
+                        result = policy.check_event(self.web(tool))
+                        self.assertEqual((result["capability"], result["decision"]),
+                                         ("net.web", "allow"))
+        with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
+            result = policy.check_event(self.web("WebFetch", agent_id="a1"))
+            self.assertEqual((result["capability"], result["decision"]), ("net.web", "allow"))
+            result = policy.check_event(self.web("WebSearch", agent_id="a1"))
+            self.assertEqual((result["capability"], result["decision"]), ("net.web", "allow"))
+            # the shell network tools keep their own capability and their own answer
+            for command, decision in (("curl https://example.com", "ask"),
+                                      ("gh pr list", "ask")):
+                with self.subTest(command=command):
+                    result = policy.check_event(self.bash(command, agent_id="a1"))
+                    self.assertEqual((result["capability"], result["decision"]),
+                                     ("net", decision))
+        # repo keeps `curl` and `gh` on net (allow), not net.web
+        self.assertEqual(self.decide(self.bash("gh pr list"))["capability"], "net")
+        self.assertEqual(self.decide(self.bash("gh pr list"))["decision"], "allow")
+
+    def test_subagent_tightening_of_net_web_is_honored(self):
+        fixture = self.fixture_policy(subagent={"net.web": "deny"})
+        with patched_env(WS_POLICY=str(fixture), WS_SESSION_ROLE="home",
+                         WS_SESSION_ROOT=str(self.home)):
+            result = policy.check_event(self.web("WebFetch", agent_id="a1"))
+            self.assertEqual((result["capability"], result["decision"]), ("net.web", "deny"))
+
+    def test_table_without_net_web_fails_closed(self):
+        for role in ("repo", "home"):
+            with self.subTest(role=role):
+                broken = yaml_min.loads((SECURITY / "policy.yaml").read_text(encoding="utf-8"))
+                del broken["roles"][role]["net.web"]
+                path = self.root / f"no-net-web-{role}.yaml"
+                path.write_text(yaml_min.dumps(broken), encoding="utf-8")
+                with self.assertRaises(policy.PolicyError) as raised:
+                    policy.load_policy(path)
+                self.assertEqual(raised.exception.reason, "policy.reason.invalid")
+                with patched_env(WS_POLICY=str(path)):
+                    result = policy.check_event(self.web("WebFetch"))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("deny", "policy.reason.invalid"))
+
+    def test_net_web_deny_is_never_upgraded_by_auto_or_ask_mode(self):
+        fixture = self.fixture_policy(repo={"net.web": "deny"}, home={"net.web": "deny"})
+        self.ask_marker()
+        for role, root in (("repo", self.repo), ("home", self.home)):
+            for overrides in ({"WS_POLICY_AUTO": "1"}, {}):
+                with self.subTest(role=role, auto=bool(overrides)):
+                    with patched_env(WS_POLICY=str(fixture), WS_SESSION_ROLE=role,
+                                     WS_SESSION_ROOT=str(root), **overrides):
+                        result = policy.check_event(self.web("WebFetch"))
+                        self.assertEqual((result["capability"], result["decision"]),
+                                         ("net.web", "deny"))
+        # `ask` for net.web is not a box capability, so `auto` does not turn it into allow
+        ask_fixture = self.fixture_policy(home={"net.web": "ask"})
+        with patched_env(WS_POLICY=str(ask_fixture), WS_SESSION_ROLE="home",
+                         WS_SESSION_ROOT=str(self.home), WS_POLICY_AUTO="1"):
+            result = policy.check_event(self.web("WebFetch"))
+            self.assertEqual(result["decision"], "ask")
 
     # --- workspace code protection (item 79) ---------------------------------------------------
     def test_workspace_code_is_protected_before_the_role_table(self):
