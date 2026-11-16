@@ -149,6 +149,9 @@ INERT_TOOLS = {
 # query naming inert tools is allowed; any other form, an empty list or an unknown name fails
 # closed. It never resolves a path nor uses the session root.
 TOOL_SEARCH_TOOLS = {"toolsearch"}
+# Net tools that Claude Code lists as deferred: `select:` may load their schema (item 164). Only
+# loading: the call itself is still decided by `net.web` (item 157), so they are not in INERT_TOOLS.
+TOOL_SEARCH_LOADABLE_NET = {"websearch", "webfetch"}
 
 SECRET_NAMES = {
     ".env", ".netrc", "credentials", ".credentials.json", "auth.json", "id_rsa", "id_ed25519",
@@ -673,7 +676,8 @@ def _tool_search_finding(tool_input):
 
     The accepted form is `select:<name>[,<name>...]`; names are canonicalized, so CamelCase and
     lower-case spellings match, and spaces around them are ignored. An empty selection, another
-    query form, a non-object input or a name outside `INERT_TOOLS` returns None (fail closed).
+    query form, a non-object input or a name outside `INERT_TOOLS` and `TOOL_SEARCH_LOADABLE_NET`
+    returns None (fail closed).
     """
     query = tool_input.get("query") if isinstance(tool_input, dict) else None
     if not isinstance(query, str):
@@ -683,7 +687,8 @@ def _tool_search_finding(tool_input):
     if not query.startswith(prefix):
         return None
     names = [name.strip() for name in query[len(prefix):].split(",")]
-    if any(not name or _canonical(name) not in INERT_TOOLS for name in names):
+    loadable = INERT_TOOLS | TOOL_SEARCH_LOADABLE_NET
+    if any(not name or _canonical(name) not in loadable for name in names):
         return None
     return [Finding(None, "toolsearch", None)]
 

@@ -1067,6 +1067,29 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(self.decide(self.bash("sudo ls"))["decision"], "privileged")
         self.assertEqual(self.decide(self.bash("git push"))["decision"], "ask")
 
+    def test_tool_search_loads_web_tools_and_the_call_stays_net_web(self):
+        # Item 164: WebSearch and WebFetch are deferred in Claude Code, so `select:` loads them in
+        # every role; the call itself is still net.web (allow, item 157), not inert.
+        queries = ("select:WebSearch", "select:WebFetch", "select:websearch",
+                   "select: WebSearch, WebFetch")
+        for role, root in (("home", self.home), ("self", self.repo)):
+            for query in queries:
+                with self.subTest(role=role, query=query):
+                    with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
+                        result = policy.check_event(self.search(query))
+                    self.assertEqual((result["decision"], result["capability"]), ("allow", None))
+                    self.assertEqual(result["reason"], "policy.reason.inert")
+            for tool in ("WebSearch", "WebFetch"):
+                with self.subTest(role=role, call=tool):
+                    with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
+                        result = policy.check_event(self.web(tool))
+                    self.assertEqual((result["capability"], result["decision"]),
+                                     ("net.web", "allow"))
+        result = self.decide(self.search("select:WebSearch"))
+        self.assertEqual(result["reason"], "policy.reason.inert")
+        self.assertEqual((self.decide(self.web("WebSearch"))["capability"],
+                          self.decide(self.web("WebSearch"))["decision"]), ("net.web", "allow"))
+
     def test_tool_search_other_queries_and_names_outside_the_list_fail_closed(self):
         queries = (
             "sendmessage",
@@ -1076,8 +1099,8 @@ class PolicyTest(unittest.TestCase):
             "select:,SendMessage",
             "select:Bash",
             "select:Write",
-            "select:WebFetch",
             "select:SendMessage,UnknownTool",
+            "select:WebSearch,UnknownTool",
             "match:read",
             "select",
         )
