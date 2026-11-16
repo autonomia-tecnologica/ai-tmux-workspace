@@ -11,7 +11,8 @@ invalid input or missing session id exits 0 with no decision (fail open). Events
   layout is still read when HARNESS.md is absent).
 - UserPromptSubmit: injects a short reminder derived from item F07 of forcado.yaml.
 - PostToolUse (Read): records that a file of the harness was read in this session.
-- PreToolUse (Write, Edit, NotebookEdit): denies the write until the harness was read.
+- PreToolUse (Write, Edit, NotebookEdit): denies the write until the harness was read. With no
+  harness entry file (HARNESS.md, or the legacy CLAUDE.md) it does not deny: it fails open.
 
 `render` writes settings.json from the forcado.yaml of the harness it points at. It registers the
 hooks and translates every item with `tipo: deny` into a permissions.deny entry. The hook command
@@ -344,6 +345,15 @@ def session_context(directory):
     return "\n\n".join(sections)
 
 
+def entry_path(directory):
+    """Absolute path of the harness entry file: HARNESS.md, else the legacy CLAUDE.md; None if neither."""
+    base = Path(os.path.abspath(directory))
+    for name in ("HARNESS.md", "CLAUDE.md"):
+        if (base / name).is_file():
+            return base / name
+    return None
+
+
 # --- session state -----------------------------------------------------------------------------
 
 def _valid_session_id(value):
@@ -399,28 +409,38 @@ def _emit(payload):
     sys.stdout.write(json.dumps(payload) + "\n")
 
 
-def _prompt_context(item, read):
+def _prompt_context(item, entry, read):
     rule = _one_line(item.get("regra"))
     text = _one_line(item.get("texto"))
     gated = _one_line(", ".join(gate_tools(item)))
+    where = f"{entry} ({text})" if text else str(entry)
     parts = ["[gate]"]
     if rule:
         parts.append(rule.rstrip(".") + ".")
-    if text:
-        parts.append(f"Read {text} before writing.")
+    parts.append(f"Read {where} before writing.")
     parts.append("Harness read in this session." if read else
                  f"Harness not read in this session yet; {gated} blocked until then.")
     return " ".join(parts)
 
 
-def _deny_reason(item, tool):
+def _missing_context(item, missing):
+    rule = _one_line(item.get("regra"))
+    parts = ["[gate]"]
+    if rule:
+        parts.append(rule.rstrip(".") + ".")
+    parts.append(f"The harness file does not exist at {missing}; Write, Edit and NotebookEdit are not blocked.")
+    parts.append("To install it, run: workspace config update --apply")
+    return " ".join(parts)
+
+
+def _deny_reason(item, tool, entry):
     rule = _one_line(item.get("regra"))
     text = _one_line(item.get("texto"))
     reason = "[gate]"
     if rule:
         reason += f" {rule.rstrip('.')}."
-    target = f" Read {text} first." if text else ""
-    return f"{reason}{target} {tool} is blocked until the harness is read in this session."
+    where = f"{entry} ({text})" if text else str(entry)
+    return f"{reason} Read {where} first. {tool} is blocked until the harness is read in this session."
 
 
 def handle_hook(data, directory):
@@ -437,10 +457,15 @@ def handle_hook(data, directory):
         item = gate_item(directory)
         if item is None:
             return
-        session_id = data.get("session_id")
-        read = _valid_session_id(session_id) and harness_was_read(session_id)
+        entry = entry_path(directory)
+        if entry is None:
+            context = _missing_context(item, Path(os.path.abspath(directory)) / "HARNESS.md")
+        else:
+            session_id = data.get("session_id")
+            read = _valid_session_id(session_id) and harness_was_read(session_id)
+            context = _prompt_context(item, entry, read)
         _emit({"hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit", "additionalContext": _prompt_context(item, read)}})
+            "hookEventName": "UserPromptSubmit", "additionalContext": context}})
         return
     if event == "PostToolUse":
         if data.get("tool_name") != "Read":
@@ -471,12 +496,15 @@ def handle_hook(data, directory):
         item = gate_item(directory)
         if item is None or tool not in gate_tools(item):
             return
+        entry = entry_path(directory)
+        if entry is None:       # no harness file to read: fail open, the write passes
+            return
         if harness_was_read(session_id):
             return
         _emit({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": _deny_reason(item, tool),
+            "permissionDecisionReason": _deny_reason(item, tool, entry),
         }})
 
 

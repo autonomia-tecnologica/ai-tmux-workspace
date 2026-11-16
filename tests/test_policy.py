@@ -1764,7 +1764,8 @@ class PolicyTest(unittest.TestCase):
         self.assertIsNone(self.hook(self.bash("grep -r x .")))
 
     def test_hook_without_a_declared_role_keeps_current_sessions_working(self):
-        self.assertIsNone(self.hook(self.bash("sudo ls"), WS_SESSION_ROLE=None))
+        self.assertIsNone(self.hook(self.bash("sudo ls"), WS_SESSION_ROLE=None,
+                                    DISPLAY=None, WAYLAND_DISPLAY=None))
         self.assertIsNone(self.hook({"tool_name": "UnknownTool", "tool_input": {}},
                                     WS_SESSION_ROLE=None))
 

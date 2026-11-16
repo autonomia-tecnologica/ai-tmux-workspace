@@ -195,6 +195,41 @@ class HarnessTest(unittest.TestCase):
         specific = self.decision(self.write(agent_id="agent-1"))
         self.assertEqual(specific, {})
 
+    # 5b --------------------------------------------------------------------------------------
+    def test_harness_md_path_is_in_reminder_and_denial(self):
+        entry = self.harness / "HARNESS.md"
+        entry.write_text("# HARNESS.md\n\nSingle file rule.\n", encoding="utf-8")
+        _, output = self.hook_output(self.prompt())
+        self.assertIn(str(entry), output["hookSpecificOutput"]["additionalContext"])
+        specific = self.decision(self.write())
+        self.assertEqual(specific.get("permissionDecision"), "deny")
+        self.assertIn(str(entry), specific.get("permissionDecisionReason", ""))
+
+    def test_reading_harness_md_unlocks_the_write(self):
+        entry = self.harness / "HARNESS.md"
+        entry.write_text("# HARNESS.md\n\nSingle file rule.\n", encoding="utf-8")
+        self.run_hook(self.read(entry))
+        self.assertEqual(self.decision(self.write()), {})
+
+    def test_missing_harness_md_does_not_block_writes(self):
+        (self.harness / "CLAUDE.md").unlink()
+        missing = self.harness / "HARNESS.md"
+        self.assertEqual(self.decision(self.write()), {})
+        self.assertEqual(self.decision(self.write(tool="Edit")), {})
+        self.assertEqual(self.decision(self.write(tool="NotebookEdit")), {})
+        _, output = self.hook_output(self.prompt())
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertIn(f"does not exist at {missing}", context)
+        self.assertIn("workspace config update --apply", context)
+        self.assertNotIn("blocked until", context)
+
+    def test_legacy_claude_md_is_still_the_entry(self):
+        _, output = self.hook_output(self.prompt())
+        self.assertIn(str(self.harness / "CLAUDE.md"), output["hookSpecificOutput"]["additionalContext"])
+        specific = self.decision(self.write())
+        self.assertEqual(specific.get("permissionDecision"), "deny")
+        self.assertIn(str(self.harness / "CLAUDE.md"), specific.get("permissionDecisionReason", ""))
+
     # 6 ---------------------------------------------------------------------------------------
     def test_removing_f07_in_yaml_disables_the_gate_and_reminder(self):
         self.write_harness(HARNESS_POLICY_NO_F07)

@@ -56,9 +56,12 @@ class ApprovalTest(unittest.TestCase):
         self.pklog = self.tmp / "pkexec.log"
         self.write_stub("zenity", ZENITY_STUB)
         self.write_stub("pkexec", PKEXEC_STUB)
+        # The stub's `sleep` needs the real sleep; a symlink keeps PATH to the stub folder only, so a
+        # real kdialog, zenity or pkexec on the machine can never be found by the test.
+        os.symlink(shutil.which("sleep") or "/bin/sleep", self.bin / "sleep")
         self.records = []
         self.env = mock.patch.dict(os.environ, {
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": str(self.bin),
             "DISPLAY": ":9",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/stub-bus",
             "STUB_ZLOG": str(self.zlog),
