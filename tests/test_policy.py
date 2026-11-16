@@ -218,8 +218,8 @@ class PolicyTest(unittest.TestCase):
                 # allow, now as the session's own repo instead of the machine config.
                 (self.write(self.home / ".config" / "app.conf"), "repo.write", "allow"),
                 (self.write("/opt/other/file.txt"), "repo.outside", "allow"),
-                (self.bash("curl https://example.com"), "net", "ask"),
-                (self.bash("pip install requests"), "install", "ask"),
+                (self.bash("curl https://example.com"), "net", "allow"),
+                (self.bash("pip install requests"), "install", "allow"),
                 (self.bash("sudo ls"), "admin", "privileged"),
                 (self.read(self.home / ".env"), "secrets", "deny"),
                 ({"tool_name": "send_message", "tool_input": {}}, "session.external", "ask"),
@@ -256,8 +256,8 @@ class PolicyTest(unittest.TestCase):
             result = policy.check_event(self.web("WebSearch", agent_id="a1"))
             self.assertEqual((result["capability"], result["decision"]), ("net.web", "allow"))
             # the shell network tools keep their own capability and their own answer
-            for command, decision in (("curl https://example.com", "ask"),
-                                      ("gh pr list", "ask")):
+            for command, decision in (("curl https://example.com", "allow"),
+                                      ("gh pr list", "allow")):
                 with self.subTest(command=command):
                     result = policy.check_event(self.bash(command, agent_id="a1"))
                     self.assertEqual((result["capability"], result["decision"]),
@@ -853,7 +853,7 @@ class PolicyTest(unittest.TestCase):
         path = self.state / "policy.jsonl"
         entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
         self.assertEqual(len(entries), 4)
-        self.assertEqual(entries[0]["target"], "/etc/passwd")
+        self.assertEqual(entries[0]["target"], os.path.realpath("/etc/passwd"))   # macOS: /private/etc
         self.assertTrue(entries[1]["target"].endswith("/file.txt"))
         self.assertEqual(entries[2]["target"], "sort")
         self.assertEqual(entries[3]["target"], "git commit")
@@ -1023,6 +1023,9 @@ class PolicyTest(unittest.TestCase):
 
         with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
             event = self.bash("curl https://example.com", agent_id="a1")
+            self.assertEqual(policy.check_event(event)["decision"], "allow")
+            # the home subagent inherits the home role: net is allowed, vcs.remote still asks
+            event = self.bash("git push", agent_id="a1")
             self.assertEqual(policy.check_event(event)["decision"], "ask")
 
     def test_explicit_subagent_role_uses_the_parent_role(self):
@@ -1147,7 +1150,7 @@ class PolicyTest(unittest.TestCase):
                                  ("ask", "session.external"))
 
     def test_other_session_message_tools_remain_external(self):
-        for tool in ("send_message", "session_message", "session_request", "cross_session",
+        for tool in ("send_message", "session_message", "cross_session",
                      "conference"):
             with self.subTest(tool=tool):
                 result = self.decide({"tool_name": tool, "tool_input": {}, "session_id": "s"})
@@ -1324,7 +1327,7 @@ class PolicyTest(unittest.TestCase):
                 self.assertEqual((result["decision"], result["reason"]),
                                  ("allow", "policy.reason.defer"))
 
-    def test_python_venv_is_install_in_repo_and_ask_in_home(self):
+    def test_python_venv_is_install_and_allowed_in_repo_and_home(self):
         # `python -m venv` creates an environment and installs nothing; it is classified like
         # `pip install` (capability `install`, no target path), so the role table decides.
         for command in ("python3 -m venv .venv", "python -m venv .venv", "python3 -I -m venv .venv"):
@@ -1335,7 +1338,7 @@ class PolicyTest(unittest.TestCase):
             for command in ("python3 -m venv .venv", "python3 -I -m venv .venv"):
                 with self.subTest(command=command, role="home"):
                     result = self.decide(self.bash(command))
-                    self.assertEqual((result["decision"], result["capability"]), ("ask", "install"))
+                    self.assertEqual((result["decision"], result["capability"]), ("allow", "install"))
 
     def test_godot_requires_headless_and_paths_inside_the_box(self):
         commands = (
@@ -1545,29 +1548,36 @@ class PolicyTest(unittest.TestCase):
         self.ask_marker()
         self.assertEqual(self.decide(self.bash("doas ls"))["decision"], "privileged")
 
-    def test_macos_admin_programs_are_admin_for_every_role(self):
-        # The macOS admin tools deny like sudo in every role, in command position and after a
-        # command wrapper or in a quoted script (the ambiguous path `_admin_in_text`).
+    def test_systemctl_and_macos_tools_are_not_admin(self):
+        # Only what always needs a password or root is admin (sudo, pkexec, mount, useradd...).
+        # systemctl, service and the macOS tools run with the user's account: unknown-program defer.
         programs = (
-            "sysadminctl", "dseditgroup", "dscl", "launchctl", "spctl", "csrutil", "fdesetup",
-            "systemsetup", "networksetup", "diskutil", "security",
+            "systemctl", "service", "sysadminctl", "dseditgroup", "dscl", "launchctl", "spctl",
+            "csrutil", "fdesetup", "systemsetup", "networksetup", "diskutil", "security",
         )
         for program in programs:
-            self.assertIn(program, policy.ADMIN_PROGRAMS)
+            self.assertNotIn(program, policy.ADMIN_PROGRAMS)
         for role, root in (("repo", self.repo), ("home", self.home)):
             with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
                 for program in programs:
                     commands = (f"{program} --help", f"/usr/sbin/{program} --help",
-                                f"/opt/homebrew/bin/{program} --help",
-                                f"xargs {program} --help", f"sh -c '{program} --help'")
+                                f"/opt/homebrew/bin/{program} --help")
                     for command in commands:
                         with self.subTest(program=program, role=role, command=command):
                             result = policy.check_event(self.bash(command))
-                            self.assertEqual((result["decision"], result["capability"]),
-                                             ("privileged", "admin"))
-                # A bare admin name used as an argument still defers (item 135), and so does the
-                # rest of the unknown-program matrix: the new entries only change command position.
-                for command in ("grep -r security src", "grep -r networksetup docs",
+                            self.assertNotEqual(result["decision"], "privileged")
+                            self.assertNotEqual(result.get("capability"), "admin")
+                # Still admin when a wrapper or a sudo runs them: the admin word is the elevator.
+                for command in ("sudo systemctl restart nginx", "sudo launchctl list",
+                                "xargs sudo systemctl stop x", "sh -c 'sudo systemctl status'",
+                                "sudo security find-generic-password"):
+                    with self.subTest(command=command, role=role):
+                        result = policy.check_event(self.bash(command))
+                        self.assertEqual((result["decision"], result["capability"]),
+                                         ("privileged", "admin"))
+                # A bare name used as an argument still defers (item 135), and so does the
+                # rest of the unknown-program matrix.
+                for command in ("grep -r security src", "grep -r systemctl docs",
                                 "grep -r diskutil .", "dotnet --version"):
                     with self.subTest(command=command, role=role):
                         result = policy.check_event(self.bash(command))
@@ -1575,10 +1585,36 @@ class PolicyTest(unittest.TestCase):
                                          ("allow", "policy.reason.defer"))
                 self.assertEqual(policy.check_event(self.bash("cargo run"))["decision"], "allow")
 
+    def test_container_and_cluster_tools_are_not_admin(self):
+        # Item: docker, podman, nerdctl, kubectl and helm run with the user's account, no pkexec.
+        # They are not in ADMIN_PROGRAMS, so they fall to the unknown-program defer, in every role.
+        programs = ("docker", "podman", "nerdctl", "kubectl", "helm")
+        for program in programs:
+            self.assertNotIn(program, policy.ADMIN_PROGRAMS)
+        commands = (
+            "docker ps", "docker run --rm alpine true", "/usr/bin/docker ps", "podman ps",
+            "nerdctl ps", "kubectl get pods", "helm list", "echo x | docker ps",
+            "sh -c 'docker ps'", "xargs docker ps",
+            "grep -rn docker .", "grep -rn docker src", "grep -n -e docker -e helm README.md",
+            'grep -n "docker\\|podman\\|helm" SECURITY.md',
+        )
+        for role, root in (("repo", self.repo), ("home", self.home)):
+            with patched_env(WS_SESSION_ROLE=role, WS_SESSION_ROOT=str(root)):
+                for command in commands:
+                    with self.subTest(command=command, role=role):
+                        result = policy.check_event(self.bash(command))
+                        self.assertEqual(result["decision"], "allow")
+                        self.assertNotEqual(result.get("capability"), "admin")
+        # The ambiguous forms still defer (the session mode decides), but never as admin.
+        for command in ("grep -rn docker .", "sh -c 'docker ps'"):
+            with self.subTest(command=command):
+                result = policy.check_event(self.bash(command))
+                self.assertEqual((result["decision"], result["reason"]),
+                                 ("allow", "policy.reason.defer"))
+
     def test_homebrew_program_directories_are_recognized(self):
         for command in ("/opt/homebrew/bin/sudo ls", "/opt/homebrew/sbin/sudo ls",
-                        "/opt/homebrew/bin/security find-generic-password",
-                        "/opt/homebrew/bin/launchctl list",
+                        "/opt/homebrew/bin/pkexec ls",
                         "xargs /opt/homebrew/bin/sudo rm",
                         "sh -c '/opt/homebrew/sbin/sudo id'"):
             with self.subTest(command=command):
@@ -1672,7 +1708,7 @@ class PolicyTest(unittest.TestCase):
         with patched_env(WS_SESSION_ROLE="home", WS_SESSION_ROOT=str(self.home)):
             result = policy.check_event(self.bash("curl https://example.com"))
             self.assertEqual((result["decision"], result["reason"]),
-                             ("ask", "policy.reason.ask"))
+                             ("allow", "policy.reason.allow"))
 
     def test_ask_mode_keeps_the_allows_and_the_dev_session_write(self):
         self.ask_marker()

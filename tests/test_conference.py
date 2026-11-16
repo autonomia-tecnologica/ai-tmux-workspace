@@ -738,11 +738,12 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(reason, i18n.t("conference.readme_pending"))
         self.assertEqual(readme.read_text(encoding="utf-8"), "# Projeto\n\nantigo\n")
         pending = conference.read_pending()
-        self.assertIn(str(self.a), pending)
-        self.assertIn("-antigo", pending[str(self.a)]["diff"])
-        self.assertIn("+novo", pending[str(self.a)]["diff"])
-        self.assertEqual(pending[str(self.a)]["before"], "# Projeto\n\nantigo\n")
-        self.assertEqual(pending[str(self.a)]["after"], "# Projeto\n\nnovo\n")
+        key = real(self.a)     # pending entries are keyed by the resolved repo path (macOS: /private/var)
+        self.assertIn(key, pending)
+        self.assertIn("-antigo", pending[key]["diff"])
+        self.assertIn("+novo", pending[key]["diff"])
+        self.assertEqual(pending[key]["before"], "# Projeto\n\nantigo\n")
+        self.assertEqual(pending[key]["after"], "# Projeto\n\nnovo\n")
 
     def test_a_readme_edit_with_a_stale_old_string_is_not_captured(self):
         readme = self.a / "README.md"
@@ -947,7 +948,9 @@ class ConverseTest(unittest.TestCase):
 
     def test_the_header_shows_what_each_repo_is_doing(self):
         conference.start(self.repos)
-        conference.say("hi", launch=lambda *a, **k: 999)
+        # The worker pid must be alive: conference.resume() drops waits whose pid is gone, and a
+        # made-up pid (999) exists on some machines and not on others.
+        conference.say("hi", launch=lambda *a, **k: os.getpid())
         message_id = conference.read_log()[0]["id"]
         created = conference.read_active()["created"]
         conference_worker._set_status(self.repos[0], message_id, created, "lendo README.md")

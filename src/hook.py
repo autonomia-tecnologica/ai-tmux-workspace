@@ -430,38 +430,6 @@ def _policy_message(result):
         return result.get("reason") or "policy.reason.error"
 
 
-def _request_popup(d):
-    """Receiver side of session requests: shows the approval popup for a pending request.
-
-    Called on SessionStart and Stop, so the person decides in the receiving agent. The popup is
-    detached: the hook never waits for it and never fails because of it."""
-    if os.environ.get("WS_CONFERENCE_REPO") or os.environ.get("WS_CONFERENCE_BUDGET"):
-        return
-    try:
-        import conference
-        conference.spawn_approval(d.get("cwd") or os.getcwd())
-    except Exception:
-        pass
-
-
-def _request_context(d):
-    """Receiver side: hands an approved conversation request to the agent on its next prompt.
-
-    Only approved requests reach the agent; a refused or expired one is never read. The text is
-    handed over once (`delivered` in the request file)."""
-    try:
-        import conference
-        text = conference.conversation_context(d.get("cwd") or os.getcwd())
-    except Exception:
-        return
-    if not text:
-        return
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit",
-        "additionalContext": text,
-    }}, ensure_ascii=False))
-
-
 def _policy_check(d):
     """PreToolUse decision from the central policy, the same engine the OpenCode adapter calls.
 
@@ -529,10 +497,6 @@ def main():
     if ev == "Stop":
         _record_permission_mode(d)
         _record_tab_session(d)
-    if ev == "UserPromptSubmit":
-        _request_context(d)
-    if ev in ("SessionStart", "Stop"):
-        _request_popup(d)
 
 
 def agent_main(argv):

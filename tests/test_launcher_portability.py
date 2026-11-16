@@ -158,7 +158,8 @@ class ResolvePathTests(unittest.TestCase):
         folder = Path(self.tmp) / "dir with space"
         folder.mkdir()
         missing = folder / "not-created"
-        self.assertEqual(self.resolve(str(missing)), str(folder) + "/not-created")
+        # macOS: the temp dir is under /var, a link to /private/var, and resolve_path canonicalises it.
+        self.assertEqual(self.resolve(str(missing)), os.path.realpath(folder) + "/not-created")
         self.assertFalse(missing.exists())
 
     def test_symlinks_are_followed_without_readlink_f(self):
@@ -166,7 +167,7 @@ class ResolvePathTests(unittest.TestCase):
         folder.mkdir()
         link = Path(self.tmp) / "link"
         link.symlink_to(folder)
-        self.assertEqual(self.resolve(str(link / "child")), str(folder) + "/child")
+        self.assertEqual(self.resolve(str(link / "child")), os.path.realpath(folder) + "/child")
 
 
 class LauncherOnMacOsLayoutTests(unittest.TestCase):

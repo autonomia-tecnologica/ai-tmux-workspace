@@ -213,6 +213,11 @@ class InstallerTest(unittest.TestCase):
         unshare = shutil.which("unshare")
         if not unshare:
             self.skipTest("unshare not available to simulate uid 0")
+        # Some runners (GitHub ubuntu-latest) forbid the uid_map write that `unshare -r` needs.
+        probe = subprocess.run([unshare, "-r", "true"], capture_output=True, text=True,
+                               check=False, timeout=30)
+        if probe.returncode != 0:
+            self.skipTest("unshare -r cannot map uid 0 here: " + probe.stderr.strip())
         as_root = subprocess.run(
             [unshare, "-r", BASH, str(INSTALL)], input="s\n", env=self.env(),
             capture_output=True, text=True, check=False, timeout=60)

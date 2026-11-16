@@ -283,6 +283,14 @@ class SessionTest(unittest.TestCase):
     def launch_env(line):
         return dict(arg.split("=", 1) for arg in shlex.split(line) if "=" in arg)
 
+    @staticmethod
+    def system_bin_dirs():
+        """macOS also appends the Homebrew folders that exist (lib.HOMEBREW_BIN_DIRS); Linux adds none."""
+        if sys.platform != "darwin":
+            return []
+        return [d for d in ("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
+                if os.path.isdir(d)]
+
     def test_opencode_launch_adds_the_existing_user_bin_dirs_to_path(self):
         self.opencode_free()
         bindir, binary = self.fake_opencode()
@@ -291,7 +299,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         exports = self.launch_env(out)
-        self.assertEqual(exports["PATH"], f"{path}{os.pathsep}{bindir}")
+        self.assertEqual(exports["PATH"], os.pathsep.join([path, str(bindir), *self.system_bin_dirs()]))
         self.assertEqual(shutil.which("opencode", path=exports["PATH"]), str(binary))
         self.assertEqual(exports["OPENCODE_CONFIG"],
                          str(self.state / "settings" / "opencode-opencode-free.json"))
@@ -306,7 +314,7 @@ class SessionTest(unittest.TestCase):
         proc = self.lib("profile-cmd", "opencode-free", str(self.repo), PATH=path)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         exports = self.launch_env(proc.stdout.strip())
-        self.assertEqual(exports["PATH"], f"{path}{os.pathsep}{extra}")
+        self.assertEqual(exports["PATH"], os.pathsep.join([path, str(extra), *self.system_bin_dirs()]))
         self.assertEqual(exports["PATH"].split(os.pathsep).count(str(bindir)), 1)
 
     def test_opencode_launch_keeps_the_recorded_identity(self):

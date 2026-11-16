@@ -102,26 +102,28 @@ class OptionsConferenceTest(unittest.TestCase):
         self.assertEqual(conference.read_active()["repos"], picked)
         converse.assert_called_once_with(repo=str(self.repo))
 
+    # The picker keys its rows by resolved path (macOS: /var is a link to /private/var).
     def test_the_picker_prechecks_the_window_repo_and_returns_the_marked_paths(self):
-        FakePickViewer.keys = [(str(self.sibling), " "), (None, "\r")]
+        FakePickViewer.keys = [(self.paths(self.sibling)[0], " "), (None, "\r")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, self.paths(self.repo, self.sibling))
 
     def test_the_picker_returns_only_the_repos_left_marked(self):
-        FakePickViewer.keys = [(str(self.repo), " "), (str(self.sibling), " "), (None, "\r")]
+        FakePickViewer.keys = [(self.paths(self.repo)[0], " "), (self.paths(self.sibling)[0], " "),
+                               (None, "\r")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, self.paths(self.sibling))
 
     def test_the_picker_cancel_returns_nothing(self):
-        FakePickViewer.keys = [(str(self.sibling), " "), (None, "esc")]
+        FakePickViewer.keys = [(self.paths(self.sibling)[0], " "), (None, "esc")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, [])          # no Enter: cancelled even with marks
 
     def test_the_picker_with_nothing_marked_stays_open_and_returns_nothing(self):
-        FakePickViewer.keys = [(str(self.repo), " "), (None, "\r")]
+        FakePickViewer.keys = [(self.paths(self.repo)[0], " "), (None, "\r")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, [])

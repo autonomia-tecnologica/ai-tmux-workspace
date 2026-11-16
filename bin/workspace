@@ -15,8 +15,6 @@
 #   workspace repo list | on <nome> | off <nome>  repos of the "repos_folder" and their switch (config.yaml)
 #   workspace dev [profile]   window on the workspace's own code (role self): the only session that edits it; not in config
 #   workspace stop [profile]   kill the profile's tmux server
-#   workspace request send <home|repo> <conversa|execucao> <texto> [-- comando...] | inbox | approve <id> | refuse <id>
-#                             pedido entre sessões: só tem efeito depois da aprovação da pessoa no receptor
 # Internal (called from inside tmux): open <repo> · side <tree|diff|github> · left <repos|sessions|folders>
 #   session-menu|session-new|session-run|session-exit  (profile sessions) · tab-new|tab-show|tab-step|tab-exit  (temporary terminal tabs) · plugins-sync <profile>
 set -u
@@ -1131,7 +1129,6 @@ case "${1:-}" in
   worktree) shift; worktree_cmd "$@" ;;
   left) shift; left "$@" ;;
   send) send_prompt "$2" "$3" "${4:-1}" ;;
-  request) shift; "$PYTHON" "$SRC/conference.py" request "$@" ;;
   type) type_prompt "$2" "$3" ;;
   options) tmux display-popup -c "$2" -E -w 80% -h 70% -d "$ROOT" "$(quote "$PYTHON") $(quote "$SRC/options.py")${3:+ $(quote "$3")}" ;;
   session-menu) session_menu "$2" ;;

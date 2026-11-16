@@ -74,7 +74,7 @@ class PolicyProgramsMirrorTest(unittest.TestCase):
         self.assertEqual(divergences(self.text, engine_programs()), [])
 
     def test_a_program_removed_on_either_side_fails(self):
-        without_in_yaml = self.text.replace("sudo, doas, pkexec, su,", "doas, pkexec, su,", 1)
+        without_in_yaml = self.text.replace("# programs.admin: sudo, ", "# programs.admin: ", 1)
         self.assertNotEqual(without_in_yaml, self.text)
         self.assertTrue(divergences(without_in_yaml, engine_programs()))
 

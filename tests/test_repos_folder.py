@@ -305,6 +305,13 @@ class PanelReposTest(unittest.TestCase):
                     os.environ[name] = value
 
         self.addCleanup(restore)
+        # A background `git fetch` (lib._fetch_bg) can still write into .git when the temp folder is
+        # removed (ENOTEMPTY). The panel test does not need the network: no fetch, and the git round
+        # is settled before the cleanup below runs.
+        fetch = mock.patch.object(lib, "_fetch_bg")
+        fetch.start()
+        self.addCleanup(fetch.stop)
+        self.addCleanup(settle_git_round)
         self.config.write_text(yaml_min.dumps({"repos_folder": str(self.folder)}), encoding="utf-8")
         import panel_repos
         self.panel = panel_repos

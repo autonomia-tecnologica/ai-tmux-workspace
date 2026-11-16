@@ -64,9 +64,9 @@ roles:
     vcs.write: allow
     vcs.remote: ask
     test.run: allow
-    net: ask
+    net: allow
     net.web: allow
-    install: ask
+    install: allow
     admin: privileged
     config.read: allow
     config.write: allow
@@ -97,21 +97,21 @@ roles:
 # capacidade vcs.write: git que altera o repo local (add, commit, checkout, merge, rebase, reset...); allow nos dois papéis. Motivo: é o trabalho, e não sai da máquina.
 # capacidade vcs.remote: git que fala com o remoto (push, pull, fetch, clone, remote update); ask nos dois papéis. Motivo: o código sai da máquina, a pessoa decide.
 # capacidade test.run: rodar testes e checagens (pytest, unittest, make test, go test...); allow nos dois papéis. Motivo: validar faz parte do trabalho.
-# capacidade net: acesso à rede (curl, gh, ssh, ...); repo: allow, porque o trabalho com GitHub passa por gh; home: ask, porque a sessão da casa enxerga arquivos de vários projetos.
+# capacidade net: acesso à rede (curl, gh, ssh, ...); allow nos dois papéis. Motivo: o trabalho com GitHub passa por gh, e a sessão da casa precisa de rede sem parar para perguntar. Risco aceito: a sessão da casa acessa a rede sem perguntar (ela enxerga arquivos de vários projetos, então um envio para fora sai sem confirmação). `vcs.remote` (push, pull, fetch) e `session.external` continuam ask.
 # capacidade net.web: leitura web (WebFetch, WebSearch, fetch), sem shell; allow nos dois papéis. Motivo: o agente lê página pública para trabalhar, e ask no subagente da casa travava sem ninguém para responder (item 157). Risco aceito: a IA lê página pública sem perguntar, e a URL pode levar um trecho do que a sessão viu. `curl`, `gh` e `ssh` continuam em `net`.
-# capacidade install: instalar software (pip install, apt, brew, npm install...); repo: allow, para as dependências do projeto; home: ask, porque instalar fora de um projeto muda o ambiente todo.
-# capacidade admin: administração do sistema e de contêiner (sudo, systemctl, docker...); deny nos dois papéis, sem exceção. Motivo: root ou um daemon de contêiner fura a caixa. A lista está em `programs.admin`.
+# capacidade install: instalar software (pip install, apt, brew, npm install...); allow nos dois papéis. Motivo: as dependências do projeto e as ferramentas do trabalho entram sem parar para perguntar. Risco aceito: a sessão da casa instala software sem perguntar, e instalar fora de um projeto muda o ambiente todo. `admin` (sudo, pkexec, su) continua privileged.
+# capacidade admin: elevação de privilégio (sudo, doas, pkexec, su); privileged nos dois papéis, sem exceção: a pessoa aprova o comando inteiro e ele roda com pkexec. Motivo: root fura a caixa. A lista está em `programs.admin`.
 # capacidade config.read: ler configuração (config.yaml, ~/.config, ~/.claude, a instalação); allow nos dois papéis. Motivo: o agente lê o ambiente para trabalhar. A pasta de controle só é lida, nunca escrita.
 # capacidade config.write: escrever fora da caixa em ~/.config, ~/.claude e na instalação; repo: deny; home: allow, porque a sessão da casa ajusta o ambiente da pessoa. A pasta de controle é negada para todo papel por regra própria.
 # capacidade tmp: escrever na área temporária (/tmp e, no macOS, a pasta temporária); allow nos dois papéis. Motivo: não guarda nada de projeto e faz parte da caixa.
 # capacidade secrets: arquivos de credencial (.env, chaves privadas, .ssh, .aws, .npmrc, tokens do gh...); deny nos dois papéis, mesmo dentro da caixa. Motivo: segredo não deve ser lido nem escrito pelo agente.
-# capacidade session.external: mensagem ou pedido a outra sessão (send_message, conference); ask nos dois papéis. Motivo: uma sessão não fala com outra sem a pessoa saber.
+# capacidade session.external: mensagem a outra sessão (send_message, conference); ask nos dois papéis. Motivo: uma sessão não fala com outra sem a pessoa saber.
 #
 # Classes de programa: o motor classifica pelo nome do programa. Cada lista abaixo é espelhada em
 # `src/policy.py` e conferida por `tests/test_policy_programs.py`: mudar uma exige mudar a outra.
 # A linha `# programs.<classe>: ...` tem o formato fixo que o teste lê; o porquê vem na linha seguinte.
-# programs.admin: sudo, doas, pkexec, su, systemctl, service, mount, umount, swapon, swapoff, modprobe, insmod, rmmod, iptables, ip6tables, nft, ufw, firewall-cmd, useradd, userdel, usermod, groupadd, groupdel, passwd, visudo, docker, podman, nerdctl, kubectl, helm, sysadminctl, dseditgroup, dscl, launchctl, spctl, csrutil, fdesetup, systemsetup, networksetup, diskutil, security
-#   Porquê: administração do sistema e de contêiner, sempre negada. sudo, doas, pkexec e su elevam privilégio. systemctl, service, mount, modprobe, iptables, nft, ufw e firewall-cmd mudam serviços, discos e rede. useradd e afins mexem em contas. docker, podman, nerdctl, kubectl e helm dão controle de contêiner e de cluster: o daemon equivale a root e fura a caixa (um contêiner com pasta do host montada escreve fora do que o motor vê). No macOS: sysadminctl, dseditgroup e dscl mexem em contas; launchctl em serviços; spctl, csrutil e fdesetup em Gatekeeper, SIP e FileVault; systemsetup e networksetup no sistema e na rede; diskutil nos discos; security no chaveiro.
+# programs.admin: sudo, doas, pkexec, su
+#   Porquê: só os programas que elevam privilégio, negados para o agente e aprovados pela pessoa com pkexec. Todo o resto (nft, mount, systemctl, docker, ferramentas do macOS, ...) é um programa comum: roda com a conta do usuário, e o que precisar de root passa por sudo ou pkexec. Risco aceito para contêiner, ver SECURITY.md.
 # programs.net: curl, wget, http, https, ssh, scp, sftp, ftp, telnet, nc, netcat, ncat, socat, ping, ping6, traceroute, dig, nslookup, host, gh, rsync
 #   Porquê: rede ou transferência para fora da máquina. A decisão vem da capacidade `net`, por papel. gh fala com o GitHub.
 # programs.install: apt, apt-get, aptitude, pacman, yay, paru, dnf, yum, zypper, brew, pip, pip3, gem, composer, snap, flatpak

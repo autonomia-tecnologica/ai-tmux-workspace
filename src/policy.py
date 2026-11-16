@@ -129,11 +129,10 @@ READ_TOOLS = {"read", "glob", "grep", "ls", "list", "notebookread"}
 WRITE_TOOLS = {"write", "edit", "multiedit", "patch", "notebookedit"}
 BASH_TOOLS = {"bash", "shell", "execute"}
 NET_TOOLS = {"webfetch", "websearch", "fetch"}
-# A request coming from another session (item 65) is recognized by one of these tool names or by
-# an explicit `external_session`/`origin` field. The policy always answers `ask`.
+# A message from another session is recognized by one of these tool names or by an explicit
+# `external_session`/`origin` field. The policy always answers `ask`.
 EXTERNAL_TOOLS = {
-    "send_message", "session_message", "session_request", "sessionrequest",
-    "cross_session", "session.external", "conference",
+    "send_message", "session_message", "cross_session", "session.external", "conference",
 }
 # Tools with no file or network effect of their own. The subagent's own tool calls are still
 # classified (agent_id), so allowing `Task` does not allow what the subagent does. `SendMessage`
@@ -182,15 +181,7 @@ SECRET_HOME_FILES = (
 # valid; they are expanded before this check.
 _EXPANSION = re.compile(r"[$`*?\[\]{}]")
 
-ADMIN_PROGRAMS = {
-    "sudo", "doas", "pkexec", "su", "systemctl", "service", "mount", "umount", "swapon",
-    "swapoff", "modprobe", "insmod", "rmmod", "iptables", "ip6tables", "nft", "ufw", "firewall-cmd",
-    "useradd", "userdel", "usermod", "groupadd", "groupdel", "passwd", "visudo", "docker",
-    "podman", "nerdctl", "kubectl", "helm",
-    # macOS admin tools (accounts, launchd, Gatekeeper/SIP, FileVault, network and disks).
-    "sysadminctl", "dseditgroup", "dscl", "launchctl", "spctl", "csrutil", "fdesetup",
-    "systemsetup", "networksetup", "diskutil", "security",
-}
+ADMIN_PROGRAMS = {"sudo", "doas", "pkexec", "su"}
 NET_PROGRAMS = {
     "curl", "wget", "http", "https", "ssh", "scp", "sftp", "ftp", "telnet", "nc", "netcat",
     "ncat", "socat", "ping", "ping6", "traceroute", "dig", "nslookup", "host", "gh", "rsync",

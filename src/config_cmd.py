@@ -12,8 +12,12 @@
      installer.overlay_harness writes harness_source() over it: this checkout's harness/ (regras/ included),
      or the canonical source only when there is none. Only what the overlay installed before (state/
      harness-overlay.json) and the source no longer has is removed; forcado.yaml, source.json and extras stay.
-  3. the generated settings of each profile (lib.expected_profile_settings), when manage is on.
-  4. the Claude Code hooks: the installer's own step (`bin/workspace install-hooks`), run against a
+  3. the installed security/ files (gate.py, policy.yaml, policy.py, paths.py, yaml_min.py,
+     opencode-policy.js, i18n/pt-BR.json): byte compare with this checkout, the same files that
+     installer.install_policy_files writes. Applying copies them again, on its own, even when the harness
+     itself has no drift. Missing files count as drift.
+  4. the generated settings of each profile (lib.expected_profile_settings), when manage is on.
+  5. the Claude Code hooks: the installer's own step (`bin/workspace install-hooks`), run against a
      temporary HOME, shows whether it would change ~/.claude/settings.json. Applying runs it for real.
 
 Without `--apply` it only shows. With `--apply` it prints the config diff, writes a backup of
@@ -33,6 +37,7 @@ from pathlib import Path
 import drift
 import installer
 import lib
+import session
 import yaml_min
 from i18n import t
 
@@ -407,6 +412,56 @@ def _harness_step(apply):
     return (1 if still else 0), bool(still)
 
 
+def security_dir():
+    """The installed security/ folder: next to the installed harness (overlay_harness writes it there)."""
+    return drift.harness_dir().parent / "security"
+
+
+def security_drift():
+    """Destinations of the policy files (installer.POLICY_SOURCES) that differ from this checkout, or are
+    missing in the installed security/. Only files this checkout ships are compared."""
+    security = security_dir()
+    drifted = []
+    for folder, name, destination in installer.POLICY_SOURCES:
+        source = ROOT / folder / name
+        if not source.is_file():
+            continue
+        installed = security / destination
+        if not installed.is_file() or installed.read_bytes() != source.read_bytes():
+            drifted.append(destination)
+    return drifted
+
+
+def _security_step(apply):
+    """(exit status, pending) for the installed security/ files against this checkout."""
+    print(t("config.section.security"))
+    if not session.harness_managed():
+        print(t("config.security.skipped"))
+        return 0, False
+    drifted = security_drift()
+    if not drifted:
+        print(t("config.security.none"))
+        return 0, False
+    for name in drifted:
+        print(t("config.security.drift", name=name))
+    if not apply:
+        return 0, True
+    security = security_dir()
+    if _inside(security, ROOT):
+        print(t("config.security.inside_code", path=str(security)))
+        return 1, True
+    try:
+        installer.install_policy_files(security)
+    except OSError as error:
+        print(t("config.security.failed", error=str(error)))
+        return 1, True
+    still = security_drift()
+    for name in still:
+        print(t("config.security.still", name=name))
+    print(t("config.security.applied", path=str(security)))
+    return (1 if still else 0), bool(still)
+
+
 def _read_json(path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -515,7 +570,7 @@ def show():
 
 def update(apply):
     status, pending = 0, False
-    for step in (_config_step, _harness_step, _profiles_step, _hooks_step):
+    for step in (_config_step, _harness_step, _security_step, _profiles_step, _hooks_step):
         code, step_pending = step(apply)
         status = max(status, code)
         pending = pending or step_pending

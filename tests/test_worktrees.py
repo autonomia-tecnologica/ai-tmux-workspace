@@ -36,7 +36,7 @@ class WorktreeTest(unittest.TestCase):
         self.addCleanup(restore)
         self.repo = self.root / "myrepo"
         self.repo.mkdir()
-        self.git("init", "-q")
+        self.git("init", "-q", "-b", "main")   # the default branch must not depend on init.defaultBranch
         hooks = self.root / "no-hooks"          # keep the user's global commit-msg hooks out
         hooks.mkdir()
         self.git("config", "core.hooksPath", str(hooks))

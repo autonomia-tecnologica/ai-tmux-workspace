@@ -6,7 +6,7 @@ module-level raw-terminal import (`termios`/`tty`) and a SIGWINCH handler that d
 
 `sys.stdout.write` is deliberately not guarded: `policy.py` (hook JSON) and `session_risk.py` (the
 confirmation prompt) write to stdout without painting a screen. For the same reason, a function-local
-raw import is a one-shot key read (`session_risk._read_key`, `conference._read_key`), not a module
+raw import is a one-shot key read (`session_risk._read_key`), not a module
 owning the terminal for its lifetime, so only module-level imports are guarded.
 
 `ALLOWED` is today's debt. It may only shrink: every entry carries its reason, and the exact set is
@@ -55,8 +55,6 @@ ALLOWED = {
     "session_placeholder.py": ("debt, legitimate: draws alone (clear + SIGWINCH) so it survives a "
                                "reload without lib/tmux"),
     "mic.py": "debt: owns the dictation full-screen loop (clear + alt-screen) outside viewer",
-    "conference.py": ("debt: reads one key in raw mode for the request popup; the conference "
-                      "screen itself draws through viewer"),
 }
 
 EXPECTED_ALLOWED = frozenset({
@@ -64,7 +62,6 @@ EXPECTED_ALLOWED = frozenset({
     "panel_tabs.py",
     "session_placeholder.py",
     "mic.py",
-    "conference.py",
 })
 
 # Escape literals as they appear in the source text (`\\x1b` is the two characters backslash-x1b).

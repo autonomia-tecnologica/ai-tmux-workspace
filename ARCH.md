@@ -97,11 +97,10 @@ O sinal só acorda. O estado não viaja no sinal: o consumidor relê o estado do
 | sessão do Claude mudou | hook do Claude (hooks do `settings.json` gerado) | comando do hook | `src/hook.py` | `src/hook.py` (ficha) e `src/session_state.py` (aba) |
 | sessão do OpenCode mudou | `security/opencode-policy.js` | arquivo `tabs/session-<aba>` | `session_state.session_for` | `src/session_state.py` (dívida: três escritores) |
 | estado do agente mudou (Claude e OpenCode) | hook do Claude (`src/hook.py`) e `security/opencode-policy.js`, que chama `hook.py agent` | comando do hook; spawn do plugin com o evento no stdin | `src/hook.py` traduz pelo adaptador (`agents/*.state_of`) e grava pela `session_state` | `src/session_state.py` (estado da aba em `tabs/<sha1>.json`) |
-| pedido de conferência | `src/conference.py` | arquivo em `$WS_STATE/requests` | `conference_worker` e tela da conferência | `src/conference.py` (dívida: estado na camada de desenho) |
 | barra de status | `bin/workspace`, pelas opções `@ws_*` | `#(...)` em `config/tmux.conf` | tmux pinta a barra | `src/statusbar.py` (texto) |
 
 Provas: `grep -n SIGWINCH src/viewer.py`; `grep -n USR1 bin/workspace`; `grep -n session- src/hook.py`;
-`grep -n session- security/opencode-policy.js`; `grep -n requests src/conference.py`;
+`grep -n session- security/opencode-policy.js`;
 `grep -n statusbar config/tmux.conf`.
 
 ## Estado vivo no tmux
@@ -216,7 +215,6 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 | `$WS_STATE/settings/<perfil>` (settings gerados por perfil) | `src/lib.py` (`ensure-settings`) | `lib`; o instalador lê o caminho |
 | `$WS_STATE/settings/opencode-<perfil>.json` (config gerado do OpenCode) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
 | `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin da política) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
-| `$WS_STATE/requests/` (pedidos de conferência) | `src/conference.py` | `conference` (dívida: camada de desenho) |
 | cache de uso extra | `src/extra_usage.py` | `extra_usage` |
 | `~/.config/ai-tmux-workspace/conference/` (conferência) | `src/paths.py` (`conference_dir`) | `src/conference.py` |
 | `~/.local/share/ai-tmux-workspace/{app,harness,security}` (código e `HARNESS.md` instalados) | `src/paths.py` (`install_dir`, `harness_dir`, `security_dir`) | o instalador; os demais só leem |
@@ -243,10 +241,9 @@ e no instalador, e não sobrescreve o destino. Prova: `grep -n "def state_dir\|d
 | `src/panel_tabs.py` pinta a tira de abas (tela cheia + cbreak) no próprio laço | a tira é o molde dos painéis e nasceu antes de `collect(viewer)` | migrar para `collect(viewer)` e tirar a linha da allowlist de `tests/test_architecture.py` |
 | `src/session_placeholder.py` desenha sozinho (clear + `SIGWINCH`) | dívida legítima: precisa sobreviver ao reload sem `lib`/`tmux` | manter até o reload deixar de exigir tela própria; a exceção está documentada no docstring e fixada no teste |
 | `src/mic.py` mantém laço de ditado em tela cheia e alt-screen fora do `viewer` | o ditado controla o tempo do laço e o estado do microfone | migrar o laço para o `viewer`, restando ao `mic` só a captura e a transcrição |
-| `src/conference.py` lê uma tecla em modo cru no popup de pedido | a tela desenha pelo `viewer`; a leitura de tecla ficou no módulo | usar a leitura de tecla do `viewer`, como os demais popups |
 | `bin/workspace` chama `tmux` (209 de 1136 linhas) e é dono de abas, sessão e geometria | o script de entrada virou o motor: abas (`tab_*`, `state_*`), sessão (`session_*`) e geometria (`layout_apply`) | abas e sessão vão para `src/` (sessão e estado), e a chamada a `tmux` vai para `src/tmux.py`; `layout_apply` continua dono da geometria (item 108). Prova: `grep -c tmux bin/workspace` (209) e `grep -n "^tab_\|^session_\|^layout_apply" bin/workspace`. Freio que falta: nenhum; hoje só o grep prova |
 | painéis chamam `bin/workspace` por subprocesso (`lib.WS`) | o script é a única porta para ação de aba e sessão, e o painel não tem função de `src/` para chamar | ações viram funções de `src/` que o painel e o script chamam; o painel deixa de usar `lib.WS`. Prova: `grep -n "lib.WS" src/panel_*.py` (repos, sessions, tabs e tasks) |
-| `conference*` escreve estado na camada de desenho (pedidos, log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
+| `conference*` escreve estado na camada de desenho (log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
 | `lib` carrega `security/gate.py` por caminho | a renderização do settings do freio mora no motor instalado, então `src/` depende de `security/` | `lib` chama o motor instalado (`AT_SECURITY_DIR`) por processo, ou a renderização vai para `src/`; `security/` guarda o motor e `harness/` fica só com o texto. Prova: `grep -n spec_from_file_location src/lib.py` e `grep -n GATE_PY src/lib.py` |
 | `tabs/session-<aba>` tem três escritores (`session_state`, `hook`, `opencode-policy.js`) | o id vivo da aba nasceu em três lugares, cada um com a própria escrita | um escritor de formato em `session_state`; o plugin OpenCode (JS) precisa de ponte documentada. Prova: `grep -n session- src/hook.py src/session_state.py security/opencode-policy.js` |
 | `agents/claude.py` e `agents/opencode.py` importam `conference` no nível do módulo (estado → desenho) | o adaptador lê as constantes da conferência; import de módulo quebra a direção permitida | import local dentro da função que usa a constante, com motivo (como `lib`), ou levar as constantes para a camada de estado. Prova: `grep -n "^import conference" src/agents/claude.py src/agents/opencode.py` (linhas 13 e 15) |

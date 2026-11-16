@@ -64,6 +64,12 @@ Isso impede que o workspace se eleve. Não impede que o agente, rodando com a su
 - A settings gerada do agente é uma camada a mais via `--settings`. Não substitui hooks nem o `deny` da base, e o `settings.json` da pessoa continua valendo.
 - A migração da config (`ctrl+b o`) não altera o `settings.json`.
 
+## Riscos aceitos
+
+- **Só o que exige senha ou root é comando administrativo.** `admin` (pkexec com aprovação) ficou com `sudo`, `doas`, `pkexec`, `su`, `mount`, `iptables`, `useradd` e afins. Estes saíram e rodam com a sua conta, sem pkexec: `systemctl`, `service`, as ferramentas do macOS (`launchctl`, `security`, `diskutil`, ...) e `docker`, `podman`, `nerdctl`, `kubectl`, `helm`. Com `sudo` na frente (`sudo systemctl ...`) o comando continua `admin`.
+- **Rede e instalação na sessão da casa.** `net` e `install` são `allow` no papel `home`, como no papel `repo`. O risco aceito: a sessão da casa acessa a rede e instala software sem perguntar. Ela enxerga arquivos de vários projetos, então um envio para fora ou uma instalação passa sem confirmação. `vcs.remote` (push, pull, fetch) e `session.external` continuam `ask`; `secrets` e `admin` (privileged) não mudam.
+- **Contêiner e cluster.** O risco aceito: um contêiner com uma pasta do host montada (ou o socket do daemon) pode escrever fora da caixa do repo, porque o motor não enxerga o que roda dentro dele. A pessoa decidiu aceitar esse risco.
+
 ## Falha aberta conhecida: a LLM gerencia a lista de repos
 
 A sessão do repo principal (`main` no `config.yaml`) abre com o papel `home`, que pode escrever na config (`config.write: allow` em `security/policy.yaml`). Por isso a LLM pode incluir qualquer pasta do ambiente na lista de repos. A lista de repos não é uma barreira contra a LLM. Isso corresponde a `R-SCOPE-04` e `R-SCOPE-02` no threat model, ambos não implementados.

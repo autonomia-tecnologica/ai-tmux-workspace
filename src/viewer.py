@@ -20,7 +20,10 @@ The known exceptions (modules that still own a terminal loop) are named, with th
 one, in tests/test_architecture.py; that list only shrinks as every panel migrates to
 `collect(viewer)`.
 
-Context menu: with `actions(viewer, key) -> [(label, active, action)]`, Space or a right click on an
+Mouse: a click on an unfocused pane only focuses it; the press never reaches the viewer (config/tmux.conf
+MouseDown1Pane). The wheel scrolls either way; a right click in an unfocused pane is not gated (see there).
+
+Context menu: with `actions(viewer, key) ->[(label, active, action)]`, Space or a right click on an
 item opens an overlay; arrows/j/k navigate, Enter runs `action(viewer, key)`, Esc closes.
 An empty list does not open the menu. An inactive item is dimmed and Enter on it just closes.
 An action may call `viewer.open_menu(items)` to open a submenu in the same place; the menu layer

@@ -249,6 +249,36 @@ class CliTests(unittest.TestCase):
         for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json"):
             self.assertTrue((security / name).is_file(), f"missing security file: {name}")
 
+    def test_identical_security_files_are_reported_in_day(self):
+        installer.copy_harness(self.source, self.harness)
+        shown = self.run_cli("update")
+        self.assertIn(t("config.security.none"), shown.stdout)
+        self.assertNotIn(t("config.security.drift", name="policy.yaml"), shown.stdout)
+
+    def test_security_file_drift_is_shown_and_fixed_by_apply(self):
+        installer.copy_harness(self.source, self.harness)
+        security = self.harness.parent / "security"
+        policy = security / "policy.yaml"
+        policy.write_text("net: ask\ninstall: ask\n", encoding="utf-8")
+        (security / "gate.py").unlink()
+
+        shown = self.run_cli("update")
+        self.assertIn(t("config.security.drift", name="policy.yaml"), shown.stdout)
+        self.assertIn(t("config.security.drift", name="gate.py"), shown.stdout)
+        self.assertNotIn(t("config.security.none"), shown.stdout)
+        self.assertEqual(policy.read_text(encoding="utf-8"), "net: ask\ninstall: ask\n")
+
+        applied = self.run_cli("update", "--apply")
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        self.assertIn(t("config.security.applied", path=str(security)), applied.stdout)
+        self.assertNotIn(t("config.harness.applied", path=str(self.harness)), applied.stdout)
+        repo_policy = ROOT / "security" / "policy.yaml"
+        self.assertEqual(policy.read_bytes(), repo_policy.read_bytes())
+        self.assertTrue((security / "gate.py").is_file())
+
+        again = self.run_cli("update")
+        self.assertIn(t("config.security.none"), again.stdout)
+
     def test_hooks_drift_is_shown_and_registered_by_apply(self):
         claude = self.home / ".claude" / "settings.json"
         shown = self.run_cli("update")

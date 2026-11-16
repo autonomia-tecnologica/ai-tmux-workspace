@@ -4,7 +4,8 @@
 home window) and the listed plugins (no +); in `tasks` it is only the panel title (one tab, no +).
 In `side` mode the tabs are fixed (FILES, SESSIONS, DIFF, GITHUB) and choose what the right panel shows.
 
-Clicking a tab switches, clicking + opens a new session. With the panel focused, ←/→ move the
+Clicking a tab switches, clicking + opens a new session (a click on an unfocused panel only focuses it:
+tmux.conf does not send that press here). With the panel focused, ←/→ move the
 cursor (blue) between the tabs and the +, and Enter activates; the active tab turns gray while the
 cursor is elsewhere. Losing the focus (tmux focus events) sends the cursor back to the active tab,
 blue again, and activates nothing. Draws once and waits;

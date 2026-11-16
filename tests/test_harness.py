@@ -93,8 +93,10 @@ class HarnessTest(unittest.TestCase):
         (self.harness / "forcado.yaml").write_text(text, encoding="utf-8")
 
     def env(self):
-        return dict(os.environ, HOME=str(self.home), AT_HARNESS_DIR=str(self.harness),
-                    AT_HARNESS_STATE=str(self.state))
+        env = dict(os.environ, HOME=str(self.home), AT_HARNESS_DIR=str(self.harness),
+                   AT_HARNESS_STATE=str(self.state))
+        env.pop("WS_PYTHON", None)   # the launcher exports it; a set value changes the rendered hook command
+        return env
 
     def run_hook(self, payload, raw=None):
         data = raw if raw is not None else json.dumps(payload)
