@@ -42,6 +42,9 @@ ENV_KEYS = (
     "HOME", "WS_STATE", "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE",
     "WS_PARENT_ROLE", "WS_SESSION_ID", "WS_POLICY", "WS_POLICY_AUTO", "WS_AUTO", "WS_DIR",
     "WS_I18N", "WS_POLICY_CLI", "TMPDIR", "WS_POLICY_ASK", "WS_POLICY_OPEN", "AT_WS_CONFIG",
+    # The desktop of the person running the tests: a child hook must not open the approval window
+    # (item 159). A test that needs them passes them as an override.
+    "DISPLAY", "WAYLAND_DISPLAY",
 )
 
 
@@ -1973,6 +1976,142 @@ process.stdout.write(JSON.stringify({
             installed = json.loads(node.stdout)
             self.assertEqual(installed["decision"]["decision"], "allow")
             self.assertEqual(installed["message"], i18n.t("policy.reason.deny", capability="admin"))
+
+
+class SiblingReadTest(unittest.TestCase):
+    """Item 161: a declared sibling repo is readable (repo.read), never writable, and the barriers hold."""
+
+    def setUp(self):
+        base = "/var/tmp" if os.access("/var/tmp", os.W_OK) else None
+        self._tmp = tempfile.TemporaryDirectory(dir=base)
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.home = self.root / "home"
+        self.repo = self.root / "repo"          # session A
+        self.sibling = self.root / "sibling"    # repo B, declared sibling of A
+        self.other = self.root / "other"        # repo C, not a sibling
+        self.state = self.root / "state"
+        for folder in (self.home / ".config", self.repo, self.sibling, self.other):
+            folder.mkdir(parents=True)
+        (self.repo / "a.md").write_text("a", encoding="utf-8")
+        (self.sibling / "notes.md").write_text("b", encoding="utf-8")
+        (self.sibling / ".env").write_text("TOKEN=x", encoding="utf-8")
+        (self.other / "x.md").write_text("c", encoding="utf-8")
+        self.elsewhere = self.root / "elsewhere.txt"
+        self.elsewhere.write_text("e", encoding="utf-8")
+        (self.sibling / "link").symlink_to(self.elsewhere)
+        self.config = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        self.config.parent.mkdir(parents=True)
+        self.saved = {name: os.environ.pop(name, None) for name in ENV_KEYS}
+        os.environ.update(HOME=str(self.home), WS_STATE=str(self.state),
+                          WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo))
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for name, value in self.saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def groups_config(self):
+        """A lists B on its groups entry; C sits in the same group but is not a sibling."""
+        self.config.write_text(
+            "groups:\n"
+            "  IA:\n"
+            f"    - path: {self.repo}\n"
+            f"      siblings: [{self.sibling}]\n"
+            f"    - {self.sibling}\n"
+            f"    - {self.other}\n",
+            encoding="utf-8")
+
+    def root_config(self):
+        """The same pair written in the root map (`siblings:` at the top of the file)."""
+        self.config.write_text(
+            "siblings:\n"
+            f"  {self.repo}: [{self.sibling}]\n",
+            encoding="utf-8")
+
+    def decide(self, event, role_root=None):
+        with patched_env(WS_SESSION_ROOT=str(role_root or self.repo)):
+            return policy.check_event(event)
+
+    def expect(self, event, decision, capability, role_root=None):
+        result = self.decide(event, role_root=role_root)
+        self.assertEqual((result["decision"], result["capability"]), (decision, capability), event)
+
+    def read(self, path):
+        return {"tool_name": "Read", "tool_input": {"file_path": str(path)}, "session_id": "s"}
+
+    def write(self, path):
+        return {"tool_name": "Write", "tool_input": {"file_path": str(path)}, "session_id": "s"}
+
+    def bash(self, command):
+        return {"tool_name": "Bash", "tool_input": {"command": command}, "session_id": "s"}
+
+    def test_sibling_read_is_repo_read_in_both_directions(self):
+        for config in (self.groups_config, self.root_config):
+            config()
+            self.expect(self.read(self.sibling / "notes.md"), "allow", "repo.read")
+            # B's session reads A: the relation is symmetric, though only A's entry declares it.
+            self.expect(self.read(self.repo / "a.md"), "allow", "repo.read", role_root=self.sibling)
+
+    def test_not_a_sibling_stays_repo_outside_deny(self):
+        for config in (self.groups_config, self.root_config):
+            config()
+            self.expect(self.read(self.other / "x.md"), "deny", "repo.outside")
+
+    def test_group_membership_alone_is_not_siblinghood(self):
+        self.config.write_text(
+            "groups:\n  IA:\n"
+            f"    - {self.repo}\n    - {self.sibling}\n",
+            encoding="utf-8")
+        self.expect(self.read(self.sibling / "notes.md"), "deny", "repo.outside")
+
+    def test_write_into_a_sibling_stays_denied(self):
+        self.groups_config()
+        self.expect(self.write(self.sibling / "notes.md"), "deny", "repo.outside")
+        self.expect(self.bash(f"rm {self.sibling / 'notes.md'}"), "deny", "repo.outside")
+        self.expect(self.bash(f"echo x > {self.sibling / 'new.md'}"), "deny", "repo.outside")
+
+    def test_secret_inside_a_sibling_stays_denied(self):
+        self.groups_config()
+        self.expect(self.read(self.sibling / ".env"), "deny", "secrets")
+
+    def test_symlink_or_dotdot_out_of_a_sibling_does_not_pass(self):
+        self.groups_config()
+        self.expect(self.read(self.sibling / "link"), "deny", "repo.outside")
+        self.expect(self.read(self.sibling / ".." / "other" / "x.md"), "deny", "repo.outside")
+
+    def test_missing_or_invalid_config_means_no_siblings(self):
+        self.expect(self.read(self.sibling / "notes.md"), "deny", "repo.outside")
+        self.config.write_text("groups: [unclosed\n  : :\n", encoding="utf-8")
+        self.expect(self.read(self.sibling / "notes.md"), "deny", "repo.outside")
+
+    def test_relative_declared_path_is_not_a_sibling(self):
+        self.config.write_text("siblings:\n  repo: [sibling]\n", encoding="utf-8")
+        self.expect(self.read(self.sibling / "notes.md"), "deny", "repo.outside")
+
+    def test_bash_read_forms_in_a_sibling(self):
+        self.groups_config()
+        for command in (f"cat {self.sibling / 'notes.md'}", f"ls {self.sibling}",
+                        f"head -n 1 {self.sibling / 'notes.md'}"):
+            self.expect(self.bash(command), "allow", "repo.read")
+        self.expect(self.bash(f"cat {self.other / 'x.md'}"), "deny", "repo.outside")
+
+    def test_control_plane_barrier_comes_before_siblings(self):
+        # The control-plane folder declared as a sibling still reads as config.read, and writes stay denied.
+        self.config.write_text(
+            "siblings:\n"
+            f"  {self.repo}: [{self.config.parent}]\n", encoding="utf-8")
+        self.expect(self.read(self.config), "allow", "config.read")
+        result = self.decide(self.write(self.config))
+        self.assertEqual(result["decision"], "deny")
+        self.assertNotEqual(result["capability"], "repo.read")
+
+    def test_siblings_belong_to_the_declared_root_only(self):
+        self.groups_config()
+        self.expect(self.read(self.sibling / "notes.md"), "deny", "repo.outside", role_root=self.other)
 
 
 if __name__ == "__main__":

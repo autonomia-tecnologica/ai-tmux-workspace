@@ -35,6 +35,11 @@ The declared session root wins over the configuration roots (`~/.config`, `~/.cl
 workspace): a worktree may live under one of them and still be writable as its own repo. Secrets win
 over everything, including the session root.
 
+A declared sibling repo (`siblings` on a `groups` entry or at the root of `config.yaml`, symmetric,
+item 161) is readable (`repo.read`) from the session of the other repo. It is never writable: a write
+into it stays `repo.outside`. The config is read on each check from `control_plane_root()`; a missing or
+invalid config means no siblings, and the secret, control-plane and workspace-code barriers come first.
+
 `auto` comes from `WS_POLICY_AUTO`/`WS_AUTO` or the event `permission_mode`; it only turns `ask`
 into `allow` for path-scoped capabilities inside the box and never turns `deny` into anything.
 
@@ -453,6 +458,74 @@ def workspace_root():
         return None
 
 
+def _real(value):
+    return os.path.realpath(os.path.normpath(os.path.abspath(os.path.expanduser(str(value)))))
+
+
+def _declared_pairs(document):
+    """{real repo: {real sibling}} from the config's `siblings`, symmetric (item 161).
+
+    Same two sources as `lib.siblings`: a `siblings` list on a `groups` entry, and the root map
+    (`siblings:` at the top of the file). Nothing is inferred from a group or a folder. An entry
+    that is not an absolute path after `~` expansion is skipped, so a relative value never widens a box.
+    """
+    pairs = {}
+
+    def declare(repo, others):
+        if not isinstance(repo, str) or not repo or not isinstance(others, list):
+            return
+        if not os.path.isabs(os.path.expanduser(repo)):
+            return
+        for other in others:
+            if not isinstance(other, str) or not other or not os.path.isabs(os.path.expanduser(other)):
+                continue
+            left, right = _real(repo), _real(other)
+            if left == right:
+                continue
+            pairs.setdefault(left, set()).add(right)
+            pairs.setdefault(right, set()).add(left)
+
+    groups = document.get("groups")
+    for entries in groups.values() if isinstance(groups, dict) else []:
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict):
+                declare(entry.get("path"), entry.get("siblings"))
+    root_map = document.get("siblings")
+    for repo, others in root_map.items() if isinstance(root_map, dict) else []:
+        declare(repo, others)
+    return pairs
+
+
+def _sibling_roots(root):
+    """Real paths of the repos that are siblings of the session root's repo (item 161).
+
+    Read from the config on every call (`control_plane_root()/config.yaml`), so `workspace reload`
+    is enough. A missing, unreadable or invalid config means no siblings (fail closed): nothing
+    else changes. Returns an empty set when the session has no root.
+    """
+    if not root or yaml_min is None:
+        return set()
+    try:
+        document = yaml_min.loads((control_plane_root() / "config.yaml").read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            return set()
+        pairs = _declared_pairs(document)
+        session = _real(root)
+        found = set()
+        for repo, others in pairs.items():
+            if _inside(session, repo):
+                found |= others
+        return found
+    except Exception:       # any read or parse failure is "no siblings"
+        return set()
+
+
+def _in_sibling(path, root):
+    """Whether `path` (real path) is inside a declared sibling of the session root's repo."""
+    real = os.path.realpath(str(path))
+    return any(_inside(real, sibling) for sibling in _sibling_roots(root))
+
+
 TMP_ROOTS = ("/tmp",)
 # macOS per-session temp directory: `tempfile.gettempdir()` returns something under
 # `/var/folders`, and `/var` is a symlink to `/private/var`, so both spellings are in the box.
@@ -545,6 +618,10 @@ def _path_capability(path, root, write):
     # were checked first, so they stay denied inside the box.
     if root and _inside(path, root):
         return "repo.write" if write else "repo.read"
+    # A declared sibling repo is readable, never writable (item 161): reads of it are repo.read;
+    # a write falls through to the table as any path outside the box (repo.outside).
+    if not write and _in_sibling(path, root):
+        return "repo.read"
     for config_root in _config_roots():
         if _inside(path, config_root):
             return "config.write" if write else "config.read"

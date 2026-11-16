@@ -88,7 +88,7 @@ roles:
 # workspace, salvo quando a caixa da sessão está dentro dele; leitura do código do workspace é allow.
 #
 # Capacidades (uma linha cada; a ordem segue a tabela):
-# capacidade repo.read: ler arquivos dentro da caixa da sessão; allow nos dois papéis. Motivo: é o que o agente precisa para trabalhar.
+# capacidade repo.read: ler arquivos dentro da caixa da sessão e dentro de um repo irmão declarado no config.yaml (`siblings`, item 161), só leitura; allow nos dois papéis. Motivo: é o que o agente precisa para trabalhar. Irmão lê irmão, mas escrita em irmão segue repo.outside (deny). Segredo, pasta de controle e código do workspace vêm antes.
 # capacidade repo.write: escrever dentro da caixa da sessão; allow nos dois papéis. Motivo: é o trabalho. Fora da caixa vale repo.outside.
 # capacidade repo.outside: ler ou escrever fora da caixa da sessão. repo: deny, a caixa do repo é o limite. home: allow, porque a sessão da casa enxerga o resto da home; escrita em config, segredos e código do workspace continua negada por outras regras.
 # capacidade workspace.read: ler o código do workspace (WS_DIR); allow nos dois papéis. Motivo: o agente pode inspecionar o código que roda.

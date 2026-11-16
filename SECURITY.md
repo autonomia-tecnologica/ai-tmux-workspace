@@ -52,7 +52,7 @@ Isso impede que o workspace se eleve. Não impede que o agente, rodando com a su
 
 - `deny` de `Bash`. A lista atual bloqueia `sudo` e escrita em `.env`, `*.pem` e `*.key`. Um comando diferente faz o mesmo efeito sem passar por ela.
 - Hooks de política sem o usuário dedicado (item 35). O hook enxerga o comando que recebe, mas não o que um interpretador permitido faz depois. Um `python` ou `node` liberado pode ler e escrever o que quiser.
-- Caixa do repo. É uma regra de política, não um sandbox: escrever só no próprio repo e em `/tmp` depende de o hook estar ativo.
+- Caixa do repo. É uma regra de política, não um sandbox: escrever só no próprio repo e em `/tmp` depende de o hook estar ativo. Repos irmãos declarados no `config.yaml` (`siblings`) se leem, mas não se escrevem (item 161).
 
 ## Sua configuração é respeitada
 

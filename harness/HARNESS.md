@@ -130,10 +130,10 @@ no harness do workspace.
 
 - Política única para Claude e OpenCode; negado por padrão; falha fechada.
 - Permissão por forma de uso, nunca por comando solto.
-- Caixa: repo no próprio repo e `/tmp`; home nos repos do ambiente; config da máquina read-only.
+- Caixa: repo no próprio repo e `/tmp`, e leitura (só leitura) dos repos irmãos declarados no `config.yaml`; home nos repos do ambiente; config da máquina read-only.
 - Sessão principal em `acceptEdits`; `auto` só dentro da caixa; sem caixa, não.
 - `bypassPermissions` só por escolha da pessoa; `deny` vale em todo modo.
-- Comunicação entre sessões só com autorização de quem recebe; repo não edita repo irmão: pede por `workspace request send` e quem edita é a sessão do irmão; execução externa do pedido exige aprovação da pessoa.
+- Comunicação entre sessões só com autorização de quem recebe; irmão lê irmão (só leitura, item 161), mas repo não edita repo irmão: pede por `workspace request send` e quem edita é a sessão do irmão; execução externa do pedido exige aprovação da pessoa.
 - Toda ação deixa rastro; pendência de freio em código vai para `Segurança`.
 - Caso novo: `harness/regras/permissions.md`; leia antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
 

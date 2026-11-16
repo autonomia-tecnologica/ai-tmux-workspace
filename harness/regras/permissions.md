@@ -11,6 +11,13 @@ novo.
 - Só entra na regra o que dá para centralizar; configuração que só existe numa ferramenta não vira
   regra do ambiente.
 
+## Irmãos
+
+- Repo irmão é o `siblings` declarado no `config.yaml` (num `groups` ou no mapa raiz, simétrico). Não é inferido por grupo nem por pasta.
+- Ler arquivo de repo irmão é `repo.read` (allow) nos dois sentidos; escrever nele é `repo.outside` (deny) e a edição segue por `workspace request send`.
+- Segredo dentro do irmão continua `secrets` (deny); pasta de controle e código do workspace vêm antes e não mudam.
+- Caminho que sai do irmão por symlink ou `..` não passa. Config ausente ou inválida: sem irmãos.
+
 ## Caso desconhecido
 
 - Comando desconhecido ou ambíguo cai em `ask`.
