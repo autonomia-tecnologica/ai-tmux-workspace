@@ -29,6 +29,13 @@ from tree_state import Expander  # noqa: E402
 from viewer import Row  # noqa: E402
 
 
+def settle_git_round():
+    """The panel starts a background git round (src/lib.py); wait for it before the temporary repos go."""
+    thread = lib._GIT_THREAD
+    if thread is not None:
+        thread.join(10)
+
+
 def make_repo(path):
     """A git repo with one commit on main (a worktree needs a commit to branch from)."""
     path.mkdir(parents=True)
@@ -45,6 +52,7 @@ class PanelWorktreesTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(settle_git_round)
         self.root = Path(self._tmp.name).resolve()
         self.folder = self.root / "Codes"
         self.folder.mkdir()

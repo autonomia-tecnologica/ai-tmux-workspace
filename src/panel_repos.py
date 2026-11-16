@@ -15,10 +15,12 @@ files and tasks panels. An open list shows each worktree indented: the branch, w
 window of that worktree is open (a worktree with no window is dim). Enter opens or focuses the worktree's
 window. A repo with no extra worktree, or a git error, shows only the repo.
 
-Next to the name, two icons always present:
+Next to the name, two icons (once the first git round has read the repo):
   branch  = local git: dim without git · normal clean · yellow with uncommitted work
   GitHub  = remote:    dim not on the remote · normal up to date · yellow ahead/behind the upstream
                        (fetch every 5 min)
+  git state is read from the shared cache in state/ (lib.git_state): one process per 10 s reads git
+  for all panels; a repo not read yet shows no icon until the first round.
 
 With "repos_folder" the repos are the git repos of that folder; a repo in no group appears under the
 implicit "Sem categoria". F cycles the filter (all, switched on, switched off); T switches the repo
@@ -44,6 +46,8 @@ from viewer import BLUE, B, GRAY, DIM, R, GREEN, YELLOW, RED, Row, Viewer
 def git_icon(repo):
     """Two icons, always present: branch (local git) and the GitHub logo (remote)."""
     state, dirty = lib.git_state(repo)
+    if state == lib.PENDING:   # not read yet: the shared cache fills in a moment, no icon meanwhile
+        return ""
     return glyphs.git_icons(state, dirty)
 
 

@@ -26,10 +26,18 @@ def make_repo(path):
     subprocess.run(["git", "init", "-q", str(path)], check=True)
 
 
+def settle_git_round():
+    """The panel starts a background git round (src/lib.py); wait for it before the temporary repos go."""
+    thread = lib._GIT_THREAD
+    if thread is not None:
+        thread.join(10)
+
+
 class ReposFolderTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(settle_git_round)
         self.root = Path(self._tmp.name).resolve()
         self.folder = self.root / "Codes"
         self.folder.mkdir()

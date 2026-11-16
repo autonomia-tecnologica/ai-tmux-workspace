@@ -9,6 +9,8 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -1747,7 +1749,16 @@ def git_branch(repo):
     return out.strip() if rc == 0 and out.strip() else "?"
 
 
-_GH_CACHE = {}        # repo -> (ts, state)
+# Owner of the git state of the repos panel (ARCH.md, "Dono único"). One cache file in state_dir(), shared
+# by every panel process: the process that takes GIT_STATE_LOCK reads git for the stale repos and writes
+# each result atomically; the others read the file. A panel never runs git on its own thread.
+GH_TTL = 10           # seconds a git read stays fresh: at most one git round per TTL for all panels
+GIT_STATE_FILE = "git-state.json"   # {repo: {"ts", "state", "dirty"}}
+GIT_STATE_LOCK = "git-state.lock"   # flock held while one process reads git
+PENDING = "pending"   # git_state answer for a repo not read yet: the panel draws no git icon
+_GIT_WANTED = set()   # repos this process has shown; the background refresh reads these
+_GIT_GUARD = threading.Lock()
+_GIT_THREAD = None
 _FETCH_TS = {}        # repo -> last fetch ts, only when it cannot be marked on disk
 GH_TTL = 10           # seconds between local re-reads
 FETCH_TTL = 300       # seconds between background fetches (only this tells whether it is behind)
@@ -1815,23 +1826,52 @@ def _fetch_due(repo, now):
         return None
 
 
-def git_state(repo):
-    """(state, dirty): state = None without git · 'local' git created but not pushed · 'ok' pushed and up to date ·
-    'diverged' ahead/behind. dirty = there is uncommitted work (modified or new, outside the stash)."""
-    now = time.time()
-    c = _GH_CACHE.get(repo)
-    if c and now - c[0] < GH_TTL:
-        return c[1]
+def _git_cache_path():
+    return paths.state_dir() / GIT_STATE_FILE
+
+
+def _read_git_cache():
+    """The shared cache as {repo: entry}; a missing or unreadable file reads as empty."""
+    try:
+        data = json.loads(_git_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_git_cache(cache):
+    """Atomic write: a reader sees the old file or the new one, never a half-written one."""
+    path = _git_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".git-state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _fresh(entry, now):
+    return isinstance(entry, dict) and isinstance(entry.get("ts"), (int, float)) and now - entry["ts"] < GH_TTL
+
+
+def _git_read(repo):
+    """(state, dirty) read from git itself (no cache): state = None without git · 'local' git created but
+    not pushed · 'ok' pushed and up to date · 'diverged' ahead/behind. dirty = uncommitted work."""
     if not os.path.exists(os.path.join(repo, ".git")):
         state = None
     else:
-        due = _fetch_due(repo, now)
+        due = _fetch_due(repo, time.time())
         if due is None:    # cannot mark on disk: fall back to this window's timer
-            due = now - _FETCH_TS.get(repo, 0) > FETCH_TTL
+            due = time.time() - _FETCH_TS.get(repo, 0) > FETCH_TTL
             if due:
-                _FETCH_TS[repo] = now
+                _FETCH_TS[repo] = time.time()
         if due:
-            import threading
             threading.Thread(target=_fetch_bg, args=(repo,), daemon=True).start()
         rc, out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", timeout=5)
         if rc != 0:
@@ -1846,8 +1886,70 @@ def git_state(repo):
     if state is not None:
         rc, out = git(repo, "status", "--porcelain", timeout=5)
         dirty = rc == 0 and bool(out.strip())
-    _GH_CACHE[repo] = (now, (state, dirty))
     return state, dirty
+
+
+def refresh_git_states(repos):
+    """The owner's refresh: reads git for the repos of `repos` whose cache entry is older than GH_TTL and
+    writes each result at once. Under one non-blocking lock, so only one process per TTL runs git: a
+    process that finds the lock taken returns 0 and reads the file later. Returns the number of repos
+    read from git (0 when the lock is taken, or nothing is stale, or the state folder cannot be written)."""
+    lock_dir = paths.state_dir()
+    try:
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock = open(lock_dir / GIT_STATE_LOCK, "a+", encoding="utf-8")
+    except OSError:
+        return 0
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return 0
+        cache = _read_git_cache()   # read under the lock: another process may have just refreshed it
+        now = time.time()
+        stale = [repo for repo in dict.fromkeys(repos) if not _fresh(cache.get(repo), now)]
+        read = 0
+        for repo in stale:
+            state, dirty = _git_read(repo)
+            cache[repo] = {"ts": time.time(), "state": state, "dirty": dirty}
+            read += 1
+            try:
+                _write_git_cache(cache)
+            except OSError:
+                return read
+        return read
+    finally:
+        lock.close()
+
+
+def _refresh_wanted():
+    try:
+        refresh_git_states(sorted(_GIT_WANTED))
+    except Exception:
+        pass   # a failed round is retried by the next collect, the panel keeps the cache it has
+
+
+def _kick_refresh():
+    """Starts one background round for this process (never two at once); the panel does not wait for it."""
+    global _GIT_THREAD
+    with _GIT_GUARD:
+        if _GIT_THREAD is not None and _GIT_THREAD.is_alive():
+            return
+        _GIT_THREAD = threading.Thread(target=_refresh_wanted, daemon=True)
+        _GIT_THREAD.start()
+
+
+def git_state(repo):
+    """(state, dirty) of `repo` from the shared cache, at once; never runs git on the caller's thread.
+    A stale entry is returned as it is while a background round refreshes it; a repo with no entry yet
+    returns (PENDING, False). State values are those of `_git_read`."""
+    _GIT_WANTED.add(repo)
+    entry = _read_git_cache().get(repo)
+    if not _fresh(entry, time.time()):
+        _kick_refresh()
+    if not isinstance(entry, dict) or "state" not in entry:
+        return PENDING, False
+    return entry["state"], bool(entry.get("dirty"))
 
 
 # --- Plugins -----------------------------------------------------------------------------------
