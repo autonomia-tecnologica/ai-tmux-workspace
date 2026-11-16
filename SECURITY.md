@@ -35,6 +35,7 @@ Limite: `settings.json` é restaurado como arquivo inteiro a partir do backup (`
 - O instalador recusa rodar como root (uid 0) e também quando detecta `sudo`, `pkexec` ou `doas` pelas variáveis de ambiente que eles definem.
 - O instalador não instala pacotes e não executa `sudo`/`pkexec`. Quando falta uma dependência, mostra o comando para você rodar.
 - Há um caminho para comandos privilegiados (`workspace privileged`): o comando completo é exibido, você confirma que leu, e ele roda numa tela separada do tmux, que você vê e fecha. Fora de um cliente tmux anexado, nada roda.
+- Comando administrativo pedido à IA: uma janela gráfica do desktop mostra o comando inteiro e só o Sim roda, com `pkexec` (o polkit pede a senha). Sem desktop, nada roda. O risco aceito é você aprovar um comando que fura a caixa.
 
 Isso impede que o workspace se eleve. Não impede que o agente, rodando com a sua conta, faça o que essa conta permite.
 

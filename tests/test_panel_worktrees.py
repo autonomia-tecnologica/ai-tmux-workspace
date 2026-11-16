@@ -23,8 +23,10 @@ import worktrees  # noqa: E402
 import yaml_min  # noqa: E402
 from i18n import _STRINGS, t  # noqa: E402
 
+import context_menu  # noqa: E402
 import panel_repos  # noqa: E402
 from tree_state import Expander  # noqa: E402
+from viewer import Row  # noqa: E402
 
 
 def make_repo(path):
@@ -242,6 +244,27 @@ class PanelWorktreesTest(unittest.TestCase):
         with mock.patch.object(panel_repos, "toggle") as toggle:
             panel_repos.on_key(mock.Mock(key=("w", path)), "t")
         toggle.assert_not_called()
+
+    # regression: collect() must hand the viewer Row objects in the header too (the collector reads .text/.key)
+    def assert_all_rows(self, header, body):
+        for item in list(header) + list(body):
+            self.assertIsInstance(item, Row, repr(item))
+
+    def test_header_and_body_are_rows_with_folder_note_and_menu_prompt(self):
+        self.open_list(self.alpha)
+        panel_repos.note("nota de teste")
+        self.addCleanup(setattr, context_menu, "_STATE", dict(context_menu._STATE))
+        context_menu._STATE.update({"prompt": {"key": None, "label": "Grupo: ", "text": "x"},
+                                    "note": "aviso do menu", "until": 1e12})
+        header, body = panel_repos.collect(mock.Mock())
+        self.assertGreaterEqual(len(header), 4)   # filter line, panel note, menu notice, menu prompt
+        self.assertTrue(body)
+        self.assert_all_rows(header, body)
+
+    def test_header_and_body_are_rows_without_repos_folder(self):
+        self.config.write_text(yaml_min.dumps({"profiles": {"claude": "claude"}}), encoding="utf-8")
+        header, body = panel_repos.collect(mock.Mock())
+        self.assert_all_rows(header, body)
 
 
 class TextsTest(unittest.TestCase):

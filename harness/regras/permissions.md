@@ -18,6 +18,11 @@ novo.
 - `auto` não amplia capacidade.
 - Falha do motor com papel declarado: `deny`, não `ask`.
 
+## Administração
+
+- Comando administrativo (programa `admin`, como `sudo`, `doas`, `su`, `systemctl`, `mount`) tem a decisão `privileged` para todos os papéis; `auto` não pula a pergunta.
+- A aprovação é uma janela gráfica do desktop com o comando inteiro; só o Sim roda, com `pkexec` (o polkit pede a senha). Sem desktop ou sem ferramenta de janela, nada roda e o comando volta para colar.
+
 ## Rastro
 
 - Toda decisão registra comando, forma de uso, decisão, sessão e pasta.

@@ -43,7 +43,7 @@ no harness do workspace.
 - Sessão de repo escreve só no próprio repo e em `/tmp`.
 - Home lê e edita qualquer repo do ambiente; não edita o código do workspace.
 - Código do workspace é protegido: só a sessão com root nele escreve.
-- Comando interativo ou privilegiado: tela separada da sessão, nunca no painel do agente; privilégio pede ao ambiente (`pkexec`), nunca `sudo`/`pkexec` direto. Fora do tmux, entregar um comando de uma linha pronto para colar; o código de saída volta para a sessão.
+- Comando interativo ou privilegiado: tela separada da sessão, nunca no painel do agente. Comando administrativo pedido à IA: a pessoa aprova o comando inteiro numa janela gráfica do desktop (kdialog ou zenity); só o Sim roda, com `pkexec`, e o polkit pede a senha; `sudo` nunca roda direto (vira `pkexec`). Sem desktop, nada roda: entregar um comando de uma linha pronto para colar. A saída e o código de saída voltam para a sessão.
 - Não matar sessões ou janelas que não criou.
 
 ## Modelo

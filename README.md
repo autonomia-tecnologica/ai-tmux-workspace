@@ -307,7 +307,7 @@ O Claude executa comandos com as permissões da sua conta; o ai-tmux-workspace o
 - **Sem isolamento de sistema operacional hoje:** o agente roda com a sua conta. Usuário dedicado e arquivos de outro dono são objetivo do item 35 (pausado), não garantia atual.
 - **Não instale pedindo a uma LLM:** o `install.sh` mostra o que vai fazer antes de tocar em qualquer coisa: na tela cheia, no resumo; no modo de texto (`--text`), pedindo confirmação a cada passo. Quem responde é você.
 - **Desfazer:** `remove.sh` restaura o que o instalador mudou, pelo manifesto de backup.
-- **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`.
+- **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`. Comando administrativo pedido à IA só roda depois do Sim numa janela do desktop (kdialog ou zenity), via `pkexec`; sem desktop, nada roda.
 - **Falha aberta:** a LLM pode alterar a lista de repos do `config.yaml`.
 - **Código gerado por IA:** SAST/DAST/SCA não substituem a leitura humana do PR; o que o ambiente
   exige no lugar — harness determinístico, choke points e revisão — está em

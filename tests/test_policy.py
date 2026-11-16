@@ -1750,11 +1750,12 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(ask["hookSpecificOutput"]["permissionDecisionReason"],
                          i18n.t("policy.reason.ask", capability="vcs.remote"))
 
-        # outside tmux nothing runs: the hook answers deny with the reason (item 154)
-        deny = self.hook(self.bash("sudo ls"), TMUX=None)
+        # without a desktop nothing runs and no window opens: the hook answers deny with the reason
+        # (item 154; item 159 asks in a desktop window, so the test drops DISPLAY and WAYLAND_DISPLAY)
+        deny = self.hook(self.bash("sudo ls"), DISPLAY=None, WAYLAND_DISPLAY=None)
         self.assertEqual(deny["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertEqual(deny["hookSpecificOutput"]["permissionDecisionReason"],
-                         i18n.t("privileged.no_tmux", command="sudo ls"))
+                         i18n.t("privileged.no_gui", command="sudo ls"))
 
         self.assertIsNone(self.hook(self.bash("git status")))
         self.assertIsNone(self.hook({"tool_name": "TodoWrite", "tool_input": {}}))

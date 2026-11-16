@@ -174,6 +174,12 @@ class PrivilegedTest(unittest.TestCase):
                     "privileged.declined", "privileged.not_run", "privileged.usage"):
             self.assertIn(key, strings)
 
+    def test_approval_no_longer_lives_in_tmux(self):
+        # item 159: the administrative approval is a desktop window in src/privileged.py; the tmux
+        # popup for it is gone (tmux.privileged stays for the installer's own steps, item 61)
+        for name in ("approved_run", "_approved_script", "APPROVAL_SECONDS", "MAX_OUTPUT"):
+            self.assertFalse(hasattr(tmux, name), name)
+
 
 if __name__ == "__main__":
     unittest.main()

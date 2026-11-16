@@ -126,10 +126,10 @@ def collect(v):
     off = switched_off()
     header = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
     if lib.repos_folder():
-        header.append(f" {DIM}{t('repos.filter.line', filter=t('repos.filter.' + VIEW['filter']))}{R}")
+        header.append(Row(f" {DIM}{t('repos.filter.line', filter=t('repos.filter.' + VIEW['filter']))}{R}"))
     if time.time() < VIEW["note_until"]:
-        header.append(f" {VIEW['note']}")
-    header += context_menu.header()   # the menu layer owns its prompt and notice
+        header.append(Row(f" {VIEW['note']}"))
+    header += [Row(text) for text in context_menu.header()]   # the menu layer owns its prompt and notice (str)
     body = []
     PARENT.clear()
     if main:   # main repo: outside the groups, always on top, bold in the default foreground (blue when it is this window's repo)

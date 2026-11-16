@@ -1924,7 +1924,7 @@ def main(argv=None):
     if argv[0] == "privileged" and result.get("decision") == "privileged":
         # OpenCode adapter (item 154): the person approves, then pkexec runs the command here, in the
         # same call. The Claude hook calls `privileged.run_approved` itself and never reaches this.
-        import privileged     # lazy: tmux is only needed on the approval path
+        import privileged     # lazy: the desktop window is only needed on the approval path
         result = privileged.run_approved(event)
     sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
     return 0
