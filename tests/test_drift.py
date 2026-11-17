@@ -20,7 +20,7 @@ import i18n  # noqa: E402  (path set above)
 DRIFT = ROOT / "src" / "drift.py"
 WORKSPACE = ROOT / "bin" / "workspace"
 BASH = shutil.which("bash") or "/bin/bash"
-HARNESS = "# HARNESS\n\nRegra citada: `src/policy.py`.\n"
+HARNESS = "# HARNESS\n\nRegra citada: `src/paths.py`.\n"
 
 
 def sha256(path):
@@ -39,7 +39,7 @@ class DriftTest(unittest.TestCase):
         self.installed = self.home / ".local" / "share" / "ai-tmux-workspace" / "harness"
         for path in (self.home, self.state, self.ws / "src", self.source, self.installed):
             path.mkdir(parents=True, exist_ok=True)
-        (self.ws / "src" / "policy.py").write_text("# policy\n", encoding="utf-8")
+        (self.ws / "src" / "paths.py").write_text("# paths\n", encoding="utf-8")
         (self.source / "HARNESS.md").write_text(HARNESS, encoding="utf-8")
         (self.installed / "HARNESS.md").write_text(HARNESS, encoding="utf-8")
         self.write_record()
@@ -98,10 +98,10 @@ class DriftTest(unittest.TestCase):
 
     # 5 ---------------------------------------------------------------------------------------
     def test_missing_cited_path_fails(self):
-        (self.ws / "src" / "policy.py").unlink()
+        (self.ws / "src" / "paths.py").unlink()
         result = self.run_doctor()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("src/policy.py", result.stdout)
+        self.assertIn("src/paths.py", result.stdout)
 
     # 6 ---------------------------------------------------------------------------------------
     def test_prose_and_anti_example_paths_are_ignored(self):

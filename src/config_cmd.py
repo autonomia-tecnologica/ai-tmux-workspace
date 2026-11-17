@@ -12,9 +12,8 @@
      installer.overlay_harness writes harness_source() over it: this checkout's harness/ (regras/ included),
      or the canonical source only when there is none. Only what the overlay installed before (state/
      harness-overlay.json) and the source no longer has is removed; forcado.yaml, source.json and extras stay.
-  3. the installed security/ files (gate.py, policy.yaml, policy.py, paths.py, yaml_min.py,
-     opencode-policy.js, i18n/pt-BR.json): byte compare with this checkout, the same files that
-     installer.install_policy_files writes. Applying copies them again, on its own, even when the harness
+  3. the installed security/ files (gate.py, paths.py, yaml_min.py, i18n/pt-BR.json): byte compare
+     with this checkout, the same files that installer.install_policy_files writes. Applying copies them again, on its own, even when the harness
      itself has no drift. Missing files count as drift.
   4. the generated settings of each profile (lib.expected_profile_settings), when manage is on.
   5. the Claude Code hooks: the installer's own step (`bin/workspace install-hooks`), run against a

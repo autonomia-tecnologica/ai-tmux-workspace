@@ -147,9 +147,10 @@ class InstallerTest(unittest.TestCase):
         for name in ("harness.py", "policy.yaml", "opencode-policy.js", "settings.json"):
             self.assertFalse((harness / name).exists(), f"mechanism must not live in harness/: {name}")
         security = self.home / ".local" / "share" / "ai-tmux-workspace" / "security"
-        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json", "policy.py",
-                     "paths.py", "yaml_min.py", "i18n/pt-BR.json"):
+        for name in ("gate.py", "settings.json", "paths.py", "yaml_min.py", "i18n/pt-BR.json"):
             self.assertTrue((security / name).is_file(), f"missing security file: {name}")
+        for name in ("policy.yaml", "policy.py", "privileged.py", "opencode-policy.js"):
+            self.assertFalse((security / name).exists(), f"removed from the repo, must not install: {name}")
         rendered = json.loads((security / "settings.json").read_text(encoding="utf-8"))
         for groups in rendered["hooks"].values():
             for group in groups:

@@ -297,13 +297,13 @@ class UpdaterHelpersTest(unittest.TestCase):
 
     def test_changed_files_are_grouped_by_what_they_change(self):
         groups = updater.group_changes([
-            "config/config.example.yaml", "harness/HARNESS.md", "security/policy.yaml",
-            "src/hook.py", "security/opencode-policy.js", "src/lib.py",
+            "config/config.example.yaml", "harness/HARNESS.md", "security/settings.json",
+            "src/hook.py", "security/opencode-state.js", "src/lib.py",
         ])
         self.assertEqual(groups["config"], ["config/config.example.yaml"])
         self.assertEqual(groups["harness"], ["harness/HARNESS.md"])
-        self.assertEqual(groups["settings"], ["security/policy.yaml"])
-        self.assertEqual(groups["hooks"], ["src/hook.py", "security/opencode-policy.js"])
+        self.assertEqual(groups["settings"], ["security/settings.json"])
+        self.assertEqual(groups["hooks"], ["src/hook.py", "security/opencode-state.js"])
         self.assertEqual(groups["code"], ["src/lib.py"])
 
 
