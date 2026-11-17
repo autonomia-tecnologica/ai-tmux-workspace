@@ -6,7 +6,7 @@ The box is the harness policy, not an OS sandbox: the launcher prefixes the agen
 The role comes from the config's main repo: the main repo is the `home` session (it may change the
 other repos) and every other path is a `repo` session whose box is the path itself. A worktree is
 just a path, so its box is the worktree, wherever it lives; there is no fixed worktree folder here.
-The one exception is the workspace's own code (`policy.workspace_root()`, the clone or installed copy):
+The one exception is the workspace's own code (`paths.workspace_root()`, the clone or installed copy):
 its window (`workspace dev`) is the `self` session, the only one that edits that code. `home` still
 wins when the main checkout is the workspace itself.
 
@@ -20,7 +20,6 @@ import shlex
 import sys
 from pathlib import Path
 
-import policy   # the workspace code root has one owner: the policy (stdlib only, same layer)
 import paths    # the path defaults have one owner: foundation, stdlib only
 
 try:
@@ -106,7 +105,7 @@ def environment(repo, main=None):
             main = None
     else:
         main = None
-    code = policy.workspace_root()
+    code = paths.workspace_root()
     if main and root == main:
         role = HOME_ROLE
     elif code and root == code:

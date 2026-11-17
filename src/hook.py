@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code hook: records the session state for the repo panel's dot.
 
-Reads the hook JSON from stdin and writes $WS_STATE/sessions/<session>.json. On PreToolUse
-it also asks the central capability policy (`src/policy.py`, installed in `security/`) for a decision
-when the session has a declared role (`WS_SESSION_ROLE`); without a role the policy stays off, so
-sessions opened before the launcher sets it keep working. With a role, an engine failure is a denial
-(fail closed). The deterministic gate itself lives in `security/gate.py`."""
+Reads the hook JSON from stdin and writes $WS_STATE/sessions/<session>.json. On PreToolUse it only
+applies the conference budget; there is no capability policy any more. The deterministic gate itself
+lives in `security/gate.py`."""
 import contextlib
 import json
 import os
@@ -420,62 +418,6 @@ def _conference_budget(d):
     return False
 
 
-def _policy_message(result):
-    """Human text for the decision. The engine returns an i18n key; a missing locale keeps the key."""
-    try:
-        import i18n
-        return i18n.t(result.get("reason") or "policy.reason.error",
-                      capability=result.get("capability") or "-")
-    except Exception:
-        return result.get("reason") or "policy.reason.error"
-
-
-def _policy_check(d):
-    """PreToolUse decision from the central policy, the same engine the OpenCode adapter calls.
-
-    No `WS_SESSION_ROLE`: the policy is inactive on purpose, so sessions from before the launcher
-    declares a box are untouched. With a declared role, an engine failure becomes `deny`: the
-    OpenCode adapter already fails closed, and the two harnesses must answer the same way. `allow`
-    is emitted only for an `auto` upgrade, which is the one case the policy has to make effective; a
-    plain allow lets the harness's own permission flow continue.
-    """
-    if not os.environ.get("WS_SESSION_ROLE"):
-        return
-    try:
-        import policy
-        result = policy.check_event(d)
-    except Exception:
-        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-    if not isinstance(result, dict):
-        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-    decision = result.get("decision")
-    if decision == "privileged":
-        # Item 154: the person approves on a separate screen and pkexec runs it here; the output
-        # comes back as this call's deny message (the agent's own tool must not run it again).
-        try:
-            import privileged
-            outcome = privileged.run_approved(d)
-            message = outcome.get("message") or _policy_message(outcome)
-        except Exception:
-            message = _policy_message({"reason": "policy.reason.error"})
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": message,
-        }}, ensure_ascii=False))
-        return
-    if decision not in ("allow", "ask", "deny"):
-        result = {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-        decision = "deny"
-    if decision == "allow" and result.get("reason") != "policy.reason.auto":
-        return
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": decision,
-        "permissionDecisionReason": _policy_message(result),
-    }}, ensure_ascii=False))
-
-
 def main():
     d = json.load(sys.stdin)
     if not isinstance(d, dict):
@@ -484,8 +426,7 @@ def main():
     if not isinstance(ev, str) or ev not in EVENTS or not _valid_session_id(sid):
         return
     if ev == "PreToolUse":
-        if not _conference_budget(d):
-            _policy_check(d)
+        _conference_budget(d)
     if ev == "SessionEnd":
         _record_permission_mode(d)
         _record_tab_session(d)

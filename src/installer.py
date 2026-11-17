@@ -124,9 +124,6 @@ SOURCE_FILE = "source.json"
 # engine. The source tree (ambiente-de-trabalho) is copied first; these come from this repository.
 POLICY_SOURCES = (
     ("security", "gate.py", "gate.py"),
-    ("security", "policy.yaml", "policy.yaml"),
-    ("security", "opencode-policy.js", "opencode-policy.js"),
-    ("src", "policy.py", "policy.py"),
     ("src", "paths.py", "paths.py"),
     ("src", "yaml_min.py", "yaml_min.py"),
     ("i18n", "pt-BR.json", "i18n/pt-BR.json"),

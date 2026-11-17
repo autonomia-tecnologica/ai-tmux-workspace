@@ -117,6 +117,21 @@ def security_dir():
     return install_dir() / "security"
 
 
+def workspace_root():
+    """The workspace's own code: `WS_DIR` when exported, else the parent of `src/` (the clone)."""
+    value = os.environ.get("WS_DIR")
+    if isinstance(value, str) and value.strip():
+        try:
+            return os.path.realpath(os.path.normpath(
+                os.path.abspath(os.path.expanduser(value.strip()))))
+        except (OSError, ValueError):
+            return None
+    try:
+        return os.path.realpath(str(Path(__file__).resolve().parent.parent))
+    except (OSError, RuntimeError):
+        return None
+
+
 def legacy_state_dir():
     """State of the old layout, migrated once into `state_dir()`."""
     return home() / ".cache" / "workspace"
