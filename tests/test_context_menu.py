@@ -151,37 +151,13 @@ class ContextMenuTest(unittest.TestCase):
         self.assertEqual(self.text(), before)
         self.assertFalse(list(self.config.parent.glob("config.yaml.bak-*")))
 
-    # --- mark as sibling --------------------------------------------------------------------
-    def test_sibling_is_symmetric_and_preserves_comments(self):
-        before = self.text()
-        lib.mark_repo_sibling(self.paths("gamma")[0], self.paths("alpha")[0])
-        text = self.text()
-        self.assertIn("# topo", text)
-        self.assertIn("# cauda", text)
-        self.assertTrue(backups := list(self.config.parent.glob("config.yaml.bak-*")))
-        self.assertEqual(backups[0].read_text(encoding="utf-8"), before)
-        self.assertEqual(lib.siblings(self.paths("gamma")[0]), self.paths("alpha"))
-        self.assertEqual(lib.siblings(self.paths("alpha")[0]), self.paths("gamma"))
-
-    def test_sibling_of_uncategorized_repo_does_not_change_its_group(self):
-        lib.mark_repo_sibling(self.paths("alpha")[0], self.paths("gamma")[0])
-        self.assertEqual(self.names(self.groups()[-1][1]), ["alpha", "gamma"])
-        self.assertEqual(lib.siblings(self.paths("alpha")[0]), self.paths("gamma"))
-
-    def test_sibling_is_idempotent_on_both_sides(self):
-        lib.mark_repo_sibling(self.paths("alpha")[0], self.paths("gamma")[0])
-        text = self.text()
-        lib.mark_repo_sibling(self.paths("alpha")[0], self.paths("gamma")[0])
-        lib.mark_repo_sibling(self.paths("gamma")[0], self.paths("alpha")[0])
-        self.assertEqual(self.text(), text)
-
     # --- the menu ---------------------------------------------------------------------------
-    def test_menu_has_only_the_two_repo_actions(self):
+    def test_menu_has_only_the_move_to_group_action(self):
         viewer = FakeViewer()
         items = context_menu.actions(viewer, ("r", self.paths("alpha")[0]))
-        self.assertEqual([label for label, _active, _action in items],
-                         [t("repos.menu.move_group"), t("repos.menu.sibling")])
-        self.assertTrue(all(active for _label, active, _action in items))
+        self.assertEqual([label for label, _active, _action in items], [t("repos.menu.move_group")])
+        self.assertTrue(items[0][1])
+        self.assertFalse(hasattr(context_menu, "open_siblings"))
 
     def test_other_items_have_no_menu(self):
         self.assertEqual(context_menu.actions(FakeViewer(), ("g", "Team")), [])
@@ -190,7 +166,6 @@ class ContextMenuTest(unittest.TestCase):
     def test_main_repo_cannot_move_to_a_group(self):
         items = context_menu.actions(FakeViewer(), ("r", str(self.main)))
         self.assertFalse(items[0][1])
-        self.assertTrue(items[1][1])
 
     def test_move_submenu_lists_groups_and_offers_a_new_one(self):
         viewer = FakeViewer()
@@ -226,21 +201,20 @@ class ContextMenuTest(unittest.TestCase):
         self.assertEqual(context_menu.header(), [])
         self.assertEqual(self.text(), before)
 
-    def test_sibling_submenu_excludes_the_repo_itself(self):
-        viewer = FakeViewer()
-        key = ("r", self.paths("gamma")[0])
-        context_menu.open_siblings(viewer, key)
-        labels = [label for label, _active, _action in viewer.items]
-        self.assertNotIn("gamma", labels)
-        self.assertEqual(labels, ["main", "beta", "alpha"])   # main, declared groups, then uncategorized
-        next(item for item in viewer.items if item[0] == "alpha")[2](viewer, key)
-        self.assertEqual(lib.siblings(self.paths("gamma")[0]), self.paths("alpha"))
-
-    def test_no_other_repo_keeps_the_menu_with_an_inactive_note(self):
-        self.write_config(f"repos_folder: {self.root / 'empty'}\n")
-        viewer = FakeViewer()
-        context_menu.open_siblings(viewer, ("r", self.paths("alpha")[0]))
-        self.assertEqual(viewer.items, [(t("repos.menu.no_siblings"), False, None)])
+    def test_move_drops_a_legacy_siblings_key_and_keeps_the_comment(self):
+        self.write_config((
+            f"repos_folder: {self.folder}\n"
+            "groups:\n"
+            "  Team:\n"
+            f"    - path: {self.folder / 'beta'}   # repo beta\n"
+            f"      siblings: [{self.folder / 'alpha'}]\n"
+        ))
+        lib.move_repo_to_group(self.paths("beta")[0], "Other")
+        text = self.text()
+        self.assertIn("# repo beta", text)
+        self.assertNotIn("siblings", text)
+        self.assertEqual(self.names(dict(self.groups())["Other"]), ["beta"])
+        self.assertFalse(yaml_min.loads(text)["groups"].get("Team"))   # left empty by the move
 
     def test_invalid_group_name_writes_nothing(self):
         before = self.text()
@@ -251,10 +225,9 @@ class ContextMenuTest(unittest.TestCase):
 
 class ContextMenuTextsTest(unittest.TestCase):
     def test_every_new_text_exists_in_pt_br(self):
-        keys = ["repos.group.uncategorized", "repos.menu.move_group", "repos.menu.sibling",
-                "repos.menu.new_group", "repos.menu.no_siblings", "repos.group.new_prompt",
-                "repos.moved", "repos.sibling_added", "repos.err.write", "repos.err.group_name",
-                "repos.err.same_repo"]
+        keys = ["repos.group.uncategorized", "repos.menu.move_group",
+                "repos.menu.new_group", "repos.group.new_prompt",
+                "repos.moved", "repos.err.write", "repos.err.group_name"]
         for key in keys:
             with self.subTest(key=key):
                 self.assertIn(key, _STRINGS)

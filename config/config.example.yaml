@@ -155,26 +155,14 @@ main: ~/Codes/main-repo
 # (no Linux em pt-BR os nomes costumam ser ~/Documentos, ~/Imagens e ~/Vídeos; use os que existem
 # na sua máquina, senão a aba aparece como "não encontrada".)
 
-# Categorias (grupos) de repos. Cada entrada é um caminho, ou um mapa com "path" e "siblings".
-# "siblings" declara irmãos: a relação é simétrica (vale dos dois lados).
+# Categorias (grupos) de repos. Cada entrada é um caminho.
+# Repos do mesmo grupo se leem (só leitura; escrever no colega segue negado, o pedido vai por mensagem).
+# Grupo é a única relação que dá leitura entre repos.
 # O código do próprio workspace não entra aqui: `workspace dev` abre a janela dele, com papel "self".
 groups:
   Example:
     - ~/Codes/some-repo
-    - path: ~/Codes/other-repo
-      siblings:
-        - ~/Codes/some-repo
-
-# Irmãos declarados pelo menu de contexto do painel de repos (Espaço ou clique direito num repo).
-# A relação é simétrica: declarada de um lado, vale dos dois. Esta chave serve também para repo sem
-# entrada em "groups" (o do grupo implícito "Sem categoria"): a chave é o repo e a lista são os irmãos.
-# siblings:
-#   ~/Codes/some-repo:
-#     - ~/Codes/other-repo
-
-# Pasta-mãe (opcional, descomentar para usar): todo repo listado (main ou groups) que estiver dentro dela
-# é irmão de todos os outros listados dentro dela, sem precisar de "siblings". Fora dela, valem só os "siblings".
-# parent_folder: ~/Codes/my-folder
+    - ~/Codes/other-repo
 
 # Relações nomeadas: agrupamento por relacionamento, independente de "groups". Não abre janelas.
 relations:
