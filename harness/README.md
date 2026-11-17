@@ -10,7 +10,7 @@ já declara.
 é outra coisa, e é versionada junto com o projeto.
 
 **Texto, não motor.** Esta pasta guarda só regra e declaração. O motor e o freio determinístico
-(o hook do Claude, a política, o plugin do OpenCode e as settings renderizadas) moram em
+(o gate do Claude, o plugin de estado do OpenCode e as settings renderizadas) moram em
 [`../security/`](../security/) e não fazem parte deste índice de leitura.
 
 ## Índice
@@ -24,14 +24,10 @@ já declara.
     quando um termo ou o motivo não estiver claro.
   - [`regras/backlog.md`](regras/backlog.md) — ciclo, `Depende de`, bloqueio e fio da meada; leia
     antes de criar, refinar ou despachar item.
-  - [`regras/permissions.md`](regras/permissions.md) — formas de uso, caso desconhecido e rastro; leia
-    antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
   - [`regras/agent-rules.md`](regras/agent-rules.md) — mapa das regras de agente que moram no
     `HARNESS.md` (Backlog, Agentes, Commits); leia só para localizar essas seções.
   - [`regras/dispatch.md`](regras/dispatch.md) — modo de despacho, laço e worktree; leia antes de
     despachar subagente, abrir worktree ou paralelizar fatias.
-  - [`regras/secrets.md`](regras/secrets.md) — varredura, onde um segredo mora e canal seguro; leia
-    antes de commit, de criar chave ou de decidir onde um segredo mora.
 
 ## Como usar
 

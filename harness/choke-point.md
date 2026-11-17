@@ -34,8 +34,8 @@ Dívida atual, nomeada em `tests/test_architecture.py` com o motivo de cada exce
 | `src/session_placeholder.py` | dívida legítima: desenha sozinho para sobreviver ao reload sem `lib`/`tmux` |
 | `src/mic.py` | dívida: laço de ditado em tela cheia e alt-screen fora do `viewer` |
 
-`sys.stdout.write` fica fora da guarda: `src/policy.py` (JSON do hook) e `src/session_risk.py`
-(prompt) escrevem em stdout sem desenhar tela. `import termios`/`tty` dentro de função é leitura de
+`sys.stdout.write` fica fora da guarda: `src/session_risk.py` (prompt) escreve em stdout sem
+desenhar tela. `import termios`/`tty` dentro de função é leitura de
 uma tecla, não dono do terminal; a guarda olha import no nível do módulo.
 
 ## O freio

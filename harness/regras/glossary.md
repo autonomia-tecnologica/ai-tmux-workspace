@@ -41,11 +41,11 @@ não estiver claro; não leia a pasta.
 - **Pasta de Trabalho** — a pasta principal da pessoa.
 - **Sessão** — instância de agente com papel e raiz, relativa a um repositório ou à home.
 - **Home** — a sessão principal, cliente do workspace.
-- **Caixa** — área em que a sessão pode agir, imposta pelo SO ou, nesta fase, pela política de
-  harness.
+- **Caixa** — área em que a sessão pode agir, imposta pelo SO. Hoje não há caixa: a política de
+  capacidades foi removida e o agente roda com a conta da pessoa.
 - **Harness (de inferência)** — a camada de texto que orienta o agente; não é garantia. A LLM pode
   ignorar, intencional ou não.
-- **Harness determinístico** — o freio em código: hook, política, allowlist, `forcado.yaml`, sandbox
+- **Harness determinístico** — o freio em código: hook, allowlist, `forcado.yaml`, sandbox
   (e usuário de SO quando houver). Faz a regra valer; o adversário é a própria LLM.
 - **Freio** — o harness determinístico; o mecanismo em código que faz a regra valer.
 - **Choke point** — o dono único por efeito: o único ponto que desenha, chama `tmux`, escreve arquivo
@@ -54,10 +54,8 @@ não estiver claro; não leia a pasta.
 - **Harness adicional** — o harness próprio do repo (por convenção, `harness/`), inclusive o harness
   pessoal de repo. É permitido; vale como regra daquele repo, lido só sob demanda, sem se sobrepor ao
   `HARNESS.md` em segurança, isolamento e no que ele já declara.
-- **Política** — o motor central de capacidades, com um adaptador para o Claude e outro para o
-  OpenCode.
-- **Forma de uso / allowlist** — a unidade de permissão; a lista de cada forma está em
-  `permissions.md`.
+- **Allowlist** — a lista de exceções fixada por teste (`EXPECTED_ALLOWED` em
+  `tests/test_architecture.py`); só encolhe.
 - **Rastro** — o registro do que foi feito.
 - **Conferência** — conversa entre o repo da janela e os repos do grupo, cada um respondendo pelo próprio
   repo.

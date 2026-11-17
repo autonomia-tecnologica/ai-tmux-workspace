@@ -111,11 +111,11 @@ profiles:
     model: opencode/deepseek-v4.1-flash-free
 ```
 
-Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings do Claude; as sessões pertencem ao OpenCode. Uma aba sem id gravado abre uma sessão nova declarada, sem `--continue`; ao restaurar, usa `--session <id>` e, se o id não existir mais, abre uma sessão nova (nunca pega a última do repo em silêncio). O id real é gravado pelo plugin do OpenCode em `$WS_STATE/tabs/session-<aba>`. O workspace gera um config por perfil em `$WS_STATE/settings/` com as chaves do `config` declarado mais o plugin da política, e exporta esse caminho como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). `workspace restart` regenera o plugin e o config gerado. Sem `config`, o comando roda com o config gerado (só o plugin) sobre a config global.
+Nesse harness o workspace não passa `--settings`, `--permission-mode` nem `ENABLE_TOOL_SEARCH` e não gera settings do Claude; as sessões pertencem ao OpenCode. Uma aba sem id gravado abre uma sessão nova declarada, sem `--continue`; ao restaurar, usa `--session <id>` e, se o id não existir mais, abre uma sessão nova (nunca pega a última do repo em silêncio). O id real é gravado pelo plugin do OpenCode em `$WS_STATE/tabs/session-<aba>`. O workspace gera um config por perfil em `$WS_STATE/settings/` com as chaves do `config` declarado mais o plugin de estado (`security/opencode-state.js`), e exporta esse caminho como `OPENCODE_CONFIG`; o OpenCode mescla esse arquivo com a config global dele (`~/.config/opencode`). `workspace restart` regenera o plugin e o config gerado. Sem `config`, o comando roda com o config gerado (só o plugin) sobre a config global.
 
 A credencial do provider fica no próprio OpenCode (`opencode auth login anthropic`, `opencode auth login openrouter` ou `opencode auth login deepseek`; gravado em `~/.local/share/opencode/auth.json`), ou na variável de ambiente que o provider lê (ex.: `DEEPSEEK_API_KEY`). Nenhuma chave entra no `config.yaml`. O perfil declara `model`: `anthropic/claude-sonnet-5-5` (`opencode-claude`), `deepseek/deepseek-flash` (`opencode-deepseek`), `openrouter/deepseek/deepseek-v4-flash-0731` (`opencode-openrouter`) e `opencode/deepseek-v4.1-flash-free` (`opencode-free`); o arquivo de config do OpenCode aponta para o mesmo modelo.
 
-As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. O plugin do OpenCode chama a mesma política central do hook: com papel de sessão declarado, a mesma ação recebe a mesma decisão (e `ask` bloqueia, porque o plugin não tem canal de confirmação).
+As superfícies que dependem do Claude Code degradam com aviso, sem quebrar: a conferência e «Perguntar ao Claude» recusam com uma mensagem clara, o painel SESSÕES mostra o aviso, e o status bar troca modelo/uso por `opencode · sem métricas do Claude`. Prompts salvos, microfone e os nós `run`/`type` do menu continuam funcionando. O plugin do OpenCode só registra o id da sessão e os eventos de estado da aba; não decide nem bloqueia nada.
 
 ## Platforms (Windows)
 Decision: Windows is supported only through WSL2, plus the system toast notification (see Notificações). There is no tmux clone and no custom multiplexer for native Windows.
@@ -127,8 +127,6 @@ Why:
 - `src/statusbar.py` uses `fcntl.flock`, which is also POSIX-only.
 
 Linux and macOS are the supported platforms; on Windows, run the workspace inside a WSL2 distribution. For macOS, see the requirements and limits in the [macOS](#macos) section.
-
-The session box (item 64) is documented friction on Windows/WSL2 and in corporate environments: it is a policy enforced by the hook and the OpenCode plugin, not an OS sandbox, so it depends on the agent honouring those adapters.
 
 ### macOS
 
@@ -273,44 +271,32 @@ o aviso sem abortar.
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
 `src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
-`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os repos do grupo) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `docs/threat-model.md` (modelagem de ameaças) · `docs/threat-model.json` (requisitos; fonte da verdade).
+`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os repos do grupo) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `security/gate.py` (hook do freio: injeta o `HARNESS.md` e bloqueia escrita até lê-lo) · `security/opencode-state.js` (plugin de estado do OpenCode).
 
 ## Segurança: resumo
 
 O Claude executa comandos com as permissões da sua conta; o ai-tmux-workspace organiza tmux, sessões, config e hooks; a regra do ambiente mora em `ambiente-de-trabalho`.
 
-- **Forçado x recomendado:** o hook (código) é o freio que conta; o `HARNESS.md` é texto que a LLM pode ignorar. Mesmo o hook tem lacunas abertas.
+- **Forçado x recomendado:** o hook (código) é o freio que conta; o `HARNESS.md` é texto que a LLM pode ignorar. Hoje o hook só trava escrita até o harness ser lido e aplica o orçamento da conferência: não há política de capacidades.
 - **Sem isolamento de sistema operacional hoje:** o agente roda com a sua conta. Usuário dedicado e arquivos de outro dono são objetivo do item 35 (pausado), não garantia atual.
 - **Não instale pedindo a uma LLM:** o `install.sh` mostra o que vai fazer antes de tocar em qualquer coisa: na tela cheia, no resumo; no modo de texto (`--text`), pedindo confirmação a cada passo. Quem responde é você.
 - **Desfazer:** `remove.sh` restaura o que o instalador mudou, pelo manifesto de backup.
-- **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`. Comando administrativo pedido à IA só roda depois do Sim numa janela do desktop (kdialog ou zenity), via `pkexec`; sem desktop, nada roda.
-- **Falha aberta:** a LLM pode alterar a lista de repos do `config.yaml`.
+- **Sem privilégio:** o workspace não roda como root nem sob `sudo`/`pkexec`. Passo de sistema do instalador (`workspace privileged`) mostra o comando inteiro, pede confirmação e roda numa tela separada do tmux.
+- **Falha aberta:** nada impede a LLM de alterar o `config.yaml` (inclusive a lista de repos).
 - **Código gerado por IA:** SAST/DAST/SCA não substituem a leitura humana do PR; o que o ambiente
   exige no lugar — harness determinístico, choke points e revisão — está em
-  [`docs/threat-model.md`](docs/threat-model.md).
+  [`harness/regras/glossary.md`](harness/regras/glossary.md).
 - **Seu `settings.json`:** o workspace só acrescenta hooks e statusLine, com backup; hooks de terceiros não são tocados.
 
 Detalhes, o que é garantia e o que é só atrito: [`SECURITY.md`](SECURITY.md).
 
-## Segurança: modelagem de ameaças
+## Segurança: sessão e config
 
-A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
+Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home`, o código do próprio workspace como `self` e qualquer outro caminho como `repo`. Hoje isso só identifica a sessão (raiz e perfil) para o hook e o plugin gravarem o estado de cada aba; nenhuma política lê o papel e nada restringe o que o agente escreve. O que vale como barreira é o que o Claude Code pede por perfil (`permissions.defaultMode`, `deny` da settings gerada) e o gate do `HARNESS.md`.
 
-O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo. Escrevê-lo depende da raiz, não do papel: uma sessão cujo `WS_SESSION_ROOT` está dentro dessa raiz escreve, seja a sessão de dev (`workspace dev`) seja um repo ou a home com o código do workspace como raiz (como os worktrees deste repo); não é preciso papel `self`. Sessão com raiz fora dessa pasta é negada, a home inclusive. O caminho não entra na config nem em `groups`.
+**Isto não é uma garantia.** A caixa por papel, a política de capacidades, o modo `policy.ask` e a aprovação de comando administrativo por janela do desktop foram removidos deste repo. Não há usuário de SO dedicado nem sandbox: o agente roda com a sua conta. O threat model (`docs/threat-model.*`) também saiu.
 
-### Caixa da sessão
-
-A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. Um repo lê os outros repos do mesmo grupo (`groups` no `config.yaml`, item 161), só leitura: repo do grupo lê repo do grupo, e escrever no colega continua negado (o pedido de mudança vai por mensagem, SendMessage, à sessão dele). Config ausente ou inválida = sem repos do grupo. O plano de controle do workspace (`~/.config/ai-tmux-workspace`, com `config.yaml`, `state/` e `conference/`) é caminho protegido: todo papel pode ler, nenhum papel de agente escreve, e a barreira vem antes da tabela de papéis. O resto de `~/.config` e `~/.claude` segue a tabela; a cópia instalada é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
-
-**Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a caixa é política de harness, não usuário de SO nem sandbox (item 74); a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–74) e a lista completa de requisitos está no JSON.
-
-Falha aberta conhecida: hoje a própria LLM gerencia quais repositórios entram na config (lista de repos em `config.yaml`). Isso significa que ela poderia adicionar qualquer pasta do ambiente ao workspace. A lista de repos não é uma barreira contra a LLM.
-
-### Controle de comandos
-
-O controle de comandos está em aberto e precisa ser pensado junto com o controle de arquivos e pastas, não isolado dele. A resolução é a pessoa — o agente pede e a pessoa aprova — e não bloquear tudo completamente, que trava trabalho legítimo no repo. Enquanto o desenho não fecha, o modo decisão é interino e opt-in: com o marcador `~/.config/ai-tmux-workspace/state/policy.ask` (ou `WS_POLICY_ASK=1`) o comando ou a ferramenta que o motor não classifica vira `ask` em vez de `deny`, e `net`/`install` que a tabela manda negar também passam a `ask`; cada decisão vai para o `policy.jsonl` com o motivo `policy.reason.ask_mode`. Segredos, comandos administrativos, leitura fora da caixa, escrita na config e escrita no código do workspace continuam negados: o controle de arquivos e pastas não é afrouxado. O marcador é da pessoa; apagá-lo fecha o modo de novo.
-
-**Isto é uma medida interina, não o desenho final do controle de comandos.**
+Falha aberta conhecida: a própria LLM pode editar o `config.yaml`, inclusive a lista de repos e `groups`. A lista de repos não é uma barreira contra ela.
 
 ## Textos (i18n)
 Todo texto exibido e todo prompt enviado ao agente ativo mora em `i18n/` (hoje só `pt-BR`): `i18n/pt-BR.json` (chaves lidas por `src/i18n.py`) e `i18n/HELP.pt-BR.md` (a ajuda do `ctrl+b h`). Idioma novo = arquivos novos nessa pasta.

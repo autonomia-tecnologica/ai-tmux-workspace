@@ -28,13 +28,13 @@ são as permissões do Claude Code por perfil.
 | camada | pasta/arquivos | responsabilidade | proibido |
 |---|---|---|---|
 | Fundação | `src/paths.py`, `src/tmux.py`, `src/i18n.py`, `src/colors.py`, `src/yaml_min.py`, `i18n/` | dono único dos caminhos do workspace, do comando `tmux`, do texto por locale, das cores ANSI e do leitor YAML mínimo | importar qualquer camada acima; pintar tela; escrever conteúdo de estado (só `paths.py` cria a estrutura e migra o legado) |
-| Sessão e permissões | `src/session.py`, `src/session_state.py`, `src/permission_state.py`, `src/policy.py`, `src/privileged.py` | caixa e papel da sessão, abas persistidas, último modo de permissão, decisão da política, execução aprovada de comando administrativo (aprovação numa janela gráfica do desktop e `pkexec`, itens 154 e 159) | importar `lib`, `viewer`, `panel_*`, `agents` ou `hook`; chamar `tmux` fora de `tmux.py`; decidir permissão fora de `policy.py` |
+| Sessão e permissões | `src/session.py`, `src/session_state.py`, `src/permission_state.py` | papel e raiz declarados da sessão (identidade, sem política), abas persistidas, último modo de permissão | importar `lib`, `viewer`, `panel_*`, `agents` ou `hook`; chamar `tmux` fora de `tmux.py` |
 | Estado e serviços | `src/lib.py`, `src/worktrees.py`, `src/tree_state.py`, `src/backlog.py`, `src/drift.py`, `src/extra_usage.py`, `src/session_risk.py`, `src/notify.py`, `src/opener.py`, `src/clipboard.py`, `src/statusbar.py`, `src/agents/` | config e estado do workspace, obra de worktree, estado de árvore, leitura do backlog, doctor do harness, uso extra, risco, notificação, abrir arquivo, clipboard, texto da barra de status, adaptadores de agente que normalizam o estado para os painéis | importar `viewer`, `panel_*`, `help`, `options` ou `hook`; pintar tela |
 | Desenho e telas | `src/viewer.py`, `src/context_menu.py`, `src/panel_diff.py`, `src/panel_folders.py`, `src/panel_github.py`, `src/panel_repos.py`, `src/panel_sessions.py`, `src/panel_tabs.py`, `src/panel_tasks.py`, `src/panel_tree.py`, `src/help.py`, `src/options.py`, `src/session_placeholder.py`, `src/conference.py`, `src/conference_budget.py`, `src/conference_worker.py`, `src/mic.py`, `src/stt.py`, `src/glyphs.py`, `src/icons.py`, `src/installer_tui.py` | pintar linhas, telas e popups; painéis só devolvem `collect(viewer)`; menu de contexto declarado por tipo de item; símbolos e ícones desenhados; conferência e ditado | rodar o comando `tmux` (só `tmux.py`); escrever arquivo de estado; importar `hook`, `installer` ou `bin/workspace` |
-| Entrada e adaptadores | `bin/workspace`, `src/lifecycle.py`, `src/installer.py`, `src/config_cmd.py`, `src/updater.py`, `src/hook.py`, `src/statusline.py`, `src/session_menu.py` | launcher e comandos, dono do ciclo de vida dos servidores `ws-*` (perfil ↔ servidor, quais estão vivos; `restart`, `stop` e `reload` agem por servidor), instalação/remoção, `workspace config update` (compara e acrescenta config, harness, settings e hooks), hook do Claude, statusLine, menu de sessão | decidir permissão (só encaminha para `policy.py`); pintar tela por conta própria; ser importado por camada abaixo |
+| Entrada e adaptadores | `bin/workspace`, `src/lifecycle.py`, `src/installer.py`, `src/config_cmd.py`, `src/updater.py`, `src/hook.py`, `src/statusline.py`, `src/session_menu.py` | launcher e comandos, dono do ciclo de vida dos servidores `ws-*` (perfil ↔ servidor, quais estão vivos; `restart`, `stop` e `reload` agem por servidor), instalação/remoção, `workspace config update` (compara e acrescenta config, harness, settings e hooks), hook do Claude, statusLine, menu de sessão | pintar tela por conta própria; ser importado por camada abaixo |
 | Regra | `harness/` | texto de regra e declaração (`HARNESS.md`, `arch-format.md`, `choke-point.md`, `README.md`, `regras/`, `forcado.yaml`) | importar `src/` ou `tests/`; virar dependência de runtime do produto |
-| Motor e freio | `security/` | motor instalado (`gate.py`, `policy.yaml`, `opencode-policy.js`, `settings.json`, `policy.py`, `paths.py`, `yaml_min.py`, `i18n/`) | importar `src/` ou `tests/`; decidir permissão fora de `policy.py`; depender de terceiros |
-| Freios | `tests/` | provas executáveis: desenho, idioma, política, config, painéis e este arquivo | ser importado por `src/` ou `bin/` |
+| Motor e freio | `security/` | motor instalado (`gate.py`, `opencode-state.js`, `settings.json`) | importar `src/` ou `tests/`; depender de terceiros |
+| Freios | `tests/` | provas executáveis: desenho, idioma, config, painéis e este arquivo | ser importado por `src/` ou `bin/` |
 
 ## Direção de dependência
 
@@ -62,7 +62,6 @@ Proibido:
 - ciclo entre camadas diferentes; ciclo dentro da mesma camada sem import local e motivo;
 - qualquer módulo fora de `src/tmux.py` rodar o comando `tmux`;
 - qualquer módulo fora de `src/viewer.py` pintar a tela, salvo as dívidas nomeadas abaixo;
-- `bin/workspace` ou adaptador decidir permissão: a decisão é de `src/policy.py`.
 
 ## Dono único por efeito
 
@@ -95,12 +94,12 @@ O sinal só acorda. O estado não viaja no sinal: o consumidor relê o estado do
 | terminal redimensionado | tmux, pelo kernel | `SIGWINCH` | `Viewer.run` (`_wake`) | `src/viewer.py` |
 | estado de abas mudou | `bin/workspace` (`panel_signal`) | `SIGUSR1` a `panel_tabs.py` | `src/panel_tabs.py` relê `session_state` e redesenha | `src/session_state.py` |
 | sessão do Claude mudou | hook do Claude (hooks do `settings.json` gerado) | comando do hook | `src/hook.py` | `src/hook.py` (ficha) e `src/session_state.py` (aba) |
-| sessão do OpenCode mudou | `security/opencode-policy.js` | arquivo `tabs/session-<aba>` | `session_state.session_for` | `src/session_state.py` (dívida: três escritores) |
-| estado do agente mudou (Claude e OpenCode) | hook do Claude (`src/hook.py`) e `security/opencode-policy.js`, que chama `hook.py agent` | comando do hook; spawn do plugin com o evento no stdin | `src/hook.py` traduz pelo adaptador (`agents/*.state_of`) e grava pela `session_state` | `src/session_state.py` (estado da aba em `tabs/<sha1>.json`) |
+| sessão do OpenCode mudou | `security/opencode-state.js` | arquivo `tabs/session-<aba>` | `session_state.session_for` | `src/session_state.py` (dívida: três escritores) |
+| estado do agente mudou (Claude e OpenCode) | hook do Claude (`src/hook.py`) e `security/opencode-state.js`, que chama `hook.py agent` | comando do hook; spawn do plugin com o evento no stdin | `src/hook.py` traduz pelo adaptador (`agents/*.state_of`) e grava pela `session_state` | `src/session_state.py` (estado da aba em `tabs/<sha1>.json`) |
 | barra de status | `bin/workspace`, pelas opções `@ws_*` | `#(...)` em `config/tmux.conf` | tmux pinta a barra | `src/statusbar.py` (texto) |
 
 Provas: `grep -n SIGWINCH src/viewer.py`; `grep -n USR1 bin/workspace`; `grep -n session- src/hook.py`;
-`grep -n session- security/opencode-policy.js`;
+`grep -n session- security/opencode-state.js`;
 `grep -n statusbar config/tmux.conf`.
 
 ## Estado vivo no tmux
@@ -168,9 +167,9 @@ Prova: `grep -n REPO_TREE bin/workspace`.
 
 ## Ciclo de vida de sessão
 
-Uma sessão é uma aba com um agente dentro de um repo. Papel e caixa vêm de `src/session.py`: o repo
+Uma sessão é uma aba com um agente dentro de um repo. Papel e raiz vêm de `src/session.py`: o repo
 principal é `home`, os demais são `repo`. `WS_SESSION_ROLE`, `WS_SESSION_ROOT` e `WS_SESSION_PROFILE`
-levam a caixa até o hook e o plugin, que aplicam a política.
+identificam a sessão para o hook e o plugin, que gravam o estado da aba; nenhuma política lê o papel.
 
 1. Abertura: `session_new` (`bin/workspace`) cria a aba e a registra em `session_state` (`add`);
    `session_run` roda o processo do agente.
@@ -206,15 +205,14 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 | `~/.config/ai-tmux-workspace/config.yaml` (leitura de `settings.json` antigo) | `src/paths.py` (`config_path`); `src/lib.py` lê e grava | a pessoa, editando; `lib` (edição textual mínima, com backup) |
 | `~/.config/ai-tmux-workspace/state/` (`WS_STATE`) | `src/paths.py` (`state_dir`, `settings_dir`) | os donos de cada arquivo abaixo |
 | `$WS_STATE/tabs/<sha1>.json` (abas por repo e estado do agente de cada aba: `state`, `pid`, `harness`, `ts`) | `src/session_state.py` | `session_state` (`record_agent`, `save`); `bin/workspace` pede por `state_sync_window`; `hook.py` e `hook.py agent` (OpenCode) pedem por `record_agent` |
-| `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `security/opencode-policy.js` e `session_state` (dívida) |
+| `$WS_STATE/tabs/session-<aba>` (id vivo da aba) | `src/session_state.py` | `hook.py`, `security/opencode-state.js` e `session_state` (dívida) |
 | `$WS_STATE/git-state.json` (estado git de cada repo do painel: `ts`, `state`, `dirty`) e `$WS_STATE/git-state.lock` | `src/lib.py` (`git_state`, `refresh_git_states`) | `lib`: só o processo que pega a trava lê git, uma rodada por `GH_TTL`, escrita atômica; os painéis leem o arquivo e nunca rodam git na própria thread (item 165) |
 | `$WS_STATE/permission.json` (último modo de permissão) | `src/permission_state.py` (`path`, `record_mode`) | `permission_state` |
-| `$WS_STATE/policy.jsonl` (decisões da política) | `src/policy.py` | `policy` (anexa) |
 | `$WS_STATE/sessions/<id>` (ficha de sessão) | `src/hook.py` | `hook` |
 | `$WS_STATE/sessions/<id>.status.json` e `$WS_STATE/limits.json` | `src/statusline.py` | `statusline` |
 | `$WS_STATE/settings/<perfil>` (settings gerados por perfil) | `src/lib.py` (`ensure-settings`) | `lib`; o instalador lê o caminho |
 | `$WS_STATE/settings/opencode-<perfil>.json` (config gerado do OpenCode) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
-| `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin da política) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
+| `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin de estado) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
 | cache de uso extra | `src/extra_usage.py` | `extra_usage` |
 | `~/.config/ai-tmux-workspace/conference/` (conferência) | `src/paths.py` (`conference_dir`) | `src/conference.py` |
 | `~/.local/share/ai-tmux-workspace/{app,harness,security}` (código e `HARNESS.md` instalados) | `src/paths.py` (`install_dir`, `harness_dir`, `security_dir`) | o instalador; os demais só leem |
@@ -231,8 +229,7 @@ e no instalador, e não sobrescreve o destino. Prova: `grep -n "def state_dir\|d
 - Texto ao usuário por i18n, em `i18n/pt-BR.json` e `i18n/HELP.pt-BR.md`; pt-BR é o locale principal.
   Outro locale entra como arquivo novo em `i18n/`, sem texto no código.
 - Este `ARCH.md` é escrito em pt-BR, como o `BACKLOG.md`.
-- Contratos externos continuam strings e não seguem a regra de identificador: as chaves `tipo` e
-  `texto` de `security/policy.yaml` e os rótulos do `BACKLOG.md`.
+- Contratos externos continuam strings e não seguem a regra de identificador: os campos de `forcado.yaml` e os rótulos do `BACKLOG.md`.
 
 ## Dívidas conhecidas
 
@@ -245,7 +242,7 @@ e no instalador, e não sobrescreve o destino. Prova: `grep -n "def state_dir\|d
 | painéis chamam `bin/workspace` por subprocesso (`lib.WS`) | o script é a única porta para ação de aba e sessão, e o painel não tem função de `src/` para chamar | ações viram funções de `src/` que o painel e o script chamam; o painel deixa de usar `lib.WS`. Prova: `grep -n "lib.WS" src/panel_*.py` (repos, sessions, tabs e tasks) |
 | `conference*` escreve estado na camada de desenho (log, orçamento) | a conferência nasceu com o estado junto da tela | a escrita de estado vai para módulo da camada de estado; `conference*` só desenha e pede. Prova: `grep -n write_text src/conference*.py` e `grep -n "open(" src/conference*.py` |
 | `lib` carrega `security/gate.py` por caminho | a renderização do settings do freio mora no motor instalado, então `src/` depende de `security/` | `lib` chama o motor instalado (`AT_SECURITY_DIR`) por processo, ou a renderização vai para `src/`; `security/` guarda o motor e `harness/` fica só com o texto. Prova: `grep -n spec_from_file_location src/lib.py` e `grep -n GATE_PY src/lib.py` |
-| `tabs/session-<aba>` tem três escritores (`session_state`, `hook`, `opencode-policy.js`) | o id vivo da aba nasceu em três lugares, cada um com a própria escrita | um escritor de formato em `session_state`; o plugin OpenCode (JS) precisa de ponte documentada. Prova: `grep -n session- src/hook.py src/session_state.py security/opencode-policy.js` |
+| `tabs/session-<aba>` tem três escritores (`session_state`, `hook`, `opencode-state.js`) | o id vivo da aba nasceu em três lugares, cada um com a própria escrita | um escritor de formato em `session_state`; o plugin OpenCode (JS) precisa de ponte documentada. Prova: `grep -n session- src/hook.py src/session_state.py security/opencode-state.js` |
 | `agents/claude.py` e `agents/opencode.py` importam `conference` no nível do módulo (estado → desenho) | o adaptador lê as constantes da conferência; import de módulo quebra a direção permitida | import local dentro da função que usa a constante, com motivo (como `lib`), ou levar as constantes para a camada de estado. Prova: `grep -n "^import conference" src/agents/claude.py src/agents/opencode.py` (linhas 13 e 15) |
 | `conference_worker` importa `agents` no nível do módulo (desenho → estado) | o worker usa o adaptador para rodar o agente, e o texto anterior dizia que o ciclo era só local | import local dentro da função que chama o adaptador, com motivo no código. Prova: `grep -n "^import agents" src/conference_worker.py` (linha 39) |
 | painel de janela não visível coleta git (cada painel de repos, 8 processos, lê o cache a cada redesenho) | saber se a janela está visível exige o `tmux` (`window_active`), e `viewer`/painel não rodam o comando `tmux` (ARCH, dono único); o cache compartilhado já limita a 1 rodada de git por `GH_TTL` no total | o viewer recebe do `bin/workspace` a visibilidade pela opção de janela (`@ws_*`), e `collect` pula a rodada de git quando não é visível. Prova: `grep -n _kick_refresh src/lib.py` |
