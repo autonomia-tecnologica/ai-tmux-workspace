@@ -471,35 +471,24 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
         self.assertEqual(snapshot(self.home), before)
 
-    # 20 (item 107) ---------------------------------------------------------------------------
-    def test_install_with_all_providers_writes_the_five_profiles_without_bypass(self):
-        # install, cli, completion, manage (yes), all five providers, default (claude), config,
+    # 20 (item 129) ---------------------------------------------------------------------------
+    def test_install_with_all_providers_writes_the_two_profiles_without_bypass(self):
+        # install, cli, completion, manage (yes), both providers, default (claude), config,
         # harness x2, hooks
-        installed = self.install("s\ns\ns\ns\ns\n1 2 3 4 5\n1\ns\ns\ns\ns\n")
+        installed = self.install("s\ns\ns\ns\ns\n1 2\n1\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, path = self.config()
         self.assertIs(cfg["manage"], True)
         self.assertEqual(cfg["agent"], "claude")
-        self.assertEqual(set(cfg["profiles"]),
-                         {"claude", "opencode-claude", "opencode-deepseek",
-                          "opencode-openrouter", "opencode-free"})
+        self.assertEqual(set(cfg["profiles"]), {"claude", "opencode"})
 
         self.assertEqual(cfg["profiles"]["claude"], "claude")
-        expected = {
-            "opencode-claude": ("opencode-claude.json", "anthropic/claude-sonnet-5-5"),
-            "opencode-deepseek": ("opencode-deepseek.json", "deepseek/deepseek-flash"),
-            "opencode-openrouter": ("opencode-openrouter.json",
-                                    "openrouter/deepseek/deepseek-v4-flash-0731"),
-            "opencode-free": ("opencode-free.json", "opencode/deepseek-v4.1-flash-free"),
-        }
-        for name, (config_name, model) in expected.items():
-            profile = cfg["profiles"][name]
-            self.assertEqual(profile["harness"], "opencode")
-            self.assertEqual(profile["command"], "opencode")
-            self.assertIn(config_name, profile["config"])
-            self.assertEqual(profile["model"], model)
-            self.assertNotIn("settings", profile,
-                             "OpenCode profiles carry no Claude settings")
+        opencode = cfg["profiles"]["opencode"]
+        self.assertEqual(opencode["harness"], "opencode")
+        self.assertEqual(opencode["command"], "opencode")
+        for absent in ("config", "model", "settings"):
+            self.assertNotIn(absent, opencode,
+                             "the catalog OpenCode profile declares no config/model/settings")
         text = path.read_text(encoding="utf-8")
         self.assertNotIn("bypass", text.lower(), "no profile may carry a bypass")
         profiles_text = yaml_min.dumps(cfg["profiles"]).lower()
@@ -507,32 +496,55 @@ class InstallerTest(unittest.TestCase):
         self.assertNotIn("apikeyhelper", profiles_text)
         self.assertNotIn("sk-or-", profiles_text)
         example = (ROOT / "config" / "config.example.yaml").read_text(encoding="utf-8")
-        self.assertNotIn("claude-deepseek", example)
+        for legacy in ("claude-deepseek", "opencode-claude", "opencode-deepseek",
+                       "opencode-openrouter", "opencode-free"):
+            self.assertNotIn(legacy, example)
 
         generated = self.run_lib("ensure-settings", "claude")
         self.assertEqual(generated.returncode, 0, generated.stderr)
         settings = json.loads((self.state / "settings" / "claude.json").read_text())
         self.assertNotIn("bypassPermissions", json.dumps(settings))
 
-    # 21 (item 107) ---------------------------------------------------------------------------
-    def test_default_profile_is_the_first_marked_when_the_answer_is_empty(self):
-        # install, cli, completion, manage, providers (openrouter then claude-harness),
-        # default (empty), config, harness x2, hooks
-        installed = self.install("s\ns\ns\ns\ns\n4 2\n\ns\ns\ns\ns\n")
+    # 20b (item 129) --------------------------------------------------------------------------
+    def test_the_opencode_profile_launches_under_the_generated_config_over_the_global_one(self):
+        installed = self.install("s\ns\ns\ns\ns\n1 2\n2\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
-        self.assertEqual(cfg["agent"], "opencode-claude")
-        self.assertEqual(set(cfg["profiles"]), {"opencode-claude", "opencode-openrouter"})
+        self.assertEqual(cfg["agent"], "opencode")
+        repo = self.root / "repo"
+        repo.mkdir()
+        launched = self.run_lib("profile-cmd", "opencode", str(repo))
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        self.assertIn(f"OPENCODE_CONFIG={self.state / 'settings' / 'opencode-opencode.json'}",
+                      launched.stdout)
+        for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
+            self.assertNotIn(flag, launched.stdout)
+        generated = json.loads((self.state / "settings" / "opencode-opencode.json").read_text())
+        self.assertTrue(generated.get("plugin"), "the generated config carries the state plugin")
+        self.assertTrue(any(str(path).endswith("HARNESS.md")
+                            for path in generated.get("instructions", [])),
+                        "the installed HARNESS.md is the config's instructions")
+        self.assertNotIn("model", generated, "the model is chosen inside OpenCode, not by the profile")
 
-    # 22 (item 107) ---------------------------------------------------------------------------
-    def test_default_profile_accepts_an_explicit_choice(self):
-        # install, cli, completion, manage, providers (deepseek then free), default (2), config,
-        # harness x2, hooks
-        installed = self.install("s\ns\ns\ns\ns\n3 5\n2\ns\ns\ns\ns\n")
+    # 21 (item 129) ---------------------------------------------------------------------------
+    def test_default_profile_is_the_first_marked_when_the_answer_is_empty(self):
+        # install, cli, completion, manage, providers (opencode then claude),
+        # default (empty), config, harness x2, hooks
+        installed = self.install("s\ns\ns\ns\ns\n2 1\n\ns\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
-        self.assertEqual(cfg["agent"], "opencode-free")
-        self.assertEqual(set(cfg["profiles"]), {"opencode-deepseek", "opencode-free"})
+        self.assertEqual(cfg["agent"], "claude", "the answer comes back in canonical order")
+        self.assertEqual(set(cfg["profiles"]), {"claude", "opencode"})
+
+    # 22 (item 129) ---------------------------------------------------------------------------
+    def test_default_profile_accepts_an_explicit_choice(self):
+        # install, cli, completion, manage, providers (claude then opencode), default (2), config,
+        # harness x2, hooks
+        installed = self.install("s\ns\ns\ns\ns\n1 2\n2\ns\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertEqual(cfg["agent"], "opencode")
+        self.assertEqual(set(cfg["profiles"]), {"claude", "opencode"})
 
     # 23 (item 93) ----------------------------------------------------------------------------
     def test_existing_config_is_preserved_and_only_manage_agent_and_marked_profiles_change(self):
@@ -598,7 +610,7 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
         self.assertEqual(snapshot(self.home), before)
 
-    # 26 (item 107) ---------------------------------------------------------------------------
+    # 26 (item 129) ---------------------------------------------------------------------------
     def test_existing_config_migrates_the_known_legacy_profile_names(self):
         path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
         path.parent.mkdir(parents=True)
@@ -610,12 +622,16 @@ class InstallerTest(unittest.TestCase):
             "editor": {"code": [{"name": "nvim", "command": "nvim", "fullscreen": False}]},
             "prompts": ["p1", "p2"],
             "profiles": {
-                "opencode": {"harness": "opencode", "command": "opencode",
-                             "config": "~/legacy/opencode.json",
-                             "model": "deepseek/deepseek-flash"},
+                "opencode-deepseek": {"harness": "opencode", "command": "opencode",
+                                      "config": "~/legacy/opencode-deepseek.json",
+                                      "model": "deepseek/deepseek-flash"},
+                "opencode-free": {"harness": "opencode", "command": "opencode",
+                                  "config": "~/legacy/opencode-free.json",
+                                  "model": "opencode/free"},
+                "opencode-claude": {"harness": "opencode", "command": "opencode",
+                                    "config": "~/legacy/opencode-claude.json"},
                 "openrouter": {"harness": "opencode", "command": "opencode",
-                               "config": "~/legacy/openrouter.json",
-                               "model": "openrouter/old"},
+                               "config": "~/legacy/openrouter.json"},
                 "deepseek": {
                     "command": "claude",
                     "settings": {
@@ -634,15 +650,12 @@ class InstallerTest(unittest.TestCase):
         installed = self.install("s\ns\ns\nn\ns\n\ns\ns\ns\n")
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         cfg, _path = self.config()
-        self.assertEqual(set(cfg["profiles"]),
-                         {"opencode-deepseek", "opencode-openrouter", "custom"})
-        self.assertEqual(cfg["profiles"]["opencode-deepseek"],
-                         original["profiles"]["opencode"],
-                         "the key moves; the profile value (config path) does not")
-        self.assertEqual(cfg["profiles"]["opencode-openrouter"],
-                         original["profiles"]["openrouter"])
+        self.assertEqual(set(cfg["profiles"]), {"opencode", "custom"})
+        self.assertEqual(cfg["profiles"]["opencode"],
+                         original["profiles"]["opencode-deepseek"],
+                         "the first legacy name in the canonical order keeps its value")
         self.assertEqual(cfg["profiles"]["custom"], original["profiles"]["custom"])
-        self.assertEqual(cfg["agent"], "opencode-deepseek",
+        self.assertEqual(cfg["agent"], "opencode",
                          "agent follows the removed legacy deepseek profile")
         for key in ("main", "groups", "editor", "prompts"):
             self.assertEqual(cfg[key], original[key], f"{key} must be preserved")
@@ -652,9 +665,47 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         migrated, _path = self.config()
         self.assertEqual(migrated["profiles"], cfg["profiles"])
-        self.assertEqual(migrated["agent"], "opencode-deepseek")
+        self.assertEqual(migrated["agent"], "opencode")
 
-    # 27 (item 107) ---------------------------------------------------------------------------
+    # 26b (item 129) --------------------------------------------------------------------------
+    def test_the_old_claude_deepseek_command_line_is_removed(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml_min.dumps({
+            "manage": True,
+            "agent": "deepseek",
+            "profiles": {"deepseek": "claude --settings ~/.claude/settings.deepseek.json"},
+        }), encoding="utf-8")
+        installed = self.install("s\ns\ns\nn\ns\n\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertEqual(cfg["profiles"],
+                         {"opencode": {"harness": "opencode", "command": "opencode"}},
+                         "the removed deepseek leaves the canonical profile for the agent")
+        self.assertEqual(cfg["agent"], "opencode")
+
+    # 26c (item 129) --------------------------------------------------------------------------
+    def test_an_existing_opencode_profile_is_left_as_it_is(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        path.parent.mkdir(parents=True)
+        existing = {"harness": "opencode", "command": "opencode", "config": "~/mine.json"}
+        path.write_text(yaml_min.dumps({
+            "manage": True,
+            "agent": "opencode-free",
+            "profiles": {
+                "opencode": existing,
+                "opencode-free": {"harness": "opencode", "command": "opencode",
+                                  "config": "~/legacy/free.json"},
+            },
+        }), encoding="utf-8")
+        installed = self.install("s\ns\ns\nn\ns\n\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertEqual(cfg["profiles"], {"opencode": existing},
+                         "the canonical key is the person's config and stays untouched")
+        self.assertEqual(cfg["agent"], "opencode")
+
+    # 27 (item 129) ---------------------------------------------------------------------------
     def test_a_deepseek_profile_from_another_harness_is_preserved(self):
         path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
         path.parent.mkdir(parents=True)
@@ -670,6 +721,27 @@ class InstallerTest(unittest.TestCase):
         cfg, _path = self.config()
         self.assertEqual(cfg["profiles"], {"deepseek": profile})
         self.assertEqual(cfg["agent"], "deepseek")
+
+    # 27b (item 129) --------------------------------------------------------------------------
+    def test_a_legacy_opencode_name_from_another_harness_is_preserved(self):
+        path = self.home / ".config" / "ai-tmux-workspace" / "config.yaml"
+        path.parent.mkdir(parents=True)
+        profiles = {
+            "opencode-claude": "claude --settings ~/.claude/opencode-claude.json",
+            "openrouter": {"command": "claude",
+                           "settings": {"env": {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}}},
+        }
+        path.write_text(yaml_min.dumps({
+            "manage": True,
+            "agent": "opencode-claude",
+            "profiles": profiles,
+        }), encoding="utf-8")
+        installed = self.install("s\ns\ns\nn\ns\n\ns\ns\ns\n")
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        cfg, _path = self.config()
+        self.assertEqual(cfg["profiles"], profiles,
+                         "only profiles of the OpenCode harness are migrated")
+        self.assertEqual(cfg["agent"], "opencode-claude")
 
     # 28 (macOS) -------------------------------------------------------------------------------
     def test_install_sh_rejects_python_older_than_39(self):
@@ -1024,7 +1096,7 @@ class ShimRefreshTest(unittest.TestCase):
 
 # --- full-screen wizard (item 152) -----------------------------------------------------------
 
-PROVIDER_NAMES = ["claude", "opencode-claude", "opencode-deepseek", "opencode-openrouter", "opencode-free"]
+PROVIDER_NAMES = ["claude", "opencode"]
 
 
 def make_plan(**overrides):
@@ -1117,7 +1189,7 @@ class TuiWizardTest(unittest.TestCase):
         self.assertIsNone(action)
         self.assertEqual(wizard.screen, installer_tui.SUMMARY)
         self.assertEqual(wizard.answers, {"manage": True, "harness_managed": True,
-                                          "providers": ["claude", "opencode-claude"],
+                                          "providers": ["claude", "opencode"],
                                           "default": "claude"})
 
     def test_manage_no_asks_the_harness_and_skips_default_without_providers(self):
@@ -1143,17 +1215,17 @@ class TuiWizardTest(unittest.TestCase):
         self.assertIs(wizard.answers["harness_managed"], False, "manage must not overwrite the answer")
 
     def test_default_is_always_one_of_the_marked_providers(self):
-        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "down", "down", "space", "enter"])
-        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-deepseek"])
+        wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "down", "space", "enter"])
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode"])
         wizard.handle_key("down")
         wizard.handle_key("space")
-        self.assertEqual(wizard.answers["default"], "opencode-deepseek")
+        self.assertEqual(wizard.answers["default"], "opencode")
         wizard.handle_key("b")
         self.assertEqual(wizard.screen, installer_tui.PROVIDERS)
         wizard.handle_key("up")
         wizard.handle_key("space")
-        self.assertEqual(wizard.answers["providers"], ["opencode-deepseek"])
-        self.assertEqual(wizard.answers["default"], "opencode-deepseek")
+        self.assertEqual(wizard.answers["providers"], ["opencode"])
+        self.assertEqual(wizard.answers["default"], "opencode")
 
     def test_back_returns_to_the_previous_screen_and_welcome_has_none(self):
         wizard = installer_tui.Wizard(make_plan())
@@ -1289,11 +1361,11 @@ class TuiWizardTest(unittest.TestCase):
         wizard.handle_key("space")
         wizard.handle_key("down")
         wizard.handle_key("space")
-        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-claude"])
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode"])
         self.assertEqual(wizard.screen, installer_tui.PROVIDERS)
         wizard.handle_key("enter")
         self.assertEqual(wizard.screen, installer_tui.DEFAULT)
-        self.assertEqual(wizard.answers["providers"], ["claude", "opencode-claude"])
+        self.assertEqual(wizard.answers["providers"], ["claude", "opencode"])
 
     def test_small_terminal_shows_the_warning_and_never_raises(self):
         wizard, _ = drive(["enter", "enter", "enter", "enter", "space", "enter", "enter"])

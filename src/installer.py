@@ -133,46 +133,28 @@ REQUIRED = ("tmux", "python3", "git", "claude")
 OPTIONAL = ("gh", "nvim", "micro")
 MANIFEST_VERSION = 1
 
-# Item 107: the provider list is exactly these five, in this canonical order (the first one marked
-# is the suggested default). Only `claude` uses the Claude harness; every external provider runs
-# through OpenCode and takes its credential from the OpenCode auth store, never from this config.
-PROVIDERS = ("claude", "opencode-claude", "opencode-deepseek", "opencode-openrouter", "opencode-free")
+# Item 129: the provider list is exactly these two, in this canonical order (the first one marked
+# is the suggested default). `claude` runs the Claude Code harness; `opencode` runs the OpenCode
+# one. The OpenCode profile declares no `config` and no `model`: the server reads the person's
+# global OpenCode config, and the model/provider is chosen inside OpenCode.
+PROVIDERS = ("claude", "opencode")
 PROVIDER_PROFILES = {
     "claude": "claude",
-    "opencode-claude": {
+    "opencode": {
         "harness": "opencode",
         "command": "opencode",
-        "config": "~/.config/ai-tmux-workspace/opencode-claude.json",
-        "model": "anthropic/claude-sonnet-5-5",
-    },
-    "opencode-deepseek": {
-        "harness": "opencode",
-        "command": "opencode",
-        "config": "~/.config/ai-tmux-workspace/opencode-deepseek.json",
-        "model": "deepseek/deepseek-flash",
-    },
-    "opencode-openrouter": {
-        "harness": "opencode",
-        "command": "opencode",
-        "config": "~/.config/ai-tmux-workspace/opencode-openrouter.json",
-        "model": "openrouter/deepseek/deepseek-v4-flash-0731",
-    },
-    "opencode-free": {
-        "harness": "opencode",
-        "command": "opencode",
-        "config": "~/.config/ai-tmux-workspace/opencode-free.json",
-        "model": "opencode/deepseek-v4.1-flash-free",
     },
 }
 
-# Item 107: names from the earlier catalog, migrated once in an existing config. Only these keys
-# move (the profile value, including its `config` path, stays as it is); every other key is kept.
-LEGACY_PROFILE_RENAMES = {
-    "opencode": "opencode-deepseek",
-    "openrouter": "opencode-openrouter",
-}
+# Item 129: names from the earlier catalog, migrated once in an existing config. A legacy name is
+# touched only when its value is a profile of the OpenCode harness: the first one in this canonical
+# order keeps its value under `opencode` (when that key is absent), the others are removed. A
+# same-named profile of another harness is preserved.
+OPENCODE_PROFILE = "opencode"
+LEGACY_OPENCODE_NAMES = ("opencode-deepseek", "opencode-free", "opencode-claude",
+                         "opencode-openrouter", "openrouter")
 LEGACY_DEEPSEEK = "deepseek"
-LEGACY_DEEPSEEK_TARGET = "opencode-deepseek"
+LEGACY_DEEPSEEK_TARGET = OPENCODE_PROFILE
 LEGACY_DEEPSEEK_HOST = "deepseek.com"
 
 # Package names per manager; only shown to the person, never executed by the assistant.
@@ -278,10 +260,38 @@ def example_config():
     return data
 
 
-def is_legacy_claude_deepseek(profile):
-    """True only for the old Claude+DeepSeek profile: the Claude harness pointed at DeepSeek."""
-    if not isinstance(profile, dict) or profile.get("command") != "claude":
+def is_opencode_profile(profile):
+    """True for a profile of the OpenCode harness: the only values the legacy names are migrated from."""
+    if not isinstance(profile, dict):
         return False
+    harness = profile.get("harness")
+    return isinstance(harness, str) and harness.strip() == "opencode"
+
+
+def _is_deepseek_command_line(line):
+    """True for the old Claude+DeepSeek command line (`claude ...deepseek...`)."""
+    if not isinstance(line, str):
+        return False
+    text = line.strip().lower()
+    if not re.match(r"^claude(?:\s|$)", text):
+        return False
+    return LEGACY_DEEPSEEK in text or LEGACY_DEEPSEEK_HOST in text
+
+
+def is_legacy_claude_deepseek(profile):
+    """True only for the old Claude+DeepSeek profile: the Claude harness pointed at DeepSeek.
+
+    Recognizes both old shapes: the map with the DeepSeek base URL in `settings` and the command
+    line (`claude ... --settings .../settings.deepseek.json`, or a DeepSeek base URL/class in the
+    line). A `deepseek` profile of another harness is not touched."""
+    if not isinstance(profile, dict):
+        return _is_deepseek_command_line(profile)
+    command = profile.get("command")
+    if _is_deepseek_command_line(command):
+        return True
+    if command is not None:
+        if not isinstance(command, str) or not re.match(r"^claude(?:\s|$)", command.strip()):
+            return False
     settings = profile.get("settings")
     if not isinstance(settings, dict):
         return False
@@ -295,20 +305,31 @@ def is_legacy_claude_deepseek(profile):
 def migrate_legacy_profiles(profiles, agent):
     """Apply the known legacy renames/removals to an existing config, in place.
 
-    A rename happens only when the canonical key is absent, so a config that already has both keeps
-    both. `deepseek` is removed only when it is the old Claude+DeepSeek profile; a homonym from
-    another harness is preserved. Returns the applied old->new map and the matching `agent`.
-    """
+    A legacy OpenCode name (`opencode-*`, or the old `openrouter`) folds into one `opencode`: the
+    first one in the canonical order keeps its value under the canonical key when that key is
+    absent, and every other legacy OpenCode profile is removed. A same-named profile of another
+    harness is preserved, and an existing `opencode` is left as it is (it is already canonical).
+    `deepseek` is removed only when it is the old Claude+DeepSeek profile; `opencode` is created for
+    it when absent, so the `agent` that pointed there has a profile to open. Returns the applied
+    old->new map and the matching `agent`."""
     applied = {}
     if not isinstance(profiles, dict):
         return applied, agent
-    for old, new in LEGACY_PROFILE_RENAMES.items():
-        if old in profiles and new not in profiles:
-            profiles[new] = profiles.pop(old)
-            applied[old] = new
+    if OPENCODE_PROFILE not in profiles:
+        for old in LEGACY_OPENCODE_NAMES:
+            if is_opencode_profile(profiles.get(old)):
+                profiles[OPENCODE_PROFILE] = profiles.pop(old)
+                applied[old] = OPENCODE_PROFILE
+                break
+    for old in LEGACY_OPENCODE_NAMES:
+        if is_opencode_profile(profiles.get(old)):
+            del profiles[old]
+            applied[old] = OPENCODE_PROFILE
     if LEGACY_DEEPSEEK in profiles and is_legacy_claude_deepseek(profiles[LEGACY_DEEPSEEK]):
         del profiles[LEGACY_DEEPSEEK]
         applied[LEGACY_DEEPSEEK] = LEGACY_DEEPSEEK_TARGET
+        if OPENCODE_PROFILE not in profiles:
+            profiles[OPENCODE_PROFILE] = copy.deepcopy(PROVIDER_PROFILES[OPENCODE_PROFILE])
     if isinstance(agent, str) and agent in applied:
         agent = applied[agent]
     return applied, agent

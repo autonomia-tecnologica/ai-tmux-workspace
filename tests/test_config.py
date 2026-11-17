@@ -30,17 +30,11 @@ class YamlMinTest(unittest.TestCase):
     def test_example_config_loads_and_roundtrips(self):
         cfg = yaml_min.loads(EXAMPLE.read_text(encoding="utf-8"))
         self.assertIs(cfg["manage"], True)
-        self.assertEqual(cfg["profiles"]["claude"], "claude")
-        expected_models = {
-            "opencode-claude": "anthropic/claude-sonnet-5-5",
-            "opencode-deepseek": "deepseek/deepseek-flash",
-            "opencode-openrouter": "openrouter/deepseek/deepseek-v4-flash-0731",
-            "opencode-free": "opencode/deepseek-v4.1-flash-free",
-        }
-        for name, model in expected_models.items():
-            self.assertEqual(cfg["profiles"][name]["harness"], "opencode")
-            self.assertEqual(cfg["profiles"][name]["model"], model)
+        self.assertEqual(cfg["profiles"], {"claude": "claude",
+                                           "opencode": {"harness": "opencode", "command": "opencode"}})
         self.assertNotIn("claude-deepseek", cfg["profiles"])
+        for legacy in ("opencode-claude", "opencode-deepseek", "opencode-openrouter", "opencode-free"):
+            self.assertNotIn(legacy, cfg["profiles"])
         self.assertEqual(yaml_min.loads(yaml_min.dumps(cfg)), cfg)
 
     def test_scalars_comments_and_flow(self):

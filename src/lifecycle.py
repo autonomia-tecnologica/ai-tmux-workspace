@@ -2,7 +2,7 @@
 """Lifecycle owner of the workspace tmux servers: which profile each server serves, and which are up.
 
 A workspace server is a tmux server on the socket `ws-<profile>`, with a session named `<profile>`.
-The profile is the agent (`claude`, `opencode-claude`...); the server is the tmux side. This module
+The profile is the agent (`claude`, `opencode`...); the server is the tmux side. This module
 maps one to the other and lists the live servers. It starts and kills nothing: `bin/workspace`
 (restart, stop, reload) does that, once for each profile named here.
 
