@@ -40,6 +40,21 @@ def reading(repo, path):
             "tool_input": {"file_path": str(path)}, "cwd": str(repo)}
 
 
+def stub_group_mates(test):
+    """Stub of `lib.group_mates`, the group contract (src/lib.py does not have it in this worktree
+    yet): `test.mates` maps a repo path to the other repos of its group. Empty by default."""
+    test.mates = {}
+    patcher = mock.patch("lib.group_mates", create=True,
+                         side_effect=lambda path: list(test.mates.get(real(path), [])))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
+def together(test):
+    """`test.a` and `test.b` share a group: each one is the other's group mate."""
+    test.mates = {real(test.a): [real(test.b)], real(test.b): [real(test.a)]}
+
+
 class ConferenceTest(unittest.TestCase):
     """One conference per workspace: the state survives the screen and the process."""
 
@@ -59,17 +74,7 @@ class ConferenceTest(unittest.TestCase):
                                            "AT_WS_CONFIG": str(self.cfg)})
         env.start()
         self.addCleanup(env.stop)
-
-    def siblings_config(self):
-        self.cfg.write_text(
-            "profiles:\n  claude: claude\n"
-            "groups:\n"
-            "  Pair:\n"
-            f"    - path: {self.a}\n"
-            f"      siblings: [{self.b}]\n"
-            f"    - {self.b}\n",
-            encoding="utf-8",
-        )
+        stub_group_mates(self)
 
     def fake_launch(self, calls):
         def launch(repo, prompt, message_id, created, others=None):
@@ -122,30 +127,26 @@ class ConferenceTest(unittest.TestCase):
         self.assertEqual(conference.start([str(self.b)]), 2)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0]])
 
-    def test_start_without_repos_uses_the_window_repo_and_its_siblings(self):
-        self.siblings_config()
+    def test_start_without_repos_uses_the_window_repo_and_its_group_mates(self):
+        together(self)
         with mock.patch("lib.current_repo", return_value=str(self.a)):
             self.assertEqual(conference.start(), 0)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0], self.repos[1]])
 
-    def test_start_does_not_treat_the_rest_of_the_group_as_siblings(self):
-        self.cfg.write_text(
-            "groups:\n  Pair:\n"
-            f"    - {self.a}\n"
-            f"    - {self.b}\n",
-            encoding="utf-8")
+    def test_the_window_repo_is_not_listed_twice_when_its_group_lists_it(self):
+        self.mates = {real(self.a): [real(self.a), real(self.b)]}
         with mock.patch("lib.current_repo", return_value=str(self.a)):
-            self.assertEqual(conference.start(), 2)
-        self.assertEqual(conference.read_active(), {})
+            self.assertEqual(conference.start(), 0)
+        self.assertEqual(conference.read_active()["repos"], self.repos)
 
     def test_start_uses_the_repo_passed_by_the_options_screen(self):
-        self.siblings_config()
+        together(self)
         with mock.patch("lib.current_repo",
                         side_effect=AssertionError("must not read the tmux window")):
             self.assertEqual(conference.start(repo=str(self.a)), 0)
         self.assertEqual(conference.read_active()["repos"], [self.repos[0], self.repos[1]])
 
-    def test_start_without_repos_and_without_siblings_is_refused(self):
+    def test_start_without_repos_and_without_group_mates_is_refused(self):
         outside = self.tmp / "home"
         outside.mkdir()
         self.cfg.write_text(f"groups:\n  Other:\n    - {self.a}\n", encoding="utf-8")
@@ -590,7 +591,7 @@ class WorkerTest(unittest.TestCase):
         for tool in ("Bash", "Task", "Write", "NotebookEdit", "MultiEdit", "Grep", "Glob"):
             self.assertIn(tool, denied)
         self.assertNotIn("Edit", denied)
-        # no sibling, no harness and no second turn
+        # no group mate, no harness and no second turn
         self.assertNotIn("--add-dir", cmd)
         for path in (self.repos[1], str(self.tmp / "no-harness")):
             self.assertNotIn(path, cmd)
@@ -662,7 +663,7 @@ class WorkerTest(unittest.TestCase):
                       settings["hooks"]["PreToolUse"][-1]["hooks"][0]["command"])
         self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Edit")
 
-    # --- the worker hook: two files, no siblings, no search/bash/turns -------------------------
+    # --- the worker hook: two files, no other group repo, no search/bash/turns -------------------------
 
     def test_the_hook_allows_only_the_two_permitted_files(self):
         (self.a / "README.md").write_text("readme", encoding="utf-8")
@@ -674,7 +675,7 @@ class WorkerTest(unittest.TestCase):
         self.assertIsNone(conference_worker.check_tool(
             reading(self.a, "README.md"), repo=str(self.a)))      # relative to the repo
 
-    def test_the_hook_denies_code_siblings_and_the_harness(self):
+    def test_the_hook_denies_code_of_group_repos_and_the_harness(self):
         harness = self.tmp / "no-harness"
         harness.mkdir()
         for target in (self.a / "src" / "x.py", self.b / "README.md", self.b / "ARCH.md",
@@ -884,8 +885,7 @@ class ConverseTest(unittest.TestCase):
             "profiles:\n  claude: claude\n"
             "groups:\n"
             "  Pair:\n"
-            f"    - path: {self.a}\n"
-            f"      siblings: [{self.b}]\n"
+            f"    - {self.a}\n"
             f"    - {self.b}\n",
             encoding="utf-8",
         )
@@ -894,6 +894,8 @@ class ConverseTest(unittest.TestCase):
                                            "AT_WS_CONFIG": str(self.cfg)})
         env.start()
         self.addCleanup(env.stop)
+        stub_group_mates(self)
+        together(self)
 
     def run_screen(self, keys, repo=None):
         FakeViewer.keys, FakeViewer.last = list(keys), None
@@ -907,7 +909,7 @@ class ConverseTest(unittest.TestCase):
     def header(self):
         return "\n".join(l.text for l in FakeViewer.last.frame[0])
 
-    def test_typing_and_enter_starts_with_the_window_repo_and_siblings_and_sends(self):
+    def test_typing_and_enter_starts_with_the_window_repo_and_group_mates_and_sends(self):
         self.assertEqual(self.run_screen(list("my message") + ["\r", "\x18"]), 0)
         active = conference.read_active()
         self.assertEqual(active["repos"], self.repos)
@@ -971,7 +973,7 @@ class ConverseTest(unittest.TestCase):
         self.run_screen(keys)
         self.assertEqual(conference.read_log()[0]["text"], "jx certo")
 
-    def test_enter_keeps_the_typed_text_when_there_are_no_siblings(self):
+    def test_enter_keeps_the_typed_text_when_there_are_no_group_mates(self):
         lone = self.tmp / "lone"
         lone.mkdir()
         self.run_screen(list("oi") + ["\r", "esc"], repo=str(lone))

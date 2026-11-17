@@ -10,7 +10,7 @@ persistent log. This module never builds a harness command line itself: the adap
 The run speaks only about its own repo and only from its own structural files
 (`conference.STRUCTURAL_FILES`), and reads them only when Rafael asks. The prompt carries the whole
 conference log (capped by `conference.MAX_PROMPT_CHARS`) as untrusted data, never as instructions.
-The run has no siblings, no installed harness, no `Grep`/`Glob`, no `Bash`, no subagent and no extra
+The run has no other group repos, no installed harness, no `Grep`/`Glob`, no `Bash`, no subagent and no extra
 turns: `Read` and `Edit` are the only tools, and a worker hook denies any path outside the structural
 files. The file budget is one distinct file per structural file and a few tool steps; when it runs
 out the hook tells the agent to answer with what it already knows.
@@ -70,7 +70,7 @@ def answer_command(others=None, profile=None):
     """Command line of the isolated conference agent, through the profile's adapter.
 
     `others` is accepted for compatibility with the old cross-repo conference and deliberately
-    ignored: siblings are out of scope. The adapter owns the command line, so a Claude flag never
+    ignored: the other repos of the group are out of scope. The adapter owns the command line, so a Claude flag never
     leaks into an OpenCode profile and vice versa."""
     name, adapter = _agent(profile)
     return adapter.command(name)
