@@ -246,34 +246,34 @@ class CliTests(unittest.TestCase):
         lean = ROOT / "harness" / "HARNESS.md"
         self.assertEqual((self.harness / "HARNESS.md").read_bytes(), lean.read_bytes())
         security = self.harness.parent / "security"
-        for name in ("gate.py", "policy.yaml", "opencode-policy.js", "settings.json"):
+        for name in ("gate.py", "settings.json", "paths.py"):
             self.assertTrue((security / name).is_file(), f"missing security file: {name}")
 
     def test_identical_security_files_are_reported_in_day(self):
         installer.copy_harness(self.source, self.harness)
         shown = self.run_cli("update")
         self.assertIn(t("config.security.none"), shown.stdout)
-        self.assertNotIn(t("config.security.drift", name="policy.yaml"), shown.stdout)
+        self.assertNotIn(t("config.security.drift", name="paths.py"), shown.stdout)
 
     def test_security_file_drift_is_shown_and_fixed_by_apply(self):
         installer.copy_harness(self.source, self.harness)
         security = self.harness.parent / "security"
-        policy = security / "policy.yaml"
-        policy.write_text("net: ask\ninstall: ask\n", encoding="utf-8")
+        paths_copy = security / "paths.py"
+        paths_copy.write_text("# editado na mao\n", encoding="utf-8")
         (security / "gate.py").unlink()
 
         shown = self.run_cli("update")
-        self.assertIn(t("config.security.drift", name="policy.yaml"), shown.stdout)
+        self.assertIn(t("config.security.drift", name="paths.py"), shown.stdout)
         self.assertIn(t("config.security.drift", name="gate.py"), shown.stdout)
         self.assertNotIn(t("config.security.none"), shown.stdout)
-        self.assertEqual(policy.read_text(encoding="utf-8"), "net: ask\ninstall: ask\n")
+        self.assertEqual(paths_copy.read_text(encoding="utf-8"), "# editado na mao\n")
 
         applied = self.run_cli("update", "--apply")
         self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
         self.assertIn(t("config.security.applied", path=str(security)), applied.stdout)
         self.assertNotIn(t("config.harness.applied", path=str(self.harness)), applied.stdout)
-        repo_policy = ROOT / "security" / "policy.yaml"
-        self.assertEqual(policy.read_bytes(), repo_policy.read_bytes())
+        repo_paths = ROOT / "src" / "paths.py"
+        self.assertEqual(paths_copy.read_bytes(), repo_paths.read_bytes())
         self.assertTrue((security / "gate.py").is_file())
 
         again = self.run_cli("update")

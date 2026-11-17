@@ -120,8 +120,8 @@ BASH = find_bash()
 # the install scripts, so a person installing gets the public repo.
 CLONE_URL = os.environ.get("AT_WS_HARNESS_URL") or "https://github.com/autonomia-tecnologica/ambiente-de-trabalho.git"
 SOURCE_FILE = "source.json"
-# Installed next to the harness text: the gate, the policy/config pair and the two adapters' shared
-# engine. The source tree (ambiente-de-trabalho) is copied first; these come from this repository.
+# Installed next to the harness text: the gate and the helpers it imports. The source tree
+# (ambiente-de-trabalho) is copied first; these come from this repository.
 POLICY_SOURCES = (
     ("security", "gate.py", "gate.py"),
     ("src", "paths.py", "paths.py"),
@@ -1228,7 +1228,7 @@ class Assistant:
 
 
 def install_policy_files(target):
-    """Copy the gate, the policy engine, its config and the OpenCode adapter into an installed `security/`.
+    """Copy the gate and its helpers (paths, yaml_min, i18n) into an installed `security/`.
 
     Overwrites in place, so running it again leaves byte-identical files (idempotent). Returns the
     names that were actually present in this checkout, in declaration order.

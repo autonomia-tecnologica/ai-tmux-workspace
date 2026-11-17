@@ -35,7 +35,7 @@ DEFAULT_REPO_URL = "https://github.com/autonomia-tecnologica/ai-tmux-workspace.g
 RECORD_FILE = "update-previous.json"
 SNAPSHOT_DIR = "update-snapshot"
 # Files whose change means a running Claude Code session or OpenCode plugin must be restarted.
-HOOK_FILES = frozenset({"src/hook.py", "src/statusline.py", "security/gate.py", "security/opencode-policy.js"})
+HOOK_FILES = frozenset({"src/hook.py", "src/statusline.py", "security/gate.py", "security/opencode-state.js"})
 GIT_TIMEOUT = 300
 
 
