@@ -44,7 +44,7 @@ def stub_group_mates(test):
     """Stub of `lib.group_mates`, the group contract (src/lib.py does not have it in this worktree
     yet): `test.mates` maps a repo path to the other repos of its group. Empty by default."""
     test.mates = {}
-    patcher = mock.patch("lib.group_mates", create=True,
+    patcher = mock.patch("lib.group_mates",
                          side_effect=lambda path: list(test.mates.get(real(path), [])))
     patcher.start()
     test.addCleanup(patcher.stop)

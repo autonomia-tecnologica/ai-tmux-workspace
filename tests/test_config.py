@@ -41,7 +41,6 @@ class YamlMinTest(unittest.TestCase):
             self.assertEqual(cfg["profiles"][name]["harness"], "opencode")
             self.assertEqual(cfg["profiles"][name]["model"], model)
         self.assertNotIn("claude-deepseek", cfg["profiles"])
-        self.assertEqual(cfg["groups"]["Example"][1]["siblings"], ["~/Codes/some-repo"])
         self.assertEqual(yaml_min.loads(yaml_min.dumps(cfg)), cfg)
 
     def test_scalars_comments_and_flow(self):

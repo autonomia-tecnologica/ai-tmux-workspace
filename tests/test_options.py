@@ -69,7 +69,7 @@ class OptionsConferenceTest(unittest.TestCase):
         # Stub of lib.group_mates (the group contract): the two repos share one group.
         self.mates = {os.path.realpath(self.repo): [os.path.realpath(self.mate)],
                       os.path.realpath(self.mate): [os.path.realpath(self.repo)]}
-        stub = mock.patch("lib.group_mates", create=True,
+        stub = mock.patch("lib.group_mates",
                           side_effect=lambda path: list(self.mates.get(os.path.realpath(path), [])))
         stub.start()
         self.addCleanup(stub.stop)
