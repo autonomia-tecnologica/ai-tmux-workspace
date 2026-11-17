@@ -35,8 +35,8 @@ não estiver claro; não leia a pasta.
 - **Workspace** — a instância do `ai-tmux-workspace` que organiza o ambiente: janelas, painel,
   sessões e o código instalado.
 - **Repositório** — pasta de código versionada, aberta numa janela e numa sessão.
-- **Repositório irmão** — repo declarado como relacionado (`siblings`); a relação é declarada, nunca
-  inferida.
+- **Grupo** — os repos listados na mesma entrada de `groups` no `config.yaml`; repos do mesmo grupo se
+  leem (só leitura), e grupo é a única relação entre repos. A relação é declarada, nunca inferida.
 - **Pasta livre** — pasta que não é repositório; entra na navegação, mas não vira repo.
 - **Pasta de Trabalho** — a pasta principal da pessoa.
 - **Sessão** — instância de agente com papel e raiz, relativa a um repositório ou à home.
@@ -59,7 +59,7 @@ não estiver claro; não leia a pasta.
 - **Forma de uso / allowlist** — a unidade de permissão; a lista de cada forma está em
   `permissions.md`.
 - **Rastro** — o registro do que foi feito.
-- **Conferência** — conversa entre o repo da janela e os irmãos, cada um respondendo pelo próprio
+- **Conferência** — conversa entre o repo da janela e os repos do grupo, cada um respondendo pelo próprio
   repo.
 - **Fatia** — uma entrega de backlog.
 - **Refinada** — item com escopo, caminhos, aceite e validação fechados.

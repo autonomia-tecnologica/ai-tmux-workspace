@@ -189,17 +189,17 @@ an expired token just fails silently. Amounts come in minor units and are divide
 - painéis: `j/k`, setas, PgUp/PgDn, `g/G`, mouse; Enter abre; no painel de repos, Enter num grupo recolhe. Clique num painel sem foco só o foca (o próximo clique age); a roda não muda.
 - lado direito: a barra do topo troca entre ARQUIVOS (padrão) · DIFF atual (Enter abre o diff) ·
   GITHUB (resumo via `gh`: repo, PR da branch com checks, PRs, issues, CI, release). Clique numa aba, ou foque a barra (`ctrl+b ↑`) e use ←/→ + Enter. Arquivos de código abrem no nvim; mídia e documentos (imagem, vídeo, áudio, PDF, Office...) abrem no programa padrão do sistema, e HTML/HTM/XHTML abrem no navegador padrão.
-- `ctrl+b h` abre a ajuda · `ctrl+b o` abre a tela de opções (uma árvore só, já expandida: os prompts salvos em `prompts` no `config.yaml`, que são digitados na sessão ativa sem enviar, e perguntar ao Haiku via `claude -p --model haiku` no repo da janela; a conferência com os irmãos ou com repos selecionados do workspace, numa tela de conversa com o log ao vivo e caixa de mensagem no rodapé (digite e Enter envia, Ctrl+X encerra); `options` no `config.yaml` acrescenta nós `ask`, `run` e `type`) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
+- `ctrl+b h` abre a ajuda · `ctrl+b o` abre a tela de opções (uma árvore só, já expandida: os prompts salvos em `prompts` no `config.yaml`, que são digitados na sessão ativa sem enviar, e perguntar ao Haiku via `claude -p --model haiku` no repo da janela; a conferência com os repos do grupo ou com repos selecionados do workspace, numa tela de conversa com o log ao vivo e caixa de mensagem no rodapé (digite e Enter envia, Ctrl+X encerra); `options` no `config.yaml` acrescenta nós `ask`, `run` e `type`) · `ctrl+b r` recarrega a config e a tira de abas sem sair do tmux · `ctrl+b d` desanexa (o workspace continua rodando).
 - barra do painel de repos: REPOS · SESSÕES (sessões do Claude Code abertas em todos os repos do workspace, agrupadas por repo; subagentes em execução viram uma linha `↳` dentro da sessão pai; Enter foca o painel da sessão; sessões OpenCode não aparecem aqui).
 - painel TAREFAS: `→`/`←` expandem/recolhem o item; Enter pede confirmação e manda a mensagem para a sessão ativa (implementar ou refinar).
 - tira de sessões (1 linha no topo do painel principal): a janela abre as abas de sessão persistidas; sem nenhuma, abre uma sessão do perfil padrão e, se ela falhar, mostra o aviso para abrir uma sessão pelo `+`. `+` (ou `ctrl+b t`) abre o menu de perfis aprovados, com o padrão primeiro. A primeira sessão ocupa o painel principal e as seguintes viram abas; cada aba guarda o perfil e o próprio id de sessão, e a tira rotula `PERFIL` / `PERFIL (n)`; clique numa aba (ou `ctrl+b n`/`p`) para trocar. Sair da última sessão abre uma nova aba do perfil padrão; se ela falhar, volta ao aviso. As abas de sessão são restauradas no `reload` e no `restart`; as de terminal não.
 - `shift+setas` pulam entre painéis.
 
-## Conferência: irmãos ou repos selecionados
-Em `ctrl+b o` → **Conferência**, as folhas **Repos irmãos** e **Repos selecionados** criam a conferência e
-abrem a tela de conversa. **Repos irmãos** usa o repo da janela e os irmãos dele: o próprio repo da janela
-participa, e aparece primeiro no topo. Irmão é o que o `config.yaml` define: `siblings` declarado numa entrada
-de `groups` ou outro repo listado dentro do `parent_folder`; estar no mesmo `groups` não basta. **Repos
+## Conferência: repos do grupo ou repos selecionados
+Em `ctrl+b o` → **Conferência**, as folhas **Repos do grupo** e **Repos selecionados** criam a conferência e
+abrem a tela de conversa. **Repos do grupo** usa o repo da janela e os outros repos do mesmo grupo: o próprio repo da janela
+participa, e aparece primeiro no topo. Grupo é o que o `config.yaml` define: os repos listados na mesma
+entrada de `groups`. **Repos
 selecionados** abre a lista de repos do workspace antes: o repo da janela já vem marcado, Espaço marca ou
 desmarca, `a` marca todos, `n` limpa e Enter abre com os marcados (Esc cancela). O log aparece na hora e se
 atualiza sozinho quando chegam respostas; o topo mostra o que cada participante está fazendo enquanto trabalha
@@ -210,8 +210,8 @@ próxima conferência começa com o log vazio, e a anterior não volta na tela (
 Fechar o popup ou a janela também encerra, sem deixar conferência pendente: conferência existe só enquanto a tela
 existe. Cada participante é um **Claude isolado** (`claude -p`, um processo por repo, sem sessão salva): a sessão
 principal da janela não é usada nem alterada, por isso a conferência não depende de os painéis estarem livres. Cada
-um fala **só do próprio repo**, mas pode ler os irmãos — a conferência é uma **validação cruzada entre repos**, e
-ler os irmãos é recomendado — e, antes de responder, lê o harness (o `CLAUDE.md`/`.claude/CLAUDE.md` e o que ele
+um fala **só do próprio repo**, mas pode ler os outros repos do grupo — a conferência é uma **validação cruzada entre repos**, e
+ler os do grupo é recomendado — e, antes de responder, lê o harness (o `CLAUDE.md`/`.claude/CLAUDE.md` e o que ele
 mandar ler). Se a mensagem não for do repo, ou for dirigida a outro participante pelo nome do repo, ele **não
 responde**: nem linha no log. O prompt lista os participantes e diz a cada um qual é o seu. A conferência é
 análise rápida, não trabalho longo: a resposta vem em um parágrafo curto e o run tem um **orçamento** imposto pelo
@@ -224,30 +224,6 @@ mostra quem ainda está aguardando e o passo atual); a caixa **Mensagem:** cresc
 visível. Não há comando de conferência na CLI: a CLI do `workspace` é para instalação e ações administrativas, nunca
 para o uso do tmux. O desenho aprovado para a próxima versão — persistência da conferência, `/clear`,
 escopo `README.md`/`BACKLOG.md` e Claude/OpenCode — está no `BACKLOG.md`, item 70.
-
-### Cinco repos como irmãos mútuos
-
-Para a conferência de cada repo mostrar os outros quatro, declare `siblings` em cada entrada do grupo, com os
-outros repos. A declaração explícita vale nos dois sentidos, então o trecho abaixo (com os cinco repos do
-ambiente de trabalho) funciona de qualquer janela:
-
-```yaml
-groups:
-  Autonomia:
-    - path: ~/Codes/ai-tmux-workspace
-      siblings: [~/Codes/at, ~/Codes/site, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
-    - path: ~/Codes/at
-      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/site, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
-    - path: ~/Codes/site
-      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/home, ~/Codes/ambiente-de-trabalho]
-    - path: ~/Codes/home
-      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/site, ~/Codes/ambiente-de-trabalho]
-    - path: ~/Codes/ambiente-de-trabalho
-      siblings: [~/Codes/ai-tmux-workspace, ~/Codes/at, ~/Codes/site, ~/Codes/home]
-```
-
-Se um desses repos já estiver em outro grupo, não repita a entrada: acrescente só o `siblings` na entrada que
-já existe, porque um repo listado duas vezes aparece duas vezes no painel de repos.
 
 ## Pasta de repos, repos extras e pastas livres
 Com `repos_folder`, todo repo git direto na pasta entra no painel. `repos_extra` (lista de caminhos) traz repos
@@ -297,7 +273,7 @@ o aviso sem abortar.
 ## Arquivos
 `config/config.example.yaml` (modelo da config) · `config/tmux.conf` · `bin/workspace` (launcher) · `src/panel_*.py` (incl. `panel_tabs.py`, a tira de abas, e `panel_tasks.py`) ·
 `src/viewer.py` (desenho sem flicker: só reescreve as linhas que mudaram) · `src/hook.py` · `src/statusbar.py` · `src/backlog.py` (parser do `BACKLOG.md`) ·
-`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os irmãos) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `docs/threat-model.md` (modelagem de ameaças) · `docs/threat-model.json` (requisitos; fonte da verdade).
+`src/help.py` (popup da ajuda) · `src/conference.py` (discussão entre o repo da janela e os repos do grupo) · `src/conference_worker.py` (o Claude isolado que responde por um repo) · `src/opener.py` · `src/extra_usage.py` · `src/notify.py` · `docs/threat-model.md` (modelagem de ameaças) · `docs/threat-model.json` (requisitos; fonte da verdade).
 
 ## Segurança: resumo
 
@@ -320,11 +296,11 @@ Detalhes, o que é garantia e o que é só atrito: [`SECURITY.md`](SECURITY.md).
 
 A modelagem está em `docs/threat-model.md` (leitura humana) e `docs/threat-model.json` (fonte da verdade, processável): OWASP Top 10 for LLM Applications 2025 + OWASP Top 10 for Agentic Applications + MITRE ATLAS v2026.10. Cada requisito tem um status (`out_of_scope`, `needs_decision`, `implemented` ou `not_implemented`), evidência, onde falha e como validar.
 
-O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo. Escrevê-lo depende da raiz, não do papel: uma sessão cujo `WS_SESSION_ROOT` está dentro dessa raiz escreve, seja a sessão de dev (`workspace dev`) seja um repo ou a home com o código do workspace como raiz (como os worktrees deste repo); não é preciso papel `self`. Sessão com raiz fora dessa pasta é negada, a home inclusive. O caminho não entra na config nem em `siblings`.
+O código do próprio workspace (o clone de dev ou a cópia instalada, em `WS_DIR`) é caminho protegido pela política central, com fallback para o diretório de onde o hook roda. Qualquer papel pode lê-lo. Escrevê-lo depende da raiz, não do papel: uma sessão cujo `WS_SESSION_ROOT` está dentro dessa raiz escreve, seja a sessão de dev (`workspace dev`) seja um repo ou a home com o código do workspace como raiz (como os worktrees deste repo); não é preciso papel `self`. Sessão com raiz fora dessa pasta é negada, a home inclusive. O caminho não entra na config nem em `groups`.
 
 ### Caixa da sessão
 
-A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. Um repo lê os irmãos declarados no `config.yaml` (`siblings`, simétrico, item 161), só leitura: irmão lê irmão, e escrever no irmão continua negado (o pedido de mudança vai por mensagem, SendMessage, à sessão do irmão). Config ausente ou inválida = sem irmãos. O plano de controle do workspace (`~/.config/ai-tmux-workspace`, com `config.yaml`, `state/` e `conference/`) é caminho protegido: todo papel pode ler, nenhum papel de agente escreve, e a barreira vem antes da tabela de papéis. O resto de `~/.config` e `~/.claude` segue a tabela; a cópia instalada é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
+A caixa da primeira versão é a política do harness, não um sandbox de SO. Ao abrir um repo, o launcher prefixa a linha do agente com `WS_SESSION_ROLE`/`WS_SESSION_ROOT` (`src/session.py`): o repo principal do `config.yaml` abre como `home` e pode alterar os outros repos; qualquer outro caminho abre como `repo` e escreve só no próprio repo e em `/tmp`. Um repo lê os outros repos do mesmo grupo (`groups` no `config.yaml`, item 161), só leitura: repo do grupo lê repo do grupo, e escrever no colega continua negado (o pedido de mudança vai por mensagem, SendMessage, à sessão dele). Config ausente ou inválida = sem repos do grupo. O plano de controle do workspace (`~/.config/ai-tmux-workspace`, com `config.yaml`, `state/` e `conference/`) é caminho protegido: todo papel pode ler, nenhum papel de agente escreve, e a barreira vem antes da tabela de papéis. O resto de `~/.config` e `~/.claude` segue a tabela; a cópia instalada é somente leitura para a sessão de repo. A raiz declarada vence os roots de configuração, então um worktree em `~/.local/share/ai-tmux-workspace/worktrees/...` escreve no próprio worktree; segredo continua negado dentro da caixa. `auto` não é fixado no launch: a política lê o modo do evento (`permission_mode`) e só dispensa o prompt dentro da caixa; `deny` vale em todo modo. Com papel declarado, falha do motor vira `deny` no hook, igual ao plugin do OpenCode. A conferência não recebe papel: ela continua com o orçamento próprio de escrita.
 
 **Isto não é uma garantia.** O estado atual tem lacunas conhecidas, entre elas: a caixa é política de harness, não usuário de SO nem sandbox (item 74); a home escreve em qualquer repo do ambiente por decisão (o recomendado é trabalhar por pasta), e o código do workspace é a exceção protegida; a conferência atual não é persistente e lê mais arquivos do que o desenho aprovado. O README mostra o código como ele está hoje; o que se espera dele está no `BACKLOG.md` (itens 70–74) e a lista completa de requisitos está no JSON.
 
