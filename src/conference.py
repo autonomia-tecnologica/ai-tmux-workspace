@@ -13,7 +13,7 @@ goes in every prompt with a hard cap and a visible truncation note; the log is t
 window's agent session. A participant answers only about its own repo and only from its own
 `STRUCTURAL_FILES` (`SECURITY.md`, `DESIGN.md`, `ARCH.md`, `README.md`, `BACKLOG.md`): it reads
 those files only when Rafael asks, and the only write it may propose is to `EDITABLE_FILES`
-(`README.md` and `BACKLOG.md`), also only when asked. Siblings, the installed harness, `Grep`/`Glob`,
+(`README.md` and `BACKLOG.md`), also only when asked. Other repos of the group, the installed harness, `Grep`/`Glob`,
 `Bash`, subagents and extra turns are out of scope; the worker hook enforces the read and write scope.
 A secret in any readable file blocks that participant's run before anything reaches the provider.
 
@@ -231,13 +231,12 @@ def _t(key, **kw):
 
 
 def _default_repos(lib, repo=None):
-    """`repo` (default: the current window's repo) plus its siblings, as defined by the config:
-    `siblings` written on a `groups` entry and every repo inside `parent_folder`. Sharing a `groups`
-    folder is not siblinghood. The repo itself participates, first in the list; [] when it has no
-    siblings, because a conference with only the repo it was opened from makes no sense."""
+    """`repo` (default: the current window's repo) plus the other repos of its group, as
+    `lib.group_mates` gives them. The repo itself participates, first in the list; [] when its group
+    has no other repo, because a conference with only the repo it was opened from makes no sense."""
     base = lib.expand_path(repo or lib.current_repo())
-    siblings = [p for p in lib.siblings(base) if p != base]
-    return [base] + siblings if siblings else []
+    mates = [p for p in lib.group_mates(base) if p != base]
+    return [base] + mates if mates else []
 
 
 def _archive_log():
@@ -309,7 +308,7 @@ def resume():
 
 def start(repos=None, repo=None, screen=None, profile=None):
     """Starts a conference with the given repos, or with `repo` (default: the current window's repo)
-    and its config siblings. `profile` is the window profile (Claude or OpenCode); without it the
+    and the other repos of its group. `profile` is the window profile (Claude or OpenCode); without it the
     configured agent is used. An existing conference is never replaced: closing the screen does not
     end it, so the next opening resumes it."""
     import lib
@@ -713,7 +712,7 @@ def _screen_frame(state):
 def converse(repo=None):
     """Interactive conference screen, everything on screen: the log updates live and the footer is
     the message box. Enter sends the text to every participant, starting the conference with `repo`
-    (the window's repo) and its config siblings first when none is active. Esc and Ctrl+X only close
+    (the window's repo) and the other repos of its group first when none is active. Esc and Ctrl+X only close
     the screen: the conference, its log and its participants persist. `/clear` archives the log and
     resets the context keeping the participants. Returns when the screen closes."""
     from viewer import ORANGE, R, Viewer, close_on_esc
@@ -758,7 +757,7 @@ def converse(repo=None):
                     return True
                 if not read_active():
                     notice = _printed(start, repo=repo)
-                    if not read_active():          # no siblings: keep what was typed
+                    if not read_active():          # no group mates: keep what was typed
                         state["text"] = text
                         state["notice"] = notice
                         v.redraw.set()

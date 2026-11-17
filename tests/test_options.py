@@ -1,4 +1,4 @@
-"""The options screen exposes the two conference start modes: siblings and selected repos."""
+"""The options screen exposes the two conference start modes: group repos and selected repos."""
 import os
 import sys
 import tempfile
@@ -55,18 +55,24 @@ class OptionsConferenceTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = Path(self._tmp.name)
         self.repo = self.tmp / "repo-a"
-        self.sibling = self.tmp / "repo-b"
+        self.mate = self.tmp / "repo-b"
         self.repo.mkdir()
-        self.sibling.mkdir()
+        self.mate.mkdir()
         self.cfg = self.tmp / "config.yaml"
         self.cfg.write_text(
             "profiles:\n  claude: claude\n"
             "groups:\n  Pair:\n"
-            f"    - path: {self.repo}\n"
-            f"      siblings: [{self.sibling}]\n"
-            f"    - {self.sibling}\n",
+            f"    - {self.repo}\n"
+            f"    - {self.mate}\n",
             encoding="utf-8",
         )
+        # Stub of lib.group_mates (the group contract): the two repos share one group.
+        self.mates = {os.path.realpath(self.repo): [os.path.realpath(self.mate)],
+                      os.path.realpath(self.mate): [os.path.realpath(self.repo)]}
+        stub = mock.patch("lib.group_mates", create=True,
+                          side_effect=lambda path: list(self.mates.get(os.path.realpath(path), [])))
+        stub.start()
+        self.addCleanup(stub.stop)
         env = mock.patch.dict(os.environ, {"AT_WS_CONFIG": str(self.cfg), "WS_STATE": str(self.tmp),
                                            "WS_CONFERENCE": str(self.tmp / "conference")})
         env.start()
@@ -77,23 +83,23 @@ class OptionsConferenceTest(unittest.TestCase):
 
     def test_the_conference_folder_offers_the_two_start_modes(self):
         folder = next(n for n in options.tree() if n.get("label") == i18n.t("options.conference"))
-        self.assertEqual([c["conference"] for c in folder["children"]], ["siblings", "selected"])
+        self.assertEqual([c["conference"] for c in folder["children"]], ["group", "selected"])
 
     def test_the_conference_leaves_are_visible_on_the_flat_screen(self):
         actions = [node["conference"] for _key, _depth, node in options.flatten(options.tree())
                    if "conference" in node]
-        self.assertEqual(actions, ["siblings", "selected"])
+        self.assertEqual(actions, ["group", "selected"])
 
-    def test_siblings_start_opens_the_conversation_screen(self):
+    def test_group_start_opens_the_conversation_screen(self):
         with mock.patch.object(options.tmux, "display", return_value=str(self.repo)), \
                 mock.patch("conference.converse") as converse:
-            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+            options.run_conference({"label": "Grupo", "conference": "group"}, "%1")
         self.assertEqual(conference.read_active()["repos"],
-                         self.paths(self.repo, self.sibling))
+                         self.paths(self.repo, self.mate))
         converse.assert_called_once_with(repo=str(self.repo))
 
     def test_selected_start_uses_the_picked_repos(self):
-        picked = self.paths(self.repo, self.sibling)
+        picked = self.paths(self.repo, self.mate)
         with mock.patch.object(options.tmux, "display", return_value=str(self.repo)), \
                 mock.patch.object(options, "choose_repos", return_value=picked) as pick, \
                 mock.patch("conference.converse") as converse:
@@ -104,20 +110,20 @@ class OptionsConferenceTest(unittest.TestCase):
 
     # The picker keys its rows by resolved path (macOS: /var is a link to /private/var).
     def test_the_picker_prechecks_the_window_repo_and_returns_the_marked_paths(self):
-        FakePickViewer.keys = [(self.paths(self.sibling)[0], " "), (None, "\r")]
+        FakePickViewer.keys = [(self.paths(self.mate)[0], " "), (None, "\r")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
-        self.assertEqual(picked, self.paths(self.repo, self.sibling))
+        self.assertEqual(picked, self.paths(self.repo, self.mate))
 
     def test_the_picker_returns_only_the_repos_left_marked(self):
-        FakePickViewer.keys = [(self.paths(self.repo)[0], " "), (self.paths(self.sibling)[0], " "),
+        FakePickViewer.keys = [(self.paths(self.repo)[0], " "), (self.paths(self.mate)[0], " "),
                                (None, "\r")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
-        self.assertEqual(picked, self.paths(self.sibling))
+        self.assertEqual(picked, self.paths(self.mate))
 
     def test_the_picker_cancel_returns_nothing(self):
-        FakePickViewer.keys = [(self.paths(self.sibling)[0], " "), (None, "esc")]
+        FakePickViewer.keys = [(self.paths(self.mate)[0], " "), (None, "esc")]
         with mock.patch.object(options, "Viewer", FakePickViewer):
             picked = options.choose_repos(str(self.repo))
         self.assertEqual(picked, [])          # no Enter: cancelled even with marks
@@ -135,16 +141,15 @@ class OptionsConferenceTest(unittest.TestCase):
         entries = options.workspace_repos(str(self.repo))
         self.assertEqual(entries[0][1][0], (self.repo.name, self.paths(self.repo)[0]))
         paths = [path for _, repos in entries for _, path in repos]
-        self.assertEqual(paths, self.paths(self.repo, self.sibling))
+        self.assertEqual(paths, self.paths(self.repo, self.mate))
 
     # --- OpenCode harness: Claude-only surfaces degrade with a warning ----------------------
     def opencode_workspace(self):
         self.cfg.write_text(
             "profiles:\n  opencode:\n    harness: opencode\nagent: opencode\n"
             "groups:\n  Pair:\n"
-            f"    - path: {self.repo}\n"
-            f"      siblings: [{self.sibling}]\n"
-            f"    - {self.sibling}\n",
+            f"    - {self.repo}\n"
+            f"    - {self.mate}\n",
             encoding="utf-8")
 
     def display(self, profile, session=""):
@@ -160,16 +165,16 @@ class OptionsConferenceTest(unittest.TestCase):
         self.opencode_workspace()
         with mock.patch.object(options.tmux, "display", side_effect=self.display("opencode")), \
                 mock.patch("conference.converse") as converse:
-            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+            options.run_conference({"label": "Grupo", "conference": "group"}, "%1")
         active = conference.read_active()
         self.assertEqual(active["profile"], "opencode")
-        self.assertEqual(active["repos"], self.paths(self.repo, self.sibling))
+        self.assertEqual(active["repos"], self.paths(self.repo, self.mate))
         converse.assert_called_once()
 
     def test_a_claude_window_profile_is_recorded_for_the_participants(self):
         with mock.patch.object(options.tmux, "display", side_effect=self.display("claude")), \
                 mock.patch("conference.converse"):
-            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+            options.run_conference({"label": "Grupo", "conference": "group"}, "%1")
         self.assertEqual(conference.read_active()["profile"], "claude")
 
     def test_without_a_window_profile_an_opencode_agent_is_refused(self):
@@ -177,14 +182,14 @@ class OptionsConferenceTest(unittest.TestCase):
         with mock.patch.object(options.tmux, "display", side_effect=self.display("")), \
                 mock.patch.object(options, "show") as show, \
                 mock.patch.object(options, "choose_repos") as pick:
-            options.run_conference({"label": "Irmãos", "conference": "siblings"}, "%1")
+            options.run_conference({"label": "Grupo", "conference": "group"}, "%1")
         show.assert_called_once()
         self.assertIn(i18n.t("agent.surface.conference"), show.call_args[0][1])
         pick.assert_not_called()
         self.assertEqual(conference.read_active(), {})
 
     def test_an_active_conference_is_resumed_instead_of_started_again(self):
-        conference.start(self.paths(self.repo, self.sibling), profile="claude")
+        conference.start(self.paths(self.repo, self.mate), profile="claude")
         with mock.patch.object(options.tmux, "display", side_effect=self.display("claude")), \
                 mock.patch.object(options, "choose_repos") as pick, \
                 mock.patch("conference.converse") as converse:

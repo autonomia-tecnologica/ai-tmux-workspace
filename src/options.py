@@ -5,7 +5,7 @@ Built-in folders: "Agent" (picks the command that runs in the Claude panes, conf
 restarts the whole workspace), "Prompts" (config["prompts"], else the i18n defaults prompt.wheel.*; Enter or 1-9 types
 the prompt into the window's active Claude tab, without submitting), "Ask Claude" (one-off question to
 `claude -p --model haiku` in the window's repo) and "Conference" (two start modes: the window's
-repo plus its config siblings, or a picker of the workspace repos; both create the conference and
+repo plus the other repos of its group, or a picker of the workspace repos; both create the conference and
 open the conversation screen with a message box in the footer (Enter sends, /clear resets the
 context, Ctrl+X and Esc only close the screen). Every answer comes from an isolated headless agent
 of the window profile (Claude or OpenCode), never from the window's session; each participant
@@ -65,7 +65,7 @@ def tree():
          "children": [{"label": " ".join(p.split()), "type": p} for p in prompt_list()]},
         {"label": i18n.t("options.ask"), "children": [{"label": i18n.t("options.ask_haiku"), "ask": "haiku"}]},
         {"label": i18n.t("options.conference"), "children": [
-            {"label": i18n.t("options.conference.siblings"), "conference": "siblings"},
+            {"label": i18n.t("options.conference.group"), "conference": "group"},
             {"label": i18n.t("options.conference.selected"), "conference": "selected"},
         ]},
     ]
@@ -333,7 +333,7 @@ def window_profile(window):
 
 
 def run_conference(node, window):
-    """Conference leaves: start with the window repo plus its config siblings, or with the workspace
+    """Conference leaves: start with the window repo plus the other repos of its group, or with the workspace
     repos chosen on the picker; both open the conversation screen right after the start. An existing
     conference is resumed instead of replaced (Esc and Ctrl+X only close the screen). The window
     profile decides the agent (Claude or OpenCode)."""
