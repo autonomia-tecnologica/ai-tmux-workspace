@@ -135,7 +135,6 @@ no harness do workspace.
 - `bypassPermissions` só por escolha da pessoa; `deny` vale em todo modo.
 - Comunicação entre sessões pela função padrão (SendMessage e ferramentas nativas), coberta pelo harness; sem comando próprio. Irmão lê irmão (só leitura, item 161); repo não edita repo irmão: pede por mensagem e quem edita é a sessão do irmão.
 - Toda ação deixa rastro; pendência de freio em código vai para `Segurança`.
-- Caso novo: `harness/regras/permissions.md`; leia antes de liberar comando, mexer na allowlist ou decidir ação fora da caixa.
 
 ## Commits
 
@@ -148,7 +147,6 @@ no harness do workspace.
 - Segredo em claro fora da pasta de trabalho: cifrado no repo ou em config do usuário.
 - Nunca no chat, em argv, em variável de ambiente ou em arquivo claro.
 - Chave nunca nas settings geradas; a settings só aponta para o cofre.
-- Varredura e canal: `harness/regras/secrets.md`; leia antes de commit, de criar chave ou de decidir onde um segredo mora.
 
 ## Operação
 
