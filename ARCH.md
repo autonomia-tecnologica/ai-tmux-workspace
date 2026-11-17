@@ -211,8 +211,8 @@ Cada arquivo tem um dono do formato. Os demais pedem a ele.
 | `$WS_STATE/sessions/<id>` (ficha de sessão) | `src/hook.py` | `hook` |
 | `$WS_STATE/sessions/<id>.status.json` e `$WS_STATE/limits.json` | `src/statusline.py` | `statusline` |
 | `$WS_STATE/settings/<perfil>` (settings gerados por perfil) | `src/lib.py` (`ensure-settings`) | `lib`; o instalador lê o caminho |
-| `$WS_STATE/settings/opencode-<perfil>.json` (config gerado do OpenCode) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
-| `$WS_STATE/settings/opencode-plugin-<perfil>.js` (cópia do plugin de estado) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
+| `$WS_STATE/settings/opencode-<perfil>.json` (config gerado do OpenCode, com `plugins`) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
+| `$WS_STATE/settings/opencode-plugin-<perfil>/index.js` (cópia do plugin de estado V2) | `src/agents/opencode.py` (`prepare`) | o adaptador, pelo `prepare` do `restart`/`reload` |
 | cache de uso extra | `src/extra_usage.py` | `extra_usage` |
 | `~/.config/ai-tmux-workspace/conference/` (conferência) | `src/paths.py` (`conference_dir`) | `src/conference.py` |
 | `~/.local/share/ai-tmux-workspace/{app,harness,security}` (código e `HARNESS.md` instalados) | `src/paths.py` (`install_dir`, `harness_dir`, `security_dir`) | o instalador; os demais só leem |

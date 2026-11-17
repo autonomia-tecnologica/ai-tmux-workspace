@@ -279,7 +279,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(shutil.which("opencode", path=exports["PATH"]), str(binary))
         self.assertEqual(exports["OPENCODE_CONFIG"],
                          str(self.state / "settings" / "opencode-opencode-free.json"))
-        self.assertTrue(out.endswith(" opencode"))
+        self.assertTrue(out.endswith(" opencode --standalone"))
 
     def test_opencode_launch_does_not_repeat_bin_dirs_already_in_path(self):
         self.opencode_free()

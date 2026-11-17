@@ -93,10 +93,10 @@ class AgentAdapterTest(unittest.TestCase):
         self.assertIn("--output-format stream-json", claude)
         self.assertIn("--allowedTools", claude)
         self.assertNotIn("OPENCODE_CONFIG", claude)
-        self.assertNotIn("run --format json", claude)
+        self.assertNotIn("run --standalone --format json", claude)
 
         opencode = conference_worker.answer_command(profile="oc")
-        self.assertIn("run --format json", opencode)
+        self.assertIn("run --standalone --format json", opencode)
         for flag in ("-p ", "--output-format", "--settings", "--permission-mode",
                      "--append-system-prompt", "--allowedTools", "--disallowedTools",
                      "ENABLE_TOOL_SEARCH"):
@@ -105,13 +105,13 @@ class AgentAdapterTest(unittest.TestCase):
 
         # An OpenCode adapter asked for a Claude profile still runs OpenCode, not Claude.
         cross = agents.adapter("opencode", "claude").prompt("x").command
-        self.assertIn("opencode run --format json", cross)
+        self.assertIn("opencode run --standalone --format json", cross)
         self.assertNotIn("--settings", cross)
         self.assertNotIn("--allowedTools", cross)
 
     def test_the_conference_worker_has_no_headless_command_assembly(self):
         source = (SRC / "conference_worker.py").read_text(encoding="utf-8")
-        for fragment in ("--output-format stream-json", "run --format json --archived",
+        for fragment in ("--output-format stream-json", "run --standalone --format json --archived",
                          "OPENCODE_CONFIG=", "--append-system-prompt", "ENABLE_TOOL_SEARCH"):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
@@ -147,6 +147,34 @@ class AgentAdapterTest(unittest.TestCase):
         self.assertEqual(adapter.resume_args("abc"), ["--session", "abc"])
         self.assertEqual(adapter.continue_args(), ["--continue"])
 
+    def test_opencode_state_maps_the_v2_bus_events(self):
+        adapter = lib.profile_adapter("oc")
+        cases = {
+            "permission.asked": "blocked",
+            "form.created": "blocked",
+            "form.replied": "working",
+            "permission.replied": "working",
+            "session.execution.started": "working",
+            "session.step.started": "working",
+            "session.tool.called": "working",
+            "session.execution.succeeded": "done",
+            "session.execution.failed": "done",
+            "session.execution.interrupted": "done",
+            "session.idle": "done",
+            "session.created": "idle",
+            "session.usage.updated": None,
+        }
+        for event, expected in cases.items():
+            with self.subTest(event=event):
+                self.assertEqual(adapter.state_of({"event": event}), expected)
+
+    def test_opencode_launch_runs_a_private_server_with_the_profile_config(self):
+        adapter = lib.profile_adapter("oc")
+        command = adapter.command("oc")
+        self.assertIn("OPENCODE_CONFIG=", command)
+        self.assertIn("--standalone", command)
+        self.assertIn("run --standalone --format json", command)
+
     def test_claude_prepare_writes_the_generated_settings(self):
         adapter = lib.profile_adapter("claude")
         path = adapter.prepare("claude")
@@ -156,12 +184,13 @@ class AgentAdapterTest(unittest.TestCase):
     def test_opencode_prepare_regenerates_the_plugin_and_the_generated_config(self):
         adapter = lib.profile_adapter("oc")
         path = adapter.prepare("oc")
-        plugin = self.state / "settings" / "opencode-plugin-oc.js"
+        folder = self.state / "settings" / "opencode-plugin-oc"
+        plugin = folder / "index.js"
         self.assertEqual(plugin.read_text(encoding="utf-8"),
                          (ROOT / "security" / "opencode-state.js").read_text(encoding="utf-8"))
         self.assertEqual(path, str(self.state / "settings" / "opencode-oc.json"))
         config = json.loads(Path(path).read_text(encoding="utf-8"))
-        self.assertEqual(config["plugin"], [plugin.as_uri()])
+        self.assertEqual(config["plugins"], [str(folder)])
         # `workspace restart` runs prepare again: a deleted plugin comes back from the source.
         plugin.unlink()
         self.assertEqual(adapter.prepare("oc"), path)
@@ -185,8 +214,9 @@ class AgentAdapterTest(unittest.TestCase):
         path = lib.profile_adapter("oc").prepare("oc")
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         self.assertEqual(config["model"], "deepseek/deepseek-flash")
-        plugin = self.state / "settings" / "opencode-plugin-oc.js"
-        self.assertEqual(config["plugin"], ["some-declared-plugin", plugin.as_uri()])
+        folder = self.state / "settings" / "opencode-plugin-oc"
+        self.assertEqual(config["plugins"], ["some-declared-plugin", str(folder)])
+        self.assertNotIn("plugin", config)   # V1 `plugin` migrated to the V2 `plugins` list
         # The declared file is never rewritten.
         self.assertEqual(json.loads(declared.read_text(encoding="utf-8")),
                          {"model": "deepseek/deepseek-flash",
@@ -206,10 +236,10 @@ class AgentAdapterTest(unittest.TestCase):
             encoding="utf-8")
         adapter = lib.profile_adapter("oc")
         self.assertEqual(adapter.prepare("oc"), str(declared))
-        self.assertEqual(adapter.launch("oc").endswith("opencode"), True)
+        self.assertEqual(adapter.launch("oc").endswith("--standalone"), True)
         self.assertIn(f"OPENCODE_CONFIG={declared}", adapter.launch("oc"))
         # The plugin copy is still regenerated, so a restart never loses it.
-        self.assertTrue((self.state / "settings" / "opencode-plugin-oc.js").is_file())
+        self.assertTrue((self.state / "settings" / "opencode-plugin-oc" / "index.js").is_file())
 
     def test_opencode_prepare_points_instructions_at_the_installed_harness_idempotently(self):
         harness = self.root / "harness"
@@ -351,7 +381,7 @@ class AgentAdapterTest(unittest.TestCase):
                                       execute=execute, profile="oc")
         self.assertTrue(ok)
         self.assertEqual(calls[0][1], "pergunta")
-        self.assertIn("run --format json", calls[0][0])
+        self.assertIn("run --standalone --format json", calls[0][0])
         self.assertNotIn("--allowedTools", calls[0][0])
 
 

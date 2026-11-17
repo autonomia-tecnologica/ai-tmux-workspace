@@ -106,7 +106,7 @@ class SessionCommandTest(unittest.TestCase):
     def test_opencode_session_command_has_config_and_continue_without_claude_flags(self):
         self.opencode()
         out = self.run_lib("session-command", "oc", str(self.repo))
-        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode"
+        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode --standalone"
         self.assertEqual(out, f"{base} --continue || {base}")
         for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
@@ -114,7 +114,7 @@ class SessionCommandTest(unittest.TestCase):
     def test_opencode_without_declared_config_gets_the_generated_one(self):
         self.opencode(config="")
         out = self.run_lib("session-command", "oc", str(self.repo))
-        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode"
+        base = f"{self.box('oc')} env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode --standalone"
         self.assertEqual(out, f"{base} --continue || {base}")
 
     # --- per-tab session ids (item 102) ------------------------------------------------------
@@ -163,7 +163,7 @@ class SessionCommandTest(unittest.TestCase):
         self.opencode()
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
         base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
-                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode")
+                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode --standalone")
         # No stored id: a declared fresh session, never the repo's last session in silence.
         self.assertEqual(out, base)
         self.assertNotIn("--continue", out)
@@ -177,7 +177,7 @@ class SessionCommandTest(unittest.TestCase):
         session_state.add(str(self.repo), "tab-2", "oc", "sess-oc")
         out = self.run_lib("session-command", "oc", str(self.repo), "tab-2")
         base = (f"{self.box('oc')} WS_SESSION_TAB=tab-2 WS_STATE={self.state} "
-                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode")
+                f"env OPENCODE_CONFIG={shlex.quote(self.generated_config())} opencode --standalone")
         self.assertIn("--session sess-oc ||", out)
         self.assertIn("reset-session", out)
         self.assertIn("&&", out)
@@ -205,10 +205,10 @@ class SessionCommandTest(unittest.TestCase):
         self.opencode()
         out = self.run_lib("prepare-profile", "oc")
         self.assertEqual(out, self.generated_config())
-        plugin = self.state / "settings" / "opencode-plugin-oc.js"
-        self.assertTrue(plugin.is_file())
-        self.assertEqual(json.loads(Path(out).read_text(encoding="utf-8"))["plugin"],
-                         [plugin.as_uri()])
+        folder = self.state / "settings" / "opencode-plugin-oc"
+        self.assertTrue((folder / "index.js").is_file())
+        self.assertEqual(json.loads(Path(out).read_text(encoding="utf-8"))["plugins"],
+                         [str(folder)])
 
     def test_session_command_asks_the_adapter_instead_of_branching_by_harness(self):
         source = (ROOT / "src" / "lib.py").read_text(encoding="utf-8")

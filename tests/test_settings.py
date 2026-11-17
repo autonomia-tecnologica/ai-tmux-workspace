@@ -338,7 +338,7 @@ class SettingsTest(unittest.TestCase):
         out = proc.stdout.strip()
         self.assertEqual(out, "env OPENCODE_CONFIG=" +
                          str(self.state / "settings" / "opencode-opencode-deepseek.json") +
-                         " opencode")
+                         " opencode --standalone")
         for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
         ensured = self.run_lib("ensure-settings", "opencode-deepseek")
@@ -359,7 +359,8 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
         self.assertEqual(out, "env OPENCODE_CONFIG=" +
-                         str(self.state / "settings" / "opencode-opencode.json") + " opencode")
+                         str(self.state / "settings" / "opencode-opencode.json") +
+                         " opencode --standalone")
         for flag in ("--settings", "--permission-mode", "--continue", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, out)
 
@@ -369,7 +370,8 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(),
                          "env OPENCODE_CONFIG=" +
-                         str(self.state / "settings" / "opencode-opencode.json") + " opencode")
+                         str(self.state / "settings" / "opencode-opencode.json") +
+                         " opencode --standalone")
 
     def test_opencode_profile_generates_no_settings(self):
         self.opencode_profile()

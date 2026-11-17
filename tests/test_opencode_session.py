@@ -1,7 +1,8 @@
 """Tests for the OpenCode plugin recording the session id per tab (item 102c).
 
-With `node` available, the plugin is loaded and `recordSession` runs against a temporary WS_STATE.
-Without it, a source check pins the same strings; the module is not loaded in that case."""
+With `node` available, the plugin is imported as an ES module and `recordSession` runs against a
+temporary WS_STATE. Without it, a source check pins the same strings; the module is not loaded in
+that case."""
 import shutil
 import subprocess
 import tempfile
@@ -13,7 +14,8 @@ PLUGIN = ROOT / "security" / "opencode-state.js"
 NODE = shutil.which("node")
 
 NODE_SCRIPT = """
-const plugin = require(process.argv[1]);
+import { pathToFileURL } from "node:url";
+const plugin = await import(pathToFileURL(process.argv[1]).href);
 plugin.recordSession(
   { sessionID: process.argv[3] },
   { WS_STATE: process.argv[2], WS_SESSION_TAB: process.argv[4] }
@@ -22,13 +24,21 @@ plugin.recordSession(
 
 
 class OpenCodeSessionTest(unittest.TestCase):
+    def test_plugin_is_a_native_v2_plugin(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        self.assertIn('id: "ai-tmux-workspace.state"', source)
+        self.assertIn("setup(ctx)", source)
+        self.assertIn("ctx.event.subscribe", source)
+        self.assertNotIn("module.exports", source)
+
     def test_plugin_records_the_session_id_for_the_tab(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state"
             state.mkdir()
             if NODE:
                 proc = subprocess.run(
-                    [NODE, "-e", NODE_SCRIPT, str(PLUGIN), str(state), "sess-1", "tab-1"],
+                    [NODE, "--input-type=module", "-e", NODE_SCRIPT,
+                     str(PLUGIN), str(state), "sess-1", "tab-1"],
                     capture_output=True, text=True, timeout=60)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual((state / "tabs" / "session-tab-1").read_text(), "sess-1")

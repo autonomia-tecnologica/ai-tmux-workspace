@@ -4,6 +4,7 @@ Every test points AT_WS_CONFIG and WS_STATE at a temporary folder, so the real
 ~/.config/ai-tmux-workspace and ~/.cache/workspace are never read or written. The repos are real
 (empty) git repositories created by the test, so no network is used.
 """
+import json
 import os
 import re
 import subprocess
@@ -345,7 +346,96 @@ class PanelReposTest(unittest.TestCase):
         self.assertTrue(self.has(lines, "beta"))
         self.assertIn(t("repos.disabled"), " ".join(lines))
         self.panel.on_key(mock.Mock(key=None), "f")
+        header, lines = self.rows()
+        self.assertIn("ativos", header[0].text)
+        self.panel.on_key(mock.Mock(key=None), "f")
         self.assertEqual(self.panel.VIEW["filter"], "all")
+
+    def test_active_shows_the_colored_dots_and_hides_idle_unknown_and_off(self):
+        # gamma: done (blue, active), delta: idle (hidden), eps: working but switched off (hidden)
+        make_repo(self.folder / "gamma")
+        make_repo(self.folder / "delta")
+        make_repo(self.folder / "eps")
+        lib.set_repo_enabled("eps", False)
+        states = {
+            str(self.folder / "alpha"): "working",
+            str(self.folder / "beta"): "blocked",
+            str(self.folder / "gamma"): "done",
+            str(self.folder / "delta"): "idle",
+            str(self.folder / "eps"): "working",
+        }
+        self.panel.VIEW["filter"] = "active"
+        with mock.patch.object(lib, "states_by_repo", return_value=states):
+            header, lines = self.rows()
+        self.assertIn("ativos", header[0].text)
+        self.assertTrue(self.has(lines, "alpha") and self.has(lines, "beta") and self.has(lines, "gamma"))
+        for name in ("delta", "eps"):
+            self.assertFalse(self.has(lines, name), name)
+
+    def test_closed_group_shows_the_worst_state_of_its_visible_repos_only(self):
+        self.config.write_text(yaml_min.dumps({
+            "repos_folder": str(self.folder),
+            "groups": {"Work": [str(self.folder / "alpha"), str(self.folder / "beta")]},
+        }), encoding="utf-8")
+        self.panel.VIEW["filter"] = "active"
+        states = {str(self.folder / "alpha"): "idle", str(self.folder / "beta"): "working"}
+        with mock.patch.object(lib, "states_by_repo", return_value=states), \
+                mock.patch.object(self.panel.GROUPS, "is_open", return_value=False):
+            _header, lines = self.rows()
+        group = next(line for line in lines if "WORK" in line)
+        self.assertIn(self.panel.glyphs.dot("working"), group)   # beta is visible and working
+        self.assertFalse(self.has(lines, "alpha"))
+
+    def test_filter_cycles_all_on_off_active_with_a_folder(self):
+        cycle = []
+        for _ in range(4):
+            cycle.append(self.panel.VIEW["filter"])
+            self.panel.on_key(mock.Mock(key=None), "f")
+        self.assertEqual(cycle, ["all", "on", "off", "active"])
+        self.assertEqual(self.panel.VIEW["filter"], "all")
+
+    def test_without_a_folder_f_cycles_only_all_and_active(self):
+        self.config.write_text(yaml_min.dumps({"profiles": {"claude": "claude"}}), encoding="utf-8")
+        self.assertEqual(self.panel.filters(), ("all", "active"))
+        self.panel.on_key(mock.Mock(key=None), "f")
+        self.assertEqual(self.panel.VIEW["filter"], "active")
+        header, _lines = self.rows()
+        self.assertIn("ativos", header[0].text)
+        self.panel.on_key(mock.Mock(key=None), "f")
+        self.assertEqual(self.panel.VIEW["filter"], "all")
+        header, _lines = self.rows()
+        self.assertNotIn("FILTRO", " ".join(row.text for row in header))
+
+    def test_the_filter_survives_a_reload(self):
+        self.panel.VIEW["filter"] = "off"
+        self.panel.on_key(mock.Mock(key=None), "f")   # off -> active, the last filter of the cycle
+        self.assertEqual(self.panel.VIEW["filter"], "active")
+        saved = Path(os.environ["WS_STATE"]) / "repos_filter.json"
+        self.assertEqual(json.loads(saved.read_text(encoding="utf-8")), {"filter": "active"})
+        # A new panel run starts with an empty VIEW and reads the file back.
+        self.panel.VIEW["filter"] = ""
+        self.assertEqual(self.panel.current_filter(), "active")
+        header, _lines = self.rows()
+        self.assertIn("ativos", header[0].text)
+
+    def test_a_remembered_filter_the_config_cannot_offer_falls_back_to_all(self):
+        saved = Path(os.environ["WS_STATE"]) / "repos_filter.json"
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_text(json.dumps({"filter": "off"}), encoding="utf-8")
+        self.config.write_text(yaml_min.dumps({"profiles": {"claude": "claude"}}), encoding="utf-8")
+        self.panel.VIEW["filter"] = ""
+        self.assertEqual(self.panel.current_filter(), "all")
+        header, _lines = self.rows()
+        self.assertNotIn("FILTRO", " ".join(row.text for row in header))
+
+    def test_shown_is_the_single_rule_of_the_filter(self):
+        self.panel.VIEW["filter"] = "active"
+        self.assertTrue(self.panel.shown("a", set(), "working"))
+        self.assertTrue(self.panel.shown("a", set(), "blocked"))
+        self.assertTrue(self.panel.shown("a", set(), "done"))
+        self.assertFalse(self.panel.shown("a", set(), "idle"))
+        self.assertFalse(self.panel.shown("a", set(), "unknown"))
+        self.assertFalse(self.panel.shown("a", {"a"}, "working"))
 
     def test_t_switches_the_repo_under_the_cursor(self):
         viewer = mock.Mock(key=("r", str(self.folder / "alpha")))
@@ -377,7 +467,8 @@ class TextsTest(unittest.TestCase):
     def test_every_new_text_exists_in_pt_br(self):
         keys = ["repo.disabled", "repo.config_error", "repo.not_in_folder", "repo.no_folder", "repo.state.on",
                 "repo.state.off", "repo.set", "repo.usage", "repos.filter.line", "repos.filter.all",
-                "repos.filter.on", "repos.filter.off", "repos.disabled", "repos.toggled", "repos.open_disabled"]
+                "repos.filter.on", "repos.filter.off", "repos.filter.active", "repos.disabled", "repos.toggled",
+                "repos.open_disabled"]
         for key in keys:
             self.assertIn(key, _STRINGS)
         self.assertIn("alpha", t("repo.disabled", repo="alpha"))

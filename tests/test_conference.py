@@ -607,7 +607,7 @@ class WorkerTest(unittest.TestCase):
             "    command: opencode\n",
             encoding="utf-8")
         cmd = conference_worker.answer_command(profile="oc")
-        self.assertIn("run --format json --archived", cmd)
+        self.assertIn("run --standalone --format json --archived", cmd)
         self.assertNotIn("-p ", cmd + " ")
         self.assertNotIn("--allowedTools", cmd)
         config_path = cmd.split("OPENCODE_CONFIG=")[1].split()[0].strip("'\"")
@@ -633,7 +633,7 @@ class WorkerTest(unittest.TestCase):
             "    command: opencode\n",
             encoding="utf-8")
         conference.start(self.repos, profile="oc")
-        self.assertIn("run --format json", conference_worker.answer_command([self.repos[1]]))
+        self.assertIn("run --standalone --format json", conference_worker.answer_command([self.repos[1]]))
 
     def test_mapping_profile_env_and_model_reach_the_conference_run(self):
         self.cfg.write_text(

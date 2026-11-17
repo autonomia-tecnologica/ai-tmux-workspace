@@ -191,17 +191,17 @@ class WorkspaceDispatchTests(unittest.TestCase):
         settings = Path(self.home) / "state" / "settings"
         # Claude: generated settings; OpenCode: the plugin copy plus the generated config.
         self.assertTrue((settings / "claude.json").is_file())
-        plugin = settings / "opencode-plugin-opencode-claude.js"
-        self.assertEqual(plugin.read_text(encoding="utf-8"),
+        folder = settings / "opencode-plugin-opencode-claude"
+        self.assertEqual((folder / "index.js").read_text(encoding="utf-8"),
                          (ROOT / "security" / "opencode-state.js").read_text(encoding="utf-8"))
         config = json.loads((settings / "opencode-opencode-claude.json").read_text(encoding="utf-8"))
-        self.assertEqual(config["plugin"], [plugin.as_uri()])
+        self.assertEqual(config["plugins"], [str(folder)])
 
     def test_restart_of_one_opencode_server_regenerates_only_its_plugin(self):
         result = self.run_workspace("restart", "ws-opencode-claude")
         self.assertEqual(result.returncode, 0, result.stderr)
         settings = Path(self.home) / "state" / "settings"
-        self.assertTrue((settings / "opencode-plugin-opencode-claude.js").is_file())
+        self.assertTrue((settings / "opencode-plugin-opencode-claude" / "index.js").is_file())
         self.assertFalse((settings / "claude.json").exists())
 
 

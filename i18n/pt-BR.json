@@ -570,6 +570,7 @@
   "repos.filter.all": "todos",
   "repos.filter.on": "ligados",
   "repos.filter.off": "desligados",
+  "repos.filter.active": "ativos",
   "repos.disabled": "desligado",
   "repos.toggled": "{repo}: {state}",
   "repos.open_disabled": "{repo} está desligado: ligue com T antes de abrir",

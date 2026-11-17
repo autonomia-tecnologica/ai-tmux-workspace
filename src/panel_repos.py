@@ -23,11 +23,17 @@ Next to the name, two icons (once the first git round has read the repo):
   for all panels; a repo not read yet shows no icon until the first round.
 
 With "repos_folder" the repos are the git repos of that folder; a repo in no group appears under the
-implicit "Sem categoria". F cycles the filter (all, switched on, switched off); T switches the repo
+implicit "Sem categoria". F cycles the filter: all, switched on, switched off, active (a colored dot:
+blocked, working or done; idle and unknown are out, and a switched-off repo is never active). The
+chosen filter is remembered in state/ (`repos_filter.json`), so a reload opens with the same one.
+Without a repos folder F cycles only all and active, and the filter line shows once the filter is not
+all. The main repo always stays on top; a group whose repos are all filtered out shows its worst
+state only over the visible repos. T switches the repo
 under the cursor on or off ("repos_disabled" in config.yaml). A switched-off repo shows no git state
 and opens no window and no agent. Space or a right click opens the repo context menu, built by
 src/context_menu.py (move to group, mark as a sibling).
 """
+import json
 import os
 import subprocess
 import sys
@@ -36,6 +42,7 @@ import time
 import context_menu
 import glyphs
 import lib
+import paths
 import session_state
 import worktrees
 from i18n import t
@@ -103,8 +110,10 @@ GROUPS = Expander(lib.STATE / "collapsed.json", default_open=True)   # groups st
 WT_OPEN = Expander(lib.STATE / "worktrees_open.json", default_open=False)   # repos start closed; the file keeps the open ones
 PARENT = {}   # row key -> the row ← moves to (a worktree -> its repo, a repo -> its group); rebuilt on every redraw
 CURRENT = lib.current_repo()
-FILTERS = ("all", "on", "off")
-VIEW = {"filter": "all", "note": "", "note_until": 0.0}   # per panel run: a restart shows every repo again
+FILTERS = ("all", "on", "off", "active")
+ACTIVE_STATES = ("blocked", "working", "done")   # a colored dot: red, green or blue; idle and unknown are out
+VIEW = {"filter": "", "note": "", "note_until": 0.0}   # the filter is loaded from state/ on first use
+FILTER_FILE = "repos_filter.json"
 NOTE_S = 4   # seconds a note stays in the header (the panel redraws every second)
 
 
@@ -112,14 +121,61 @@ def note(text):
     VIEW["note"], VIEW["note_until"] = text, time.time() + NOTE_S
 
 
+def filter_path():
+    """The remembered filter of the repos panel (`$WS_STATE/repos_filter.json`)."""
+    return paths.state_dir() / FILTER_FILE
+
+
+def saved_filter():
+    """Filter from the last run, or "all" when the file is missing, corrupt or unknown."""
+    try:
+        data = json.loads(filter_path().read_text(encoding="utf-8"))
+    except Exception:
+        return "all"
+    value = data.get("filter") if isinstance(data, dict) else data
+    return value if value in FILTERS else "all"
+
+
+def remember_filter(value):
+    """Stores the chosen filter; a write error never breaks the panel (the filter just is not kept)."""
+    path = filter_path()
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps({"filter": value}), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        pass
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def current_filter():
+    """The filter in use: the loaded/remembered one, unless the current config cannot offer it."""
+    if VIEW["filter"] not in FILTERS:
+        VIEW["filter"] = saved_filter()
+    return VIEW["filter"] if VIEW["filter"] in filters() else "all"
+
+
 def switched_off():
     """Names of the folder repos that are off; without a repos folder nothing is switched."""
     return lib.disabled_repos() if lib.repos_folder() else set()
 
 
-def shown(name, off):
-    """Filter: all repos, only the switched-on ones, or only the switched-off ones."""
-    f = VIEW["filter"]
+def filters():
+    """The filters F cycles through: without a repos folder nothing is switched, so on/off are left out."""
+    return FILTERS if lib.repos_folder() else ("all", "active")
+
+
+def shown(name, off, state):
+    """Filter: all repos, only the switched-on ones, only the switched-off ones, or only the active ones
+    (state blocked, working or done: a colored dot). A switched-off repo is never active."""
+    f = current_filter()
+    if f == "active":
+        return name not in off and state in ACTIVE_STATES
     return f == "all" or (f == "off") == (name in off)
 
 
@@ -129,8 +185,9 @@ def collect(v):
     state = lib.states_by_repo(groups + ([("", [main])] if main else []))
     off = switched_off()
     header = []   # the REPOS title lives in the panel's top bar (panel_tabs.py repos)
-    if lib.repos_folder():
-        header.append(Row(f" {DIM}{t('repos.filter.line', filter=t('repos.filter.' + VIEW['filter']))}{R}"))
+    chosen = current_filter()
+    if lib.repos_folder() or chosen != "all":
+        header.append(Row(f" {DIM}{t('repos.filter.line', filter=t('repos.filter.' + chosen))}{R}"))
     if time.time() < VIEW["note_until"]:
         header.append(Row(f" {VIEW['note']}"))
     header += [Row(text) for text in context_menu.header()]   # the menu layer owns its prompt and notice (str)
@@ -142,7 +199,7 @@ def collect(v):
         body.append(Row(f" {glyphs.dot(state.get(p, 'idle'))} {color}{B}{repo_name}{R}{worktree_mark(p)} {git_icon(p)}", ("r", p)))
         body += worktree_rows(p, "   ")
     for name, all_repos in groups:
-        repos = [(n, p) for n, p in all_repos if shown(n, off)]
+        repos = [(n, p) for n, p in all_repos if shown(n, off, state.get(p, "idle"))]
         opened = GROUPS.is_open(name)
         arrow = "▾" if opened else "▸"
         # the closed group dot shows the worst state inside
@@ -165,7 +222,11 @@ def collect(v):
 def on_key(v, k):
     """F cycles the filter; T switches the repo under the cursor; Left/Right fold a group or a repo's worktrees."""
     if k == "f":
-        VIEW["filter"] = FILTERS[(FILTERS.index(VIEW["filter"]) + 1) % len(FILTERS)]
+        cycle = filters()
+        chosen = current_filter()
+        current = cycle.index(chosen) if chosen in cycle else -1
+        VIEW["filter"] = cycle[(current + 1) % len(cycle)]
+        remember_filter(VIEW["filter"])
         v.redraw.set()
     elif k == "t" and v.key and v.key[0] == "r":
         toggle(v, v.key[1])
@@ -224,4 +285,5 @@ def focus_lost(v):
 
 if __name__ == "__main__":
     Viewer(collect, interval=1.0, cursor=True, on_enter=enter, on_key=on_key, initial_key=("r", CURRENT),
-           on_focus_lost=focus_lost, actions=context_menu.actions, on_input=context_menu.on_input).run()
+           on_focus_lost=focus_lost, actions=context_menu.actions, on_input=context_menu.on_input,
+           wrap=True).run()

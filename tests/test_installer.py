@@ -520,7 +520,7 @@ class InstallerTest(unittest.TestCase):
         for flag in ("--settings", "--permission-mode", "ENABLE_TOOL_SEARCH"):
             self.assertNotIn(flag, launched.stdout)
         generated = json.loads((self.state / "settings" / "opencode-opencode.json").read_text())
-        self.assertTrue(generated.get("plugin"), "the generated config carries the state plugin")
+        self.assertTrue(generated.get("plugins"), "the generated config carries the state plugin")
         self.assertTrue(any(str(path).endswith("HARNESS.md")
                             for path in generated.get("instructions", [])),
                         "the installed HARNESS.md is the config's instructions")
