@@ -150,8 +150,8 @@ A conformidade se verifica painel a painel, na migração para `collect(viewer)`
 Menu de contexto: `src/context_menu.py` é a única camada que declara as entradas por tipo de item
 (hoje repo; outro tipo entra ali, não no painel). O painel pede `actions=context_menu.actions` e o
 `viewer` desenha o popup, navega e devolve a tecla; um submenu é pedido por `viewer.open_menu(items)`.
-O menu de repo tem só duas ações: mover para grupo e marcar como irmão de outro repo. As duas gravam
-o `config.yaml` pela `lib` (edição textual mínima, backup e comentários preservados) e valem no
+O menu de repo tem só uma ação: mover para grupo. Ela grava
+o `config.yaml` pela `lib` (edição textual mínima, backup e comentários preservados) e vale no
 próximo redesenho, sem estado no servidor tmux e sem `restart`.
 
 `REPO_TREE` (em `bin/workspace`) é a tabela única de papéis dos painéis: uma linha por painel, com papel,
