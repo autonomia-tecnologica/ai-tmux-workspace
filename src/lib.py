@@ -709,7 +709,7 @@ def set_agent(name):
 
 
 def _entries(paths):
-    """Paths of a group list: each entry is a string, or {"path": ..., "siblings": [...]}. Bad entries are skipped."""
+    """Paths of a group list: each entry is a string, or {"path": ...} (extra keys are ignored). Bad entries are skipped."""
     res = []
     for c in paths if isinstance(paths, list) else []:
         if isinstance(c, dict):
@@ -853,13 +853,12 @@ def set_repo_enabled(name, enabled):
 
 
 # ---- minimal textual edits of config.yaml -------------------------------------------------------
-# The context menu writes a group or a sibling relation without rewriting the file: only the lines
-# of the affected block are inserted or removed, so comments and the rest of the person's config
-# survive. The writes go through write_config_text (backup + atomic replace).
+# The context menu writes a group without rewriting the file: only the lines of the affected block
+# are inserted or removed, so comments and the rest of the person's config survive. The writes go
+# through write_config_text (backup + atomic replace).
 # -------------------------------------------------------------------------------------------------
 
 GROUP_KEY = "groups"
-SIBLINGS_KEY = "siblings"
 
 
 def _content_line(line):
@@ -995,7 +994,7 @@ def _config_path_value(path):
 
 
 def _entry_lines(item, indent):
-    """Canonical YAML lines of a sequence item at `indent` (a string or {path, siblings})."""
+    """Canonical YAML lines of a sequence item at `indent` (a string or a mapping)."""
     block = yaml_min.dumps({"e": [item]}).splitlines()[1:]
     return [" " * indent + line[2:] for line in block]
 
@@ -1071,28 +1070,6 @@ def _find_group_entries(lines, target):
             if _item_path(item) == target:
                 found.append((group, entry, item))
     return found
-
-
-def _merged_entry(matches, target):
-    """One item for the moved repo: keeps the first mapping and the union of the declared siblings."""
-    if not matches:
-        return _config_path_value(target)
-    items = [item for _group, _entry, item in matches]
-    mappings = [item for item in items if isinstance(item, dict)]
-    if not mappings:
-        return items[0]
-    merged = dict(mappings[0])
-    merged["path"] = mappings[0].get("path") or items[0]
-    siblings = []
-    for mapping in mappings:
-        for sibling in mapping.get("siblings") if isinstance(mapping.get("siblings"), list) else []:
-            if isinstance(sibling, str) and sibling and sibling not in siblings:
-                siblings.append(sibling)
-    if siblings:
-        merged["siblings"] = siblings
-    else:
-        merged.pop("siblings", None)
-    return merged
 
 
 def _append_to_group(lines, name, item, comment=""):
@@ -1207,33 +1184,11 @@ def _move_in_data(cfg, target, group):
     if not isinstance(groups, dict):
         groups = {}
         cfg[GROUP_KEY] = groups
-    found = []
     for name, items in list(groups.items()):
         if not isinstance(items, list):
             continue
-        keep = []
-        for item in items:
-            if _item_path(item) == target:
-                found.append(item)
-            else:
-                keep.append(item)
-        groups[name] = keep
-    groups.setdefault(group, []).append(_merged_entry(found, target))
-    return cfg
-
-
-def _sibling_in_data(cfg, target, other):
-    siblings = cfg.get(SIBLINGS_KEY)
-    if not isinstance(siblings, dict):
-        siblings = {}
-        cfg[SIBLINGS_KEY] = siblings
-    key = next((name for name in siblings if expand_path(name) == target), _config_path_value(target))
-    declared = siblings.get(key)
-    if not isinstance(declared, list):
-        declared = []
-        siblings[key] = declared
-    if not any(isinstance(item, str) and expand_path(item) == other for item in declared):
-        declared.append(_config_path_value(other))
+        groups[name] = [item for item in items if _item_path(item) != target]
+    groups.setdefault(group, []).append(_config_path_value(target))
     return cfg
 
 
@@ -1262,7 +1217,7 @@ def move_repo_to_group(path, group):
         matches = _find_group_entries(lines, target)
         if len(matches) == 1 and matches[0][0]["key"] == group:
             return text
-        item = _merged_entry(matches, target)
+        item = _config_path_value(target)
         comments = []
         remove = set()
         for _group, entry, _item in matches:
@@ -1277,97 +1232,6 @@ def move_repo_to_group(path, group):
         return _text_join(lines, text)
 
     _edit_config_text(edit, lambda data: _check_group_written(data, group, target))
-
-
-def mark_repo_sibling(path, other):
-    """Declares `other` as a sibling of `path` in config.yaml; the relation reads in both directions.
-
-    The relation goes to the root "siblings" map, so it also works for a repo with no "groups" entry
-    (the implicit "Sem categoria"). Comments and the rest of the file are preserved, with a backup."""
-    target, sibling = expand_path(path), expand_path(other)
-    if target == sibling:
-        raise ValueError(t("repos.err.same_repo"))
-    _check_repo_path(target)
-    _check_repo_path(sibling)
-    cfg = read_config()
-    if CONFIG_ERROR:
-        raise ConfigError(t("repo.config_error", path=str(config_path())))
-    if sibling in _sibling_pairs(cfg).get(target, set()):
-        return                        # already a sibling, declared on either side
-
-    if config_path().suffix == ".json":
-        _sibling_in_data(cfg, target, sibling)
-        _write_config_data(cfg)
-        return
-
-    def edit(text):
-        return _text_join(_add_sibling(_text_lines(text), target, sibling), text)
-
-    def check(data):
-        if sibling not in _sibling_pairs(data).get(target, set()):
-            raise ConfigError(t("repos.err.write", path=str(config_path())))
-
-    _edit_config_text(edit, check)
-
-
-def _flow_add(line, value):
-    start, end = line.find("["), line.rfind("]")
-    if start < 0 or end < start:
-        raise ConfigError(t("repos.err.write", path=str(config_path())))
-    inside = line[start + 1:end].strip()
-    merged = f"{inside}, {value}" if inside else value
-    return line[:start + 1] + merged + line[end:]
-
-
-def _add_sibling(lines, target, other):
-    section = _section(lines, SIBLINGS_KEY)
-    if section is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(f"{SIBLINGS_KEY}:")
-        section = _section(lines, SIBLINGS_KEY)
-        children, indent = [], 2
-    else:
-        pair = _line_data(lines[section["begin"]])
-        if pair and pair[1] not in (None, {}, []):
-            raise ConfigError(t("repos.err.write", path=str(config_path())))
-        if pair and pair[1] is not None:      # "siblings: {}" / "siblings: []": make it a block
-            comment = _trailing_comment(lines[section["begin"]])
-            header = " " * _indent_of(lines[section["begin"]]) + _key_text(SIBLINGS_KEY) + ":"
-            if comment:
-                header += "  " + comment
-            lines[section["begin"]] = header
-            section = _section(lines, SIBLINGS_KEY)
-        children, indent = _children(lines, section)
-    key, value = _config_path_value(target), _config_path_value(other)
-    for child in children:
-        if expand_path(child["key"]) != target:
-            continue
-        declared = child["value"]
-        if isinstance(declared, list):
-            if any(isinstance(item, str) and expand_path(item) == other for item in declared):
-                return lines
-            lines[child["begin"]] = _flow_add(
-                lines[child["begin"]], yaml_min.dumps({"e": value}).split("e: ", 1)[1])
-            return lines
-        if declared is None:
-            entries, list_indent = _list_entries(lines, child)
-            for entry in entries:
-                if _item_path(_entry_item(lines, entry)) == other:
-                    return lines
-            if entries:
-                at = max(j for j in range(child["begin"], child["end"])
-                         if _content_line(lines[j])) + 1
-            else:
-                at = child["begin"] + 1
-                list_indent = child["indent"] + 2
-            lines[at:at] = [" " * list_indent + "- " + value]
-            return lines
-        raise ConfigError(t("repos.err.write", path=str(config_path())))
-    block = yaml_min.dumps({key: [value]}).splitlines()
-    at = section["last"] + 1
-    lines[at:at] = [" " * indent + line for line in block]
-    return lines
 
 
 def group_names():
@@ -1410,8 +1274,8 @@ def read_repos():
 
     With "repos_folder" the folder is the source of its repos and "repos_extra" adds the repos from outside it;
     "groups" classify both, and a repo in no group goes to the implicit "Sem categoria". Without a folder,
-    "groups" are read as before (each entry is a path or {path, siblings}) and the extras not in any group go
-    to "Sem categoria"."""
+    "groups" are read as before (each entry is a path or {path}) and the extras not in any group go
+    to "Sem categoria". A legacy "siblings" key on an entry is ignored."""
     if repos_folder():
         return _classified_repos(repo_pool())
     groups = []
@@ -1435,54 +1299,21 @@ def read_relations():
     return [(name, _entries(paths)) for name, paths in relations.items()]
 
 
-def _sibling_pairs(cfg):
-    """{path: {siblings}}: "siblings" holds in both directions, on a "groups" entry or at the root.
+def group_mates(path):
+    """Other repos of the same declared group as `path`, sorted; [] when it has none.
 
-    The root map (repo path -> siblings) is written by the repos context menu for repos that have no
-    "groups" entry, including the ones in the implicit "Sem categoria"."""
-    pairs = {}
-    for paths in cfg.get("groups", {}).values():
-        for entry in paths if isinstance(paths, list) else []:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not entry["path"]:
-                continue
-            repo = expand_path(entry["path"])
-            declared = entry.get("siblings")
-            for path in declared if isinstance(declared, list) else []:
-                if isinstance(path, str) and path and expand_path(path) != repo:
-                    other = expand_path(path)
-                    pairs.setdefault(repo, set()).add(other)
-                    pairs.setdefault(other, set()).add(repo)
-    root = cfg.get("siblings")
-    for key, declared in root.items() if isinstance(root, dict) else []:
-        if not isinstance(key, str) or not key:
-            continue
-        repo = expand_path(key)
-        for path in declared if isinstance(declared, list) else []:
-            if isinstance(path, str) and path and expand_path(path) != repo:
-                other = expand_path(path)
-                pairs.setdefault(repo, set()).add(other)
-                pairs.setdefault(other, set()).add(repo)
-    return pairs
-
-
-def _inside(path, folder):
-    return path == folder or path.startswith(folder + "/")
-
-
-def siblings(path):
-    """Siblings of a repo, without itself, sorted. Two sources:
-    (a) "parent_folder": when the repo is inside it, every listed repo (main and groups) also inside it;
-    (b) "siblings" written on a "groups" entry, which holds in both directions (even outside the parent folder)."""
-    cfg = read_config()
+    The implicit "Sem categoria" does not count as a group: a repo there has no mates. A repo outside
+    the config or alone in its group gives []. A legacy "siblings" key is ignored."""
     target = expand_path(path)
-    found = set(_sibling_pairs(cfg).get(target, set()))
-    folder = cfg.get("parent_folder")
-    if isinstance(folder, str) and folder:
-        folder = expand_path(folder)
-        if _inside(target, folder):
-            listed = _entries([cfg.get("main")]) + [p for _, rs in read_repos() for _, p in rs]
-            found |= {p for p in listed if p != target and _inside(p, folder)}
-    return sorted(found)
+    uncategorized = t("repos.group.uncategorized")
+    groups = read_repos()
+    for index, (name, repos) in enumerate(groups):
+        if name == uncategorized and index == len(groups) - 1:
+            continue                  # the implicit group, which is always the last one
+        members = {expand_path(p) for _, p in repos}
+        if target in members:
+            return sorted(members - {target})
+    return []
 
 
 def read_main():

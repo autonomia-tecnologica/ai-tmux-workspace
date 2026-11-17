@@ -1,5 +1,5 @@
 """Tests for the YAML config: the stdlib subset parser, reading the new YAML, the old settings.json, the
-migration, sibling relations and the parent folder. Every test points AT_WS_CONFIG (or HOME) at a
+migration and the groups of a repo (group_mates). Every test points AT_WS_CONFIG (or HOME) at a
 temporary folder, so the real ~/.config/ai-tmux-workspace is never read or written."""
 import hashlib
 import json
@@ -151,54 +151,39 @@ class YamlConfigTest(ConfigTestCase):
         self.assertEqual(lib.read_relations(), [("Rel", [home("a"), home("b")])])
         self.assertIsNone(lib.CONFIG_ERROR)
 
-    def test_siblings_are_symmetric(self):
-        self.write("config.yaml", "groups:\n  Cat:\n    - path: ~/a\n      siblings: [~/b]\n    - ~/b\n    - ~/c\n")
+    def test_group_mates_are_the_other_members_of_the_same_group(self):
+        self.write("config.yaml", "groups:\n  Cat:\n    - ~/b\n    - ~/a\n  Dog:\n    - ~/c\n")
         a, b, c = (home(x) for x in "abc")
-        self.assertEqual(lib.siblings(a), [b])
-        self.assertEqual(lib.siblings(b), [a])   # declared only on a, visible from b
-        self.assertEqual(lib.siblings(c), [])
+        self.assertEqual(lib.group_mates(a), [b])
+        self.assertEqual(lib.group_mates(b), [a])
+        self.assertEqual(lib.group_mates(c), [])        # another group: no mates
 
-    def test_five_repos_declared_as_mutual_siblings_see_the_other_four(self):
+    def test_group_mates_of_five_repos_in_one_group(self):
         names = ["ai-tmux-workspace", "at", "site", "home", "ambiente-de-trabalho"]
-        lines = ["groups:", "  Autonomia:"]
-        for name in names:
-            others = ", ".join(str(self.dir / o) for o in names if o != name)
-            lines.append(f"    - path: {self.dir / name}")
-            lines.append(f"      siblings: [{others}]")
+        lines = ["groups:", "  Autonomia:"] + [f"    - {self.dir / name}" for name in names]
         self.write("config.yaml", "\n".join(lines) + "\n")
         for name in names:
             with self.subTest(repo=name):
                 expected = sorted(str(self.dir / o) for o in names if o != name)
-                self.assertEqual(lib.siblings(str(self.dir / name)), expected)
+                self.assertEqual(lib.group_mates(str(self.dir / name)), expected)
 
-    def test_parent_folder_makes_everything_inside_siblings_and_mixes_with_declared(self):
-        parent = self.dir / "AT"
-        self.write("config.yaml", (
-            f"main: {parent}/m\n"
-            "groups:\n"
-            "  Cat:\n"
-            f"    - {parent}/a\n"
-            f"    - {parent}/b\n"
-            f"    - path: {self.dir}/outside\n"
-            f"      siblings: [{parent}/a]\n"
-            f"    - {self.dir}/lone\n"
-            f"parent_folder: {parent}\n"
-        ))
-        a, b, m = (str(parent / x) for x in ("a", "b", "m"))
-        outside, lone = str(self.dir / "outside"), str(self.dir / "lone")
-        self.assertEqual(lib.siblings(a), sorted([b, m, outside]))   # inside: all listed inside; outside: declared
-        self.assertEqual(lib.siblings(b), sorted([a, m]))
-        self.assertEqual(lib.siblings(m), sorted([a, b]))
-        self.assertEqual(lib.siblings(outside), [a])                 # outside the folder: only declared siblings
-        self.assertEqual(lib.siblings(lone), [])
+    def test_uncategorized_repos_have_no_mates(self):
+        self.write("config.yaml", "groups:\n  Cat:\n    - ~/a\n")
+        self.assertEqual(lib.group_mates(home("x")), [])     # implicit "Sem categoria" does not count
+        self.assertEqual(lib.group_mates(home("a")), [])
 
-    def test_parent_folder_only_counts_repos_actually_listed(self):
-        parent = self.dir / "AT"
-        self.write("config.yaml", f"groups:\n  Cat:\n    - {parent}/a\nparent_folder: {parent}\n")
-        self.assertEqual(lib.siblings(str(parent / "a")), [])        # b is not listed, so it is not a sibling
+    def test_repo_outside_the_config_has_no_mates(self):
+        self.assertEqual(lib.group_mates(str(self.dir / "x")), [])
+        self.write("config.yaml", "groups:\n  Cat:\n    - ~/a\n    - ~/b\n")
+        self.assertEqual(lib.group_mates(str(self.dir / "x")), [])
 
-    def test_siblings_without_any_config(self):
-        self.assertEqual(lib.siblings(str(self.dir / "x")), [])
+    def test_legacy_siblings_key_is_ignored_without_error(self):
+        self.write("config.yaml", "groups:\n  Cat:\n    - path: ~/a\n      siblings: [~/c]\n    - ~/b\n")
+        a, b, c = (home(x) for x in "abc")
+        self.assertEqual(lib.group_mates(a), [b])        # siblings does not make c a mate
+        self.assertEqual(lib.group_mates(c), [])
+        self.assertIsNone(lib.CONFIG_ERROR)
+        self.assertEqual(lib.read_repos(), [("Cat", [("a", a), ("b", b)])])
 
     def test_bad_yaml_gives_empty_config_and_marks_the_error(self):
         path = self.write("config.yaml", "groups:\n  Cat:\n    - ~/a\n\tbroken: 1\n")
@@ -234,7 +219,7 @@ class LegacyAndMigrationTest(ConfigTestCase):
         self.write_legacy(self.LEGACY)
         self.assertEqual(lib.read_config(), self.LEGACY)
         self.assertTrue(lib.needs_migration())
-        self.assertEqual(lib.siblings(home("Codes/some-repo")), [home("Codes/b")])
+        self.assertEqual(lib.group_mates(home("Codes/some-repo")), [home("Codes/b")])
 
     def test_migration_writes_yaml_and_never_touches_the_json(self):
         legacy = self.write_legacy(self.LEGACY)

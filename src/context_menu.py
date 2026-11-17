@@ -5,11 +5,10 @@ A panel asks for `actions(viewer, key) -> [(label, active, action)]` and the `vi
 overlay, navigates and runs the action; a panel never builds menu entries itself. Today only repo
 items (key `("r", path)`) have a menu; another item type enters here, not in the panel.
 
-The repo menu has exactly two actions, both writing the user config through `lib` (backup + textual
-edit, comments preserved) and taking effect on the next redraw: no tmux state and no `restart`.
+The repo menu has one action, which writes the user config through `lib` (backup + textual edit,
+comments preserved) and takes effect on the next redraw: no tmux state and no `restart`.
 
   "Mover para grupo"          picks a declared group or asks for a new name
-  "Marcar como irmão de..."   picks another repo; the relation is symmetric, like `siblings`
 
 `on_input`/`header` are the inline text prompt used by "new group"; the panel passes both to the
 viewer, so the prompt lives in this layer too.
@@ -34,12 +33,11 @@ def actions(v, key):
 
 
 def repo_actions(v, key):
-    """The two repo actions. The main repo cannot move to a group (it stays outside them)."""
+    """The repo action. The main repo cannot move to a group (it stays outside them)."""
     path = lib.expand_path(key[1])
     main = lib.read_main()
     can_move = not main or lib.expand_path(main[1]) != path
-    return [(t("repos.menu.move_group"), can_move, open_groups),
-            (t("repos.menu.sibling"), True, open_siblings)]
+    return [(t("repos.menu.move_group"), can_move, open_groups)]
 
 
 def open_groups(v, key):
@@ -60,46 +58,11 @@ def ask_group(v, key):
     v.redraw.set()
 
 
-def open_siblings(v, key):
-    """Submenu with every other listed repo; the current repo is not offered."""
-    current = lib.expand_path(key[1])
-    seen = {current}
-    items = []
-    main = lib.read_main()
-    candidates = ([main] if main else []) + [repo for _group, repos in lib.read_repos() for repo in repos]
-    for name, path in candidates:
-        path = lib.expand_path(path)
-        if path in seen:
-            continue
-        seen.add(path)
-        items.append((name, True, sibling_to(path)))
-    if not items:
-        items.append((t("repos.menu.no_siblings"), False, None))
-    v.open_menu(items, key)
-
-
-def sibling_to(other):
-    def action(v, key):
-        sibling(v, key, other)
-    return action
-
-
 def move(v, key, group):
     """Writes the new group and reports through the header; the panel rereads the config."""
     try:
         lib.move_repo_to_group(key[1], group)
         notice(t("repos.moved", repo=os.path.basename(lib.expand_path(key[1])), group=group))
-    except (OSError, ValueError) as error:
-        notice(str(error))
-    v.redraw.set()
-
-
-def sibling(v, key, other):
-    """Writes the symmetric relation and reports through the header; no restart is needed."""
-    try:
-        lib.mark_repo_sibling(key[1], other)
-        notice(t("repos.sibling_added", repo=os.path.basename(lib.expand_path(key[1])),
-                 other=os.path.basename(other)))
     except (OSError, ValueError) as error:
         notice(str(error))
     v.redraw.set()
