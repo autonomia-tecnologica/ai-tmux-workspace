@@ -520,11 +520,10 @@ def agent_launch_command(mode="", repo=None, profile=None, tab=None):
     workspace plugin) and adds the user binary folders to `PATH`. With `manage: false` the Claude
     profile runs exactly as it declares. Nothing here branches by agent.
 
-    With `repo`, the line is prefixed with the session box (`WS_SESSION_ROLE`/`WS_SESSION_ROOT`/
-    `WS_SESSION_PROFILE` from `src/session.py`), so the hook and the OpenCode plugin enforce the same
-    role table. A `tab` also adds `WS_SESSION_TAB`/`WS_STATE`, the per-tab session recording used by
-    `session_command`. Without a repo (the conference worker) no box is declared on purpose. `auto` is
-    never fixed here: the policy reads it from the event's `permission_mode`."""
+    With `repo`, the line is prefixed with the session declaration (`WS_SESSION_ROLE`/`WS_SESSION_ROOT`/
+    `WS_SESSION_PROFILE` from `src/session.py`); the hook and the OpenCode plugin read the root to record
+    each tab. A `tab` also adds `WS_SESSION_TAB`/`WS_STATE`, the per-tab session recording used by
+    `session_command`. Without a repo (the conference worker) no declaration is added on purpose."""
     if repo and not repo_enabled(repo):
         raise RepoDisabledError(t("repo.disabled", repo=os.path.basename(expand_path(repo))))
     name = profile or agent_name()

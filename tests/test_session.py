@@ -1,5 +1,6 @@
-"""Tests for the session box (item 64): the role/root prefix, the main repo as `home`, the box
-enforced by the same policy in both adapters, and the conference left without a role.
+"""Tests for the session declaration (item 64): the role/root prefix, the main repo as `home`, the
+workspace code as `self`, and the conference left without a role. No capability policy reads it any
+more; these tests cover the declaration only.
 
 Every test uses a temporary HOME, WS_STATE, AT_WS_CONFIG and WS_DIR, so the real config, cache and
 workspace code are never read or written. The launcher paths are exercised as child processes, the
@@ -15,25 +16,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 LIB = SRC / "lib.py"
 SESSION = SRC / "session.py"
-PLUGIN = ROOT / "security" / "opencode-policy.js"
 
 sys.path.insert(0, str(SRC))
 
-import i18n  # noqa: E402
-import policy  # noqa: E402
 import session  # noqa: E402
 
 ENV_KEYS = (
-    "HOME", "WS_STATE", "AT_WS_CONFIG", "WS_DIR", "WS_POLICY", "WS_POLICY_AUTO", "WS_AUTO",
-    "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_PARENT_ROLE", "WS_PARENT_ROLE",
-    "WS_SESSION_ID", "TMPDIR",
+    "HOME", "WS_STATE", "AT_WS_CONFIG", "WS_DIR",
+    "WS_SESSION_ROLE", "WS_SESSION_ROOT", "WS_SESSION_ID", "TMPDIR",
 )
 
 
@@ -108,18 +104,6 @@ class SessionTest(unittest.TestCase):
         return subprocess.run([sys.executable, str(SESSION), *args], env=self.env(**overrides),
                               capture_output=True, text=True, check=False)
 
-    def read(self, path, **extra):
-        return {"tool_name": "Read", "tool_input": {"file_path": str(path)},
-                "session_id": "sess-1", **extra}
-
-    def write(self, path, **extra):
-        return {"tool_name": "Write", "tool_input": {"file_path": str(path)},
-                "session_id": "sess-1", **extra}
-
-    def decide(self, event, **overrides):
-        with patched_env(**overrides):
-            return policy.check_event(event)
-
     # --- contract: src/session.py ---------------------------------------------------------------
     def test_main_repo_is_home_and_every_other_path_is_repo(self):
         self.assertEqual(session.environment(str(self.main)), {
@@ -148,14 +132,6 @@ class SessionTest(unittest.TestCase):
         }), encoding="utf-8")
         self.assertEqual(session.environment(str(self.code))[session.ROLE], "home")
         self.assertEqual(session.environment(str(self.repo))[session.ROLE], "repo")
-
-    def test_self_session_edits_the_workspace_code_and_a_sibling_is_denied(self):
-        target = self.code / "src" / "policy.py"
-        target.write_text("x", encoding="utf-8")
-        self.assertEqual(self.decide(self.write(target), WS_SESSION_ROLE="self",
-                                     WS_SESSION_ROOT=str(self.code))["decision"], "allow")
-        self.assertEqual(self.decide(self.write(target), WS_SESSION_ROLE="repo",
-                                     WS_SESSION_ROOT=str(self.repo))["decision"], "deny")
 
     def test_reload_keeps_the_dev_window_by_its_name(self):
         # prune closes windows whose name is not in window-names; the dev window is not in config
@@ -362,109 +338,6 @@ class SessionTest(unittest.TestCase):
             command = conference_worker.answer_command([str(self.other)])
         self.assertNotIn("WS_SESSION_ROLE", command)
         self.assertNotIn("WS_SESSION_ROOT", command)
-
-    # --- the box in the policy -----------------------------------------------------------------
-    def test_repo_session_writes_only_its_own_repo_and_tmp(self):
-        cases = [
-            (self.write(self.repo / "a.py"), "repo.write", "allow"),
-            (self.write(self.other / "a.py"), "repo.outside", "deny"),
-            (self.write(self.home / ".config" / "app.conf"), "config.write", "deny"),
-            (self.write(self.home / ".claude" / "settings.json"), "config.write", "deny"),
-            (self.write("/tmp/session-box-test.txt"), "tmp", "allow"),
-        ]
-        for event, capability, decision in cases:
-            with self.subTest(event=event):
-                result = self.decide(event, WS_SESSION_ROLE="repo",
-                                     WS_SESSION_ROOT=str(self.repo))
-                self.assertEqual((result["capability"], result["decision"]),
-                                 (capability, decision))
-
-    def test_auto_does_not_change_the_box_decisions(self):
-        cases = [self.write(self.repo / "a.py"), self.write(self.other / "a.py"),
-                 self.write(self.home / ".config" / "app.conf"), self.write("/tmp/auto.txt")]
-        for event in cases:
-            with self.subTest(event=event):
-                without = self.decide(event, WS_SESSION_ROLE="repo",
-                                      WS_SESSION_ROOT=str(self.repo))
-                with_auto = self.decide(event, WS_SESSION_ROLE="repo",
-                                        WS_SESSION_ROOT=str(self.repo), WS_POLICY_AUTO="1")
-                self.assertEqual(without["decision"], with_auto["decision"])
-
-    def test_home_can_change_the_other_repos(self):
-        result = self.decide(self.write(self.other / "a.py"), WS_SESSION_ROLE="home",
-                             WS_SESSION_ROOT=str(self.main))
-        self.assertEqual((result["capability"], result["decision"]), ("repo.outside", "allow"))
-
-    def test_worktree_under_the_config_root_writes_its_own_tree(self):
-        worktree = (self.home / ".local" / "share" / "ai-tmux-workspace" / "worktrees" /
-                    "repo" / "branch")
-        sibling = (self.home / ".local" / "share" / "ai-tmux-workspace" / "worktrees" /
-                   "repo" / "other")
-        worktree.mkdir(parents=True)
-        sibling.mkdir(parents=True)
-        inside = self.decide(self.write(worktree / "a.py"), WS_SESSION_ROLE="repo",
-                             WS_SESSION_ROOT=str(worktree))
-        self.assertEqual((inside["capability"], inside["decision"]), ("repo.write", "allow"))
-        outside = self.decide(self.write(sibling / "a.py"), WS_SESSION_ROLE="repo",
-                              WS_SESSION_ROOT=str(worktree))
-        self.assertEqual((outside["capability"], outside["decision"]),
-                         ("config.write", "deny"))
-        config = self.decide(self.write(self.home / ".local" / "share" / "ai-tmux-workspace" /
-                                        "other.txt"), WS_SESSION_ROLE="repo",
-                             WS_SESSION_ROOT=str(worktree))
-        self.assertEqual((config["capability"], config["decision"]),
-                         ("config.write", "deny"))
-
-    def test_secrets_still_win_inside_the_box(self):
-        for path in (self.repo / ".env", self.repo / ".ssh" / "id_rsa",
-                     self.repo / "server.pem"):
-            with self.subTest(path=path):
-                result = self.decide(self.read(path), WS_SESSION_ROLE="repo",
-                                     WS_SESSION_ROOT=str(self.repo))
-                self.assertEqual((result["capability"], result["decision"]),
-                                 ("secrets", "deny"))
-
-    # --- fail closed in the hook ---------------------------------------------------------------
-    def test_hook_denies_when_the_engine_fails_with_a_declared_role(self):
-        import hook
-
-        def broken(_event):
-            raise RuntimeError("engine down")
-
-        fake = SimpleNamespace(check_event=broken)
-        with patched_env(WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo)):
-            with mock.patch.dict(sys.modules, {"policy": fake}):
-                out = io.StringIO()
-                with contextlib.redirect_stdout(out):
-                    hook._policy_check(self.write(self.repo / "a.py"))
-        payload = json.loads(out.getvalue())
-        self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "deny")
-        self.assertEqual(payload["hookSpecificOutput"]["permissionDecisionReason"],
-                         i18n.t("policy.reason.error", capability="-"))
-
-    def test_hook_keeps_sessions_without_a_role_untouched(self):
-        import hook
-
-        def broken(_event):
-            raise RuntimeError("engine down")
-
-        with patched_env(WS_SESSION_ROLE=None):
-            with mock.patch.dict(sys.modules, {"policy": SimpleNamespace(check_event=broken)}):
-                out = io.StringIO()
-                with contextlib.redirect_stdout(out):
-                    hook._policy_check(self.write(self.repo / "a.py"))
-        self.assertEqual(out.getvalue(), "")
-
-    def test_hook_denies_an_invalid_engine_answer_with_a_declared_role(self):
-        import hook
-        with patched_env(WS_SESSION_ROLE="repo", WS_SESSION_ROOT=str(self.repo)):
-            with mock.patch.dict(sys.modules, {"policy": SimpleNamespace(
-                    check_event=lambda _event: {"decision": "maybe"})}):
-                out = io.StringIO()
-                with contextlib.redirect_stdout(out):
-                    hook._policy_check(self.write(self.repo / "a.py"))
-        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"],
-                         "deny")
 
 
 if __name__ == "__main__":

@@ -404,7 +404,7 @@ def _valid_session_id(sid):
 def _conference_budget(d):
     """PreToolUse of a conference run: its write restriction and tool/file budget, both set only by
     the worker's environment. The write restriction must hold even when the budget file is missing.
-    Returns True when it emitted a denial, so the policy does not answer the same event twice."""
+    Returns True when it emitted a denial, so the same event is not answered twice."""
     if not os.environ.get("WS_CONFERENCE_BUDGET") and not os.environ.get("WS_CONFERENCE_REPO"):
         return False
     try:
