@@ -2,7 +2,8 @@
 
 The adapter knows only the Claude side of one headless run: the profile command plus `--settings`,
 the conference hook that enforces the two-file scope and the stream-json event shape. It carries no
-capability rule of its own: the hook (`conference_worker.py hook`) and `src/policy.py` decide.
+permission rule of its own: the conference worker's hook (`conference_worker.py hook`) applies the
+scope and the conference budget.
 """
 import json
 import re

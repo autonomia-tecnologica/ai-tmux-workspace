@@ -20,7 +20,7 @@ LIB = ROOT / "src" / "lib.py"
 
 FAKE_KEY = "sk-" + "fake-" + "0" * 30      # assembled at runtime: no key-like literal in the repo
 
-HARNESS_POLICY = """\
+HARNESS_RULES = """\
 versao: 1
 itens:
   - id: F03
@@ -71,15 +71,13 @@ class SettingsTest(unittest.TestCase):
     def generated(self, profile="deepseek"):
         return json.loads((self.state / "settings" / f"{profile}.json").read_text(encoding="utf-8"))
 
-    def harness(self, policy=HARNESS_POLICY):
+    def harness(self, rules=HARNESS_RULES):
         folder = self.root / "installed-harness"
         security = self.root / "security"
         folder.mkdir(exist_ok=True)
         security.mkdir(exist_ok=True)
-        (folder / "forcado.yaml").write_text(textwrap.dedent(policy), encoding="utf-8")
+        (folder / "forcado.yaml").write_text(textwrap.dedent(rules), encoding="utf-8")
         shutil.copy2(ROOT / "security" / "gate.py", security / "gate.py")
-        (security / "policy.yaml").write_text(
-            (ROOT / "security" / "policy.yaml").read_text(encoding="utf-8"), encoding="utf-8")
         return folder
 
     def mapping_profile(self, settings, agent="deepseek", name="deepseek"):
@@ -126,7 +124,7 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("apiKeyHelper", text)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
-    def test_installed_harness_policy_is_the_base_when_present(self):
+    def test_installed_harness_rules_are_the_base_when_present(self):
         folder = self.harness()
         self.mapping_profile({})
         proc = self.ensure("deepseek", harness=folder)

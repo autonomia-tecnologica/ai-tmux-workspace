@@ -1,7 +1,7 @@
 """Agent adapters behind one ACP-shaped interface.
 
 `adapter_for(profile)` is the only entry point the workspace needs: the window profile chooses the
-harness, and the caller receives the same `initialize`/`session`/`prompt`/`permission`/`update`
+harness, and the caller receives the same `initialize`/`session`/`prompt`/`update`
 surface for Claude Code or OpenCode. The package does not depend on ACP; it only imitates its shape.
 """
 from .base import (
@@ -17,8 +17,6 @@ from .base import (
     Prompt,
     Session,
     Update,
-    central_decision,
-    normalize_event,
     read_stream as _read_stream,
 )
 from .claude import ALLOWED_TOOLS, DISALLOWED_TOOLS, ClaudeAdapter
@@ -58,5 +56,5 @@ __all__ = [
     "ADAPTERS", "CLAUDE", "HARNESS_CLAUDE", "HARNESS_OPENCODE", "LIFECYCLE", "METHODS", "OPENCODE",
     "PROTOCOL", "SESSION_ID_AGENT", "SESSION_ID_SOURCES", "SESSION_ID_WORKSPACE", "Adapter",
     "ClaudeAdapter", "OpenCodeAdapter", "Prompt", "Session", "Update", "adapter", "adapter_for",
-    "central_decision", "normalize_event", "read_stream", "ALLOWED_TOOLS", "DISALLOWED_TOOLS",
+    "read_stream", "ALLOWED_TOOLS", "DISALLOWED_TOOLS",
 ]

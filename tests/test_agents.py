@@ -1,8 +1,8 @@
 """Tests for the ACP-shaped agent layer (item 71).
 
-One adapter per harness sits behind the same `initialize`/`session`/`prompt`/`permission`/`update`
-surface; the window profile chooses it, the conference worker never builds a harness command line,
-and both adapters ask the same central policy engine.
+One adapter per harness sits behind the same `initialize`/`session`/`prompt`/`update` surface; the
+window profile chooses it, and the conference worker never builds a harness command line. There is
+no capability policy any more: the conference scope is the only permission rule the adapters carry.
 """
 import io
 import json
@@ -21,7 +21,6 @@ import agents  # noqa: E402
 import conference  # noqa: E402
 import conference_worker  # noqa: E402
 import lib  # noqa: E402
-import policy  # noqa: E402
 
 
 class AgentAdapterTest(unittest.TestCase):
@@ -63,7 +62,7 @@ class AgentAdapterTest(unittest.TestCase):
                 info = adapter.initialize()
                 self.assertEqual(info["protocol"], agents.PROTOCOL)
                 self.assertEqual(info["harness"], harness)
-                for method in ("initialize", "session", "prompt", "permission", "update"):
+                for method in ("initialize", "session", "prompt", "update"):
                     self.assertTrue(callable(getattr(adapter, method)))
                 self.assertIn("stream", info)
 
@@ -159,7 +158,7 @@ class AgentAdapterTest(unittest.TestCase):
         path = adapter.prepare("oc")
         plugin = self.state / "settings" / "opencode-plugin-oc.js"
         self.assertEqual(plugin.read_text(encoding="utf-8"),
-                         (ROOT / "security" / "opencode-policy.js").read_text(encoding="utf-8"))
+                         (ROOT / "security" / "opencode-state.js").read_text(encoding="utf-8"))
         self.assertEqual(path, str(self.state / "settings" / "opencode-oc.json"))
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         self.assertEqual(config["plugin"], [plugin.as_uri()])
@@ -252,36 +251,7 @@ class AgentAdapterTest(unittest.TestCase):
             path = lib.profile_adapter("oc").prepare("oc")
         self.assertNotIn("instructions", json.loads(Path(path).read_text(encoding="utf-8")))
 
-    # --- one central policy ---------------------------------------------------------------------
-    def _events(self):
-        return [
-            {"tool_name": "Read", "tool_input": {"file_path": str(self.repo / "README.md")}},
-            {"tool_name": "Read", "tool_input": {"file_path": str(self.repo / "src" / "x.py")}},
-            {"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "README.md")}},
-            {"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "src" / "x.py")}},
-            {"tool_name": "Grep", "tool_input": {"pattern": "x"}},
-            {"tool_name": "Bash", "tool_input": {"command": "git status"}},
-            {"tool_name": "Bash", "tool_input": {"command": "sudo ls"}},
-            {"tool_name": "WebFetch", "tool_input": {"url": "https://example.com"}},
-            {"tool": "read", "args": {"file_path": str(self.repo / "BACKLOG.md")}},
-        ]
-
-    def test_the_same_battery_gives_the_same_decision_in_both_adapters(self):
-        with mock.patch.dict(os.environ, {
-            "WS_SESSION_ROLE": "repo",
-            "WS_SESSION_ROOT": str(self.repo),
-            "WS_STATE": str(self.state),
-        }):
-            for event in self._events():
-                with self.subTest(event=event):
-                    claude = agents.ClaudeAdapter("claude").permission(event)
-                    opencode = agents.OpenCodeAdapter("oc").permission(event)
-                    expected = policy.check_event(agents.normalize_event(event))
-                    for got in (claude, opencode):
-                        self.assertEqual(got["decision"], expected["decision"])
-                        self.assertEqual(got["capability"], expected["capability"])
-                        self.assertEqual(got["reason"], expected["reason"])
-
+    # --- conference scope (OpenCode permission rules) -------------------------------------------
     def test_the_opencode_permissions_derive_from_the_conference_scope(self):
         config_path = lib.profile_adapter("oc").session("oc", self.repo).settings
         config = json.loads(Path(config_path).read_text(encoding="utf-8"))

@@ -1,21 +1,20 @@
 """ACP-shaped agent adapter interface, without depending on ACP.
 
 The method names copy the shape of the Agent Client Protocol (`initialize`, `session`, `prompt`,
-`permission`, `update`) so every caller sees the same agent surface, but this module does not speak
-ACP and does not import an ACP library. When the specification stabilizes (or OpenCode adopts it),
-an adapter can be replaced by a real ACP client without changing the conference.
+`update`) so every caller sees the same agent surface, but this module does not speak ACP and does
+not import an ACP library. When the specification stabilizes (or OpenCode adopts it), an adapter can
+be replaced by a real ACP client without changing the conference.
 
 An adapter owns only the harness side of the conversation: building the headless command, reading
-its stream and turning one event into an update. It owns no capability rule: `permission` asks the
-central engine in `src/policy.py`, the same engine the Claude hook (`src/hook.py`) and the OpenCode
-plugin (`security/opencode-policy.js`) call.
+its stream and turning one event into an update. It owns no permission rule: there is no capability
+policy in this repo any more. The conference scope is enforced by the conference worker (Claude) and
+by the permissions the OpenCode adapter writes into its generated config.
 
 It also declares the harness side of the session lifecycle, so no caller branches by agent:
 `prepare` builds the harness files a restart needs, `launch` is the command that starts the agent,
 `fresh_args`/`resume_args`/`continue_args` are the session arguments, and `session_id_source` says
 where the id comes from (the workspace chooses it, or the hook/plugin records it).
 """
-import contextlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -32,7 +31,7 @@ SESSION_ID_WORKSPACE = "workspace"
 SESSION_ID_AGENT = "agent"
 SESSION_ID_SOURCES = (SESSION_ID_WORKSPACE, SESSION_ID_AGENT)
 
-METHODS = ("initialize", "session", "prompt", "permission", "update")
+METHODS = ("initialize", "session", "prompt", "update")
 LIFECYCLE = ("prepare", "launch", "fresh_args", "resume_args", "continue_args")
 
 
@@ -97,7 +96,6 @@ class Adapter:
             "methods": list(METHODS),
             "lifecycle": list(LIFECYCLE),
             "session_id_source": self.session_id_source,
-            "permission": "central",
         }
 
     def command(self, profile=None):
@@ -189,10 +187,6 @@ class Adapter:
         return Prompt(command=chosen.command, stdin=str(message or ""), cwd=chosen.cwd,
                       adapter=self)
 
-    def permission(self, event, env=None):
-        """Central capability decision for one tool event; no rule is implemented here."""
-        return central_decision(event, env)
-
     def update(self, event, repo=""):
         """One stream event as an `Update`; subclasses know their own event shape."""
         raise NotImplementedError
@@ -235,74 +229,6 @@ def short_path(repo, path):
     if not rel or rel.startswith(".."):
         rel = os.path.basename(path)
     return clip(rel or "?")
-
-
-def normalize_event(event):
-    """Claude hook or OpenCode event mapped to the one shape `policy.check_event` reads.
-
-    Only field names are normalized. The tool name, the arguments and the declared permission mode
-    stay exactly as the harness sent them, so the central engine sees the same action from both
-    adapters."""
-    event = dict(event or {}) if isinstance(event, dict) else {}
-    if not event.get("tool_name"):
-        name = event.get("tool") or event.get("toolName") or event.get("name")
-        if name:
-            event["tool_name"] = name
-    if "tool_input" not in event:
-        data = (event.get("tool_input") or event.get("toolInput") or event.get("args")
-                or event.get("input"))
-        if isinstance(data, dict):
-            event["tool_input"] = data
-    if not event.get("session_id"):
-        session = event.get("sessionID") or event.get("sessionId") or event.get("session_id")
-        if session:
-            event["session_id"] = session
-    if not event.get("agent_id"):
-        agent = event.get("agentID") or event.get("agentId") or event.get("agent_id")
-        if agent:
-            event["agent_id"] = agent
-    if not event.get("permission_mode"):
-        mode = event.get("permissionMode") or event.get("permission_mode") or event.get("mode")
-        if isinstance(mode, str) and mode:
-            event["permission_mode"] = mode
-    return event
-
-
-@contextlib.contextmanager
-def _env_overrides(values):
-    if not values:
-        yield
-        return
-    saved = {key: os.environ.get(key) for key in values}
-    for key, value in values.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = str(value)
-    try:
-        yield
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-def central_decision(event, env=None):
-    """Decision of `src/policy.py` for one event, or a fail-closed denial if the engine fails."""
-    try:
-        import policy
-    except Exception:
-        return {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-    try:
-        with _env_overrides(env):
-            result = policy.check_event(normalize_event(event))
-    except Exception:
-        return {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-    if not isinstance(result, dict):
-        return {"decision": "deny", "capability": None, "reason": "policy.reason.error"}
-    return result
 
 
 def choose_adapter(event):
