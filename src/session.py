@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Session box declared for each agent launch.
 
-The box is the harness policy, not an OS sandbox: the launcher prefixes the agent command with
-`WS_SESSION_ROLE`/`WS_SESSION_ROOT`, and the hook/plugin enforce the role table on every tool call.
-The role comes from the config's main repo: the main repo is the `home` session (it may change the
-other repos) and every other path is a `repo` session whose box is the path itself. A worktree is
-just a path, so its box is the worktree, wherever it lives; there is no fixed worktree folder here.
+The launcher prefixes the agent command with `WS_SESSION_ROLE`/`WS_SESSION_ROOT`, which declare the
+session's role and root. The hook and the OpenCode plugin read `WS_SESSION_ROOT` to record each tab's
+state; no capability policy reads the role (the policy was removed from this repo).
+The role comes from the config's main repo: the main repo is the `home` session and every other path
+is a `repo` session whose root is the path itself. A worktree is just a path, so its root is the
+worktree, wherever it lives; there is no fixed worktree folder here.
 The one exception is the workspace's own code (`paths.workspace_root()`, the clone or installed copy):
-its window (`workspace dev`) is the `self` session, the only one that edits that code. `home` still
-wins when the main checkout is the workspace itself.
+its window (`workspace dev`) is the `self` session. `home` still wins when the main checkout is the
+workspace itself.
 
 Stdlib only and no `lib`/`tmux` import: the launcher, the hook and the tests use this module without
 the rest of the workspace. The config and state paths come from `paths` (foundation, stdlib only),

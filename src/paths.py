@@ -6,12 +6,11 @@ The layout keeps the person's data and the code apart:
     ~/.config/ai-tmux-workspace/            config.yaml, state/, conference/
     ~/.local/share/ai-tmux-workspace/       app/, harness/, security/
 
-`config_dir()` is the control plane: agents may read it, but no agent role writes it
-(`policy.py` checks that before the role table). The environment keeps every historical override
-(`WS_STATE`, `WS_CONFERENCE`, `AT_WS_CONFIG`, `AT_HARNESS_DIR`, `AT_SECURITY_DIR`,
-`AT_WS_INSTALL_DIR`) ahead of the default.
+`config_dir()` is the control plane: this module only locates it; who may write it is not decided here.
+The environment keeps every historical override (`WS_STATE`, `WS_CONFERENCE`, `AT_WS_CONFIG`,
+`AT_HARNESS_DIR`, `AT_SECURITY_DIR`, `AT_WS_INSTALL_DIR`) ahead of the default.
 
-This is foundation and runs early: stdlib only, no import from `lib`, `session` or `policy`, and
+This is foundation and runs early: stdlib only, no import from `lib` or `session`, and
 every function reads the environment at call time (tests replace HOME/WS_STATE/AT_WS_CONFIG in the
 same process). A failure is reported as one line on stderr; user-facing text belongs to i18n.
 """
