@@ -103,7 +103,10 @@ class ClickFocusLiveTest(unittest.TestCase):
         pid, fd = pty.fork()
         if pid == 0:     # child: the tmux client, on the pty
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-            os.execvp("tmux", ["tmux", "-L", self.socket, "attach", "-t", "t"])
+            # The client needs a real terminal type: with TERM=dumb (CI) tmux refuses to attach.
+            # Only the child's environment changes; the test process keeps its own TERM.
+            os.execvpe("tmux", ["tmux", "-L", self.socket, "attach", "-t", "t"],
+                       dict(os.environ, TERM="xterm-256color"))
         self.child = (pid, fd)
         threading.Thread(target=self.drain, args=(fd,), daemon=True).start()
 
