@@ -101,12 +101,17 @@ class InstallerTest(unittest.TestCase):
         (self.home / ".config" / "keep.conf").write_text("keep\n", encoding="utf-8")
 
     def env(self, **overrides):
+        # AT_WS_NO_TTY keeps install.sh reading the simulated stdin even when the suite runs under a
+        # terminal (a pre-push hook, for instance): without it the script execs </dev/tty and the test
+        # waits for a person to answer. It is dropped from the inherited env too, so neither the
+        # terminal nor a value already exported decides the run.
         env = {key: value for key, value in os.environ.items()
                if key not in ("AT_WS_CONFIG", "AT_WS_INSTALL_STATE", "AT_HARNESS_SOURCE",
-                              "AT_WS_PLATFORM", "WS_STATE", "SUDO_USER", "SUDO_UID",
-                              "PKEXEC_UID", "DOAS_USER")}
+                              "AT_WS_PLATFORM", "AT_WS_NO_TTY", "WS_STATE", "SUDO_USER",
+                              "SUDO_UID", "PKEXEC_UID", "DOAS_USER")}
         env.update(HOME=str(self.home), WS_STATE=str(self.state),
                    AT_HARNESS_SOURCE=str(self.source), SHELL="/usr/bin/zsh", NO_COLOR="1",
+                   AT_WS_NO_TTY="1",
                    PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
         for key, value in overrides.items():
             if value is None:
